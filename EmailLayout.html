@@ -1,0 +1,97 @@
+
+<!-- EmailLayout.html — Strathmore Chorale · master email letterhead
+     ─────────────────────────────────────────────────────────────────────────
+     The shared wrapper for EVERY outgoing email (welcome, probation, onboarding,
+     reminder, summary, communiqué, birthday). Server fills four variables:
+        headerTitle    — text  (the email's headline, e.g. "Welcome to the Chorale")
+        headerSubtitle — text  (one supporting line under the headline)
+        bodyContent    — HTML  (the message body; trusted, injected raw)
+        signatureHtml  — HTML  (the sign-off block; trusted, injected raw)
+     Email-safe: table layout, all CSS inline, ~600px, web-safe fonts only.
+     Palette — ink #14110F · gold #B08538/#E2C988 · ivory #FBF7EE.
+     ───────────────────────────────────────────────────────────────────────── -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#FBF7EE" style="margin:0;padding:0;background-color:#FBF7EE;">
+  <tr>
+    <td align="center" style="padding:28px 12px 34px;">
+
+      <!-- ── Stationery sheet ─────────────────────────────────────────── -->
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background-color:#FFFFFF;border-collapse:separate;">
+
+        <!-- Gold seam across the very top -->
+        <tr>
+          <td height="4" bgcolor="#B08538" style="height:4px;line-height:4px;font-size:0;background-color:#B08538;border-radius:14px 14px 0 0;">&nbsp;</td>
+        </tr>
+
+        <!-- ── Header band — ink with gold accents ───────────────────── -->
+        <tr>
+          <td bgcolor="#14110F" style="background-color:#14110F;padding:30px 34px 28px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="left" style="font-family:'Courier New',Courier,monospace;font-size:11px;letter-spacing:3px;color:#E2C988;text-transform:uppercase;">Strathmore Chorale</td>
+                <td align="right" style="font-family:'Courier New',Courier,monospace;font-size:11px;letter-spacing:3px;color:#8C8478;text-transform:uppercase;">MMXXVI</td>
+              </tr>
+            </table>
+
+            <!-- gold rule -->
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+              <td width="34" height="2" bgcolor="#B08538" style="width:34px;height:2px;line-height:2px;font-size:0;background-color:#B08538;padding:0;">&nbsp;</td>
+            </tr></table>
+            <div style="height:14px;line-height:14px;font-size:0;">&nbsp;</div>
+
+            <h1 style="margin:0;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-weight:400;font-size:30px;line-height:1.12;color:#FBF7EE;"><?= headerTitle ?></h1>
+            <? if (headerSubtitle) { ?>
+            <p style="margin:9px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.5;color:#B5AC9D;"><?= headerSubtitle ?></p>
+            <? } ?>
+          </td>
+        </tr>
+
+        <!-- ── Body ──────────────────────────────────────────────────── -->
+        <tr>
+          <td style="background-color:#FFFFFF;border-left:1px solid #E8DEC6;border-right:1px solid #E8DEC6;padding:30px 34px 8px;font-family:Arial,Helvetica,sans-serif;font-size:13.5px;line-height:1.65;color:#2A2522;">
+            <?!= bodyContent ?>
+          </td>
+        </tr>
+
+        <!-- ── Sign-off ──────────────────────────────────────────────── -->
+        <tr>
+          <td style="background-color:#FFFFFF;border-left:1px solid #E8DEC6;border-right:1px solid #E8DEC6;padding:4px 34px 30px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr><td height="1" bgcolor="#E8DEC6" style="height:1px;line-height:1px;font-size:0;background-color:#E8DEC6;">&nbsp;</td></tr>
+            </table>
+            <div style="height:18px;line-height:18px;font-size:0;">&nbsp;</div>
+            <div style="font-family:Arial,Helvetica,sans-serif;font-size:13.5px;line-height:1.55;color:#2A2522;">
+              <?!= signatureHtml ?>
+            </div>
+          </td>
+        </tr>
+
+        <!-- ── Footer ────────────────────────────────────────────────── -->
+        <tr>
+          <td bgcolor="#FBF7EE" style="background-color:#FBF7EE;border:1px solid #E8DEC6;border-top:none;border-radius:0 0 14px 14px;padding:22px 34px 24px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td align="center" style="padding-bottom:10px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+                    <td width="46" height="1" bgcolor="#D9CDB0" style="width:46px;height:1px;line-height:1px;font-size:0;background-color:#D9CDB0;">&nbsp;</td>
+                  </tr></table>
+                </td>
+              </tr>
+              <tr>
+                <td align="center" style="font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:15px;color:#14110F;padding-bottom:4px;">One voice from many.</td>
+              </tr>
+              <tr>
+                <td align="center" style="font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:3px;color:#8C8478;text-transform:uppercase;">Strathmore &middot; Nairobi</td>
+              </tr>
+              <tr>
+                <td align="center" style="font-family:Arial,Helvetica,sans-serif;font-size:10.5px;line-height:1.5;color:#B5AC9D;padding-top:10px;">Sent from the Strathmore Chorale attendance system. Please don&rsquo;t reply to this email.</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+      </table>
+      <!-- /sheet -->
+
+    </td>
+  </tr>
+</table>

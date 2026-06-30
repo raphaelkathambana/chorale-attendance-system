@@ -1,0 +1,38 @@
+
+<!-- probation-conditional.html — Probation outcome · CONDITIONAL PASS (50–79%). To the member.
+     Body content for EmailLayout.html. Positive, with a scoreboard-penalty note.
+-->
+<!--META
+title: You’ve passed — with an adjustment.
+subtitle: You’re through probation; one note on your scoreboard start.
+-->
+
+<!--BODY-->
+<p style="margin:0 0 16px;">Dear <strong>{{firstName}}</strong>,</p>
+<p style="margin:0 0 20px;">You’ve passed your probation and joined the scoreboard. Your attendance landed below the 80% clean-pass mark, so a small starting adjustment applies — explained below.</p>
+
+<!-- Stat band -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F3E9CE;border:1px solid #C9A658;border-radius:12px;margin:0 0 16px;">
+  <tr><td style="padding:22px 24px;text-align:center;">
+    <p style="margin:0 0 4px;font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:2px;color:#8E6A2A;text-transform:uppercase;font-weight:bold;">Your attendance</p>
+    <p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:42px;line-height:1;color:#8E6A2A;">{{attendanceRate}}%</p>
+    <p style="margin:6px 0 0;font-size:12.5px;color:#8E6A2A;">{{attended}} of {{totalSessions}} sessions attended</p>
+  </td></tr>
+</table>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FBF7EE;border:1px solid #E8DEC6;border-radius:12px;margin:0 0 18px;">
+  <tr><td style="padding:18px 22px;">
+    <p style="margin:0 0 6px;font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:2px;color:#6B6058;text-transform:uppercase;font-weight:bold;">Scoreboard adjustment</p>
+    <p style="margin:0;font-size:13px;line-height:1.6;color:#2A2522;">You begin with a one-time adjustment of <strong>−{{penalty}} points</strong>. It’s a starting position, not a mark against you — strong attendance from here will carry you up quickly.</p>
+  </td></tr>
+</table>
+
+<p style="margin:0 0 16px;font-size:13.5px;line-height:1.65;color:#2A2522;">When you can’t make a session, send an apology at least an hour ahead so it’s recorded as excused.</p>
+
+<a href="{{appUrl}}" target="_blank" style="display:inline-block;background:#14110F;color:#FBF7EE;padding:11px 24px;border-radius:10px;text-decoration:none;font-weight:600;font-size:13px;">See your place on the scoreboard &rarr;</a>
+<!--/BODY-->
+
+<!--SIG-->
+<p style="margin:0 0 2px;font-size:13px;color:#2A2522;">Warmly,</p>
+<p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:17px;color:#14110F;">The Strathmore Chorale</p>
+<!--/SIG-->

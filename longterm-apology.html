@@ -1,0 +1,34 @@
+
+<!-- longterm-apology.html — Long-term (multi-day) apology awaiting review. To admins.
+     Body content for EmailLayout.html.
+-->
+<!--META
+title: An apology needs review.
+subtitle: A member has submitted a multi-day absence.
+-->
+
+<!--BODY-->
+<p style="margin:0 0 18px;"><strong>{{memberName}}</strong> has submitted a long-term apology covering several sessions. It’s waiting for your decision in the requests queue.</p>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E8DEC6;border-radius:12px;overflow:hidden;margin:0 0 18px;">
+  <tr><td style="background:#FBF7EE;padding:10px 18px;border-bottom:1px solid #E8DEC6;">
+    <span style="font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:2px;color:#8E6A2A;text-transform:uppercase;font-weight:bold;">Apology details</span>
+  </td></tr>
+  <tr><td style="padding:6px 18px 14px;">
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="font-size:13px;color:#2A2522;">
+      <tr><td width="30%" style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Member</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{memberName}} · {{groups}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Period</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{apologyStart}} &ndash; {{apologyEnd}}</td></tr>
+      <tr><td valign="top" style="padding:9px 0;color:#6B6058;">Reason</td><td style="padding:9px 0;line-height:1.55;">{{apologyReason}}</td></tr>
+    </table>
+  </td></tr>
+</table>
+
+<p style="margin:0 0 18px;font-size:13px;line-height:1.6;color:#6B6058;">Approving marks every session in this window as excused. Until you act, the absences remain unexcused.</p>
+
+<a href="{{appUrl}}" target="_blank" style="display:inline-block;background:#14110F;color:#FBF7EE;padding:11px 24px;border-radius:10px;text-decoration:none;font-weight:600;font-size:13px;">Review in the requests queue &rarr;</a>
+<!--/BODY-->
+
+<!--SIG-->
+<p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:16px;color:#14110F;">The Strathmore Chorale system</p>
+<p style="margin:2px 0 0;font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:2px;color:#8C8478;text-transform:uppercase;">Awaiting your review</p>
+<!--/SIG-->

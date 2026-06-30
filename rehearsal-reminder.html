@@ -1,0 +1,35 @@
+
+<!-- rehearsal-reminder.html — Practice / rehearsal reminder. To members.
+     Body content for EmailLayout.html. {{customNote}} block is optional — drop it if empty.
+-->
+<!--META
+title: Rehearsal reminder.
+subtitle: {{sessionDate}} · {{sessionTime}}
+-->
+
+<!--BODY-->
+<p style="margin:0 0 18px;">Dear <strong>{{firstName}}</strong>,</p>
+<p style="margin:0 0 20px;">A quick note ahead of our next rehearsal. Here’s everything you need:</p>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FBF7EE;border:1px solid #E8DEC6;border-radius:12px;margin:0 0 16px;">
+  <tr><td style="padding:6px 22px 10px;">
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="font-size:13.5px;color:#2A2522;">
+      <tr><td width="34%" style="padding:11px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">When</td><td style="padding:11px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{sessionDate}}</td></tr>
+      <tr><td style="padding:11px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Time</td><td style="padding:11px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{sessionTime}}</td></tr>
+      <tr><td style="padding:11px 0;color:#6B6058;">Sections</td><td style="padding:11px 0;font-weight:600;">{{sections}}</td></tr>
+    </table>
+  </td></tr>
+</table>
+
+<!-- OPTIONAL: custom note — backend injects the whole block via {{noteBlock}} or empty -->
+{{noteBlock}}
+
+<p style="margin:0 0 16px;font-size:13.5px;line-height:1.65;color:#2A2522;">Can’t make it? Submit an apology at least <strong>1 hour before</strong> we start so it’s recorded as excused.</p>
+
+<a href="{{appUrl}}" target="_blank" style="display:inline-block;background:#14110F;color:#FBF7EE;padding:11px 24px;border-radius:10px;text-decoration:none;font-weight:600;font-size:13px;">Open the attendance system &rarr;</a>
+<!--/BODY-->
+
+<!--SIG-->
+<p style="margin:0 0 2px;font-size:13px;color:#2A2522;">See you there,</p>
+<p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:17px;color:#14110F;">The Strathmore Chorale</p>
+<!--/SIG-->

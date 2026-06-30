@@ -1,0 +1,56 @@
+
+<!-- birthday-card.html — Strathmore Chorale · Birthday card (STANDALONE — not inside EmailLayout).
+     Its own festive design. The member's photo arrives inline as cid:bdphoto.
+     ONE parameterized template — set {{accent}} per colourway. Variants, IN ORDER
+     (template index N -> colourway N), so the index maps to the birthday poster slides:
+        0 Classic   #185FA5      4 Community  #993556
+        1 Harmony   #0F6E56      5 Uplifting  #BA7517
+        2 Heartfelt #534AB7      6 Simple     #1D9E75
+        3 Playful   #D85A30
+     Tokens: {{accent}} {{name}} {{age}} {{message}}.  Drop the age pill if age is unknown.
+-->
+<!--META
+standalone: true
+accent: #185FA5
+-->
+
+<!--BODY-->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{{accent}}" style="margin:0;padding:0;background-color:{{accent}};">
+  <tr><td align="center" style="padding:40px 16px;">
+
+    <table role="presentation" width="480" cellpadding="0" cellspacing="0" border="0" style="width:480px;max-width:480px;background-color:#FFFDF8;border-radius:24px;">
+      <tr><td style="padding:40px 40px 36px;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+
+        <p style="margin:0;font-family:'Courier New',Courier,monospace;font-size:11px;letter-spacing:3px;color:{{accent}};text-transform:uppercase;font-weight:bold;">Strathmore Chorale</p>
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:14px auto 0;"><tr><td width="40" height="3" bgcolor="{{accent}}" style="width:40px;height:3px;line-height:3px;font-size:0;border-radius:2px;">&nbsp;</td></tr></table>
+
+        <h1 style="margin:24px 0 0;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-weight:400;font-size:46px;line-height:0.98;color:#14110F;">Happy<br>Birthday</h1>
+
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:30px auto 0;">
+          <tr><td align="center" bgcolor="{{accent}}" style="background-color:{{accent}};border-radius:999px;padding:7px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="#FFFDF8" style="background-color:#FFFDF8;border-radius:999px;padding:6px;">
+              <img src="cid:bdphoto" width="150" height="150" alt="{{name}}" style="display:block;width:150px;height:150px;border-radius:999px;object-fit:cover;">
+            </td></tr></table>
+          </td></tr>
+        </table>
+
+        <p style="margin:28px 0 0;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:34px;line-height:1.05;color:#14110F;">{{name}}</p>
+
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:16px auto 0;"><tr>
+          <td style="border:2px solid {{accent}};border-radius:999px;padding:8px 20px;font-family:'Courier New',Courier,monospace;font-size:13px;font-weight:bold;letter-spacing:2px;text-transform:uppercase;color:{{accent}};">&#10022;&nbsp;&nbsp;Turning {{age}}</td>
+        </tr></table>
+
+        <p style="margin:26px 0 0;font-size:15px;line-height:1.6;color:#2A2522;">{{message}}</p>
+
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:30px;"><tr><td align="center">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin-bottom:12px;"><tr><td width="48" height="1" bgcolor="#E8DEC6" style="width:48px;height:1px;line-height:1px;font-size:0;">&nbsp;</td></tr></table>
+          <p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:15px;color:#14110F;">One voice from many.</p>
+          <p style="margin:5px 0 0;font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:3px;color:#8C8478;text-transform:uppercase;">Strathmore &middot; Nairobi</p>
+        </td></tr></table>
+
+      </td></tr>
+    </table>
+
+  </td></tr>
+</table>
+<!--/BODY-->

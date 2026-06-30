@@ -1,0 +1,52 @@
+
+<!-- welcome-invite.html — Strathmore Chorale · Welcome / onboarding invite
+     Body content for EmailLayout.html. Sent when an admin adds a member.
+     Wire {{tokens}} to Apps Script (<?= memberName ?> etc.).
+-->
+<!--META
+title: Welcome to the Chorale.
+subtitle: One voice from many — we’re glad it now includes yours.
+-->
+
+<!--BODY-->
+<p style="margin:0 0 14px;">Dear <strong>{{memberName}}</strong>,</p>
+<p style="margin:0 0 20px;">You’ve been added to the chorale as a member of <strong>{{groups}}</strong>. Everything you need — the schedule, your attendance, the scoreboard — lives in the attendance system below.</p>
+
+<!-- Primary action -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F3E9CE;border:1px solid #C9A658;border-radius:12px;margin:0 0 16px;">
+  <tr><td style="padding:18px 22px;">
+    <p style="margin:0 0 6px;font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:2px;color:#8E6A2A;text-transform:uppercase;font-weight:bold;">First · Complete your onboarding</p>
+    <p style="margin:0 0 14px;font-size:13px;line-height:1.6;color:#2A2522;">Open the system with this Google account and fill in your details — course information, next of kin, identification, and a passport photo. It takes about two minutes.</p>
+    <a href="{{appUrl}}" target="_blank" style="display:inline-block;background:#14110F;color:#FBF7EE;padding:11px 24px;border-radius:10px;text-decoration:none;font-weight:600;font-size:13px;">Open the attendance system &rarr;</a>
+  </td></tr>
+</table>
+
+<!-- Probation -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FBF7EE;border:1px solid #E8DEC6;border-radius:12px;margin:0 0 16px;">
+  <tr><td style="padding:18px 22px;">
+    <p style="margin:0 0 6px;font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:2px;color:#6B6058;text-transform:uppercase;font-weight:bold;">Your probation period</p>
+    <p style="margin:0 0 10px;font-size:13px;line-height:1.6;color:#2A2522;">New members complete <strong>{{probationSessions}} sessions</strong> before joining the scoreboard. During this time:</p>
+    <table cellpadding="0" cellspacing="0" border="0" style="font-size:13px;line-height:1.6;color:#2A2522;">
+      <tr><td valign="top" style="color:#B08538;padding-right:10px;">&#8226;</td><td style="padding-bottom:6px;">Attend at least <strong>{{threshold}}%</strong> to pass with a clean record</td></tr>
+      <tr><td valign="top" style="color:#B08538;padding-right:10px;">&#8226;</td><td style="padding-bottom:6px;">50% or more, but below {{threshold}}%, passes with a scoreboard adjustment</td></tr>
+      <tr><td valign="top" style="color:#B6202A;padding-right:10px;">&#8226;</td><td style="padding-bottom:6px;">Below 50% means the probation is not passed</td></tr>
+      <tr><td valign="top" style="color:#4A7C59;padding-right:10px;">&#8226;</td><td>“Attending” means being present — even late counts as attended</td></tr>
+    </table>
+  </td></tr>
+</table>
+
+<!-- Apologies -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F4ECD9;border:1px solid #E8DEC6;border-radius:12px;margin:0 0 22px;">
+  <tr><td style="padding:18px 22px;">
+    <p style="margin:0 0 6px;font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:2px;color:#6B6058;text-transform:uppercase;font-weight:bold;">If you can’t make a session</p>
+    <p style="margin:0;font-size:13px;line-height:1.6;color:#2A2522;">Submit an apology through the system at least <strong>1 hour before</strong> the session starts, and your absence or lateness is recorded as excused.</p>
+  </td></tr>
+</table>
+
+<p style="margin:0;font-size:13.5px;line-height:1.65;color:#2A2522;">If you have any questions, reach out to the Vice Chairperson of your section. We look forward to making music with you.</p>
+<!--/BODY-->
+
+<!--SIG-->
+<p style="margin:0 0 2px;font-size:13px;color:#2A2522;">Warm regards,</p>
+<p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:17px;color:#14110F;">The Strathmore Chorale</p>
+<!--/SIG-->

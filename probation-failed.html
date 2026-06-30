@@ -1,0 +1,36 @@
+
+<!-- probation-failed.html — Probation outcome · NOT PASSED (<50%). To the member.
+     Body content for EmailLayout.html. Gentle, supportive treatment — restart path offered.
+-->
+<!--META
+title: About your probation.
+subtitle: It didn’t go the way we’d hoped — but the door is open.
+-->
+
+<!--BODY-->
+<p style="margin:0 0 16px;">Dear <strong>{{firstName}}</strong>,</p>
+<p style="margin:0 0 20px;">Your probation period has ended, and attendance came in below the 50% mark needed to pass. For now, your membership has been set to inactive — but this isn’t the end of the road.</p>
+
+<!-- Stat band — quiet, not alarming -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FBF7EE;border:1px solid #E8DEC6;border-radius:12px;margin:0 0 18px;">
+  <tr><td style="padding:20px 24px;text-align:center;">
+    <p style="margin:0 0 4px;font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:2px;color:#6B6058;text-transform:uppercase;font-weight:bold;">Your attendance</p>
+    <p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:38px;line-height:1;color:#6B6058;">{{attendanceRate}}%</p>
+    <p style="margin:6px 0 0;font-size:12.5px;color:#6B6058;">{{attended}} of {{totalSessions}} sessions attended</p>
+  </td></tr>
+</table>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F4ECD9;border:1px solid #E8DEC6;border-radius:12px;margin:0 0 18px;">
+  <tr><td style="padding:18px 22px;">
+    <p style="margin:0 0 6px;font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:2px;color:#8E6A2A;text-transform:uppercase;font-weight:bold;">If you’d like to continue</p>
+    <p style="margin:0;font-size:13px;line-height:1.6;color:#2A2522;">If life got in the way and you’re still keen to sing with us, you can request a fresh probation period from the system. We read every request, and we’d be glad to have you back.</p>
+  </td></tr>
+</table>
+
+<a href="{{appUrl}}" target="_blank" style="display:inline-block;background:#14110F;color:#FBF7EE;padding:11px 24px;border-radius:10px;text-decoration:none;font-weight:600;font-size:13px;">Request to restart probation &rarr;</a>
+<!--/BODY-->
+
+<!--SIG-->
+<p style="margin:0 0 2px;font-size:13px;color:#2A2522;">With warm regards,</p>
+<p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:17px;color:#14110F;">The Strathmore Chorale</p>
+<!--/SIG-->

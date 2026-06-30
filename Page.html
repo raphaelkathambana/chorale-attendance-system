@@ -1,0 +1,1517 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Strathmore Chorale · Attendance</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   STRATHMORE CHORALE · ATTENDANCE · DESIGN SYSTEM
+   ─────────────────────────────────────────────────────────────────────────
+   1. Tokens
+   2. Base & typography
+   3. Layout shells (mobile bottom-tabs / desktop sidebar)
+   4. Components (buttons, chips, status, member rows, cards…)
+   5. Tab-specific styles (record, view, members, myatt, scoreboard)
+   6. Overlays (dialog, changes bar, toast)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. TOKENS ──────────────────────────────────────────────────────────── */
+:root {
+  /* Ink (text/structure) */
+  --ink: #14110F; --ink-700: #2A2522; --ink-600: #4A4239; --ink-500: #6B6058;
+  --ink-400: #8C8478; --ink-300: #B5AC9D; --ink-200: #D6CFC1;
+  /* Paper (surfaces) */
+  --paper: #FBF7EE; --paper-100: #F4ECD9; --paper-200: #E8DEC6; --paper-300: #D9CDB0;
+  /* Crimson (alert/admin) */
+  --crimson: #B6202A; --crimson-600: #9A1A23; --crimson-500: #C8333D; --crimson-100: #F6E1DE;
+  /* Gold (accent/rank) */
+  --gold: #B08538; --gold-700: #8E6A2A; --gold-500: #C9A658; --gold-300: #E2C988; --gold-100: #F3E9CE;
+  /* Attendance statuses (used by Scripts.html via var(--present), etc.) */
+  --present: #4A7C59;        --present-bg: #E1ECDF;
+  --late-exc: #B08538;       --late-exc-bg: #F3E9CE;
+  --late-unexc: #C57730;     --late-unexc-bg: #F7E2CF;
+  --absent-exc: #7A6F62;     --absent-exc-bg: #E8DEC6;
+  --absent-unexc: #B6202A;   --absent-unexc-bg: #F6E1DE;
+  /* Legacy aliases (so any leftover var(--primary…) refs keep working) */
+  --primary: var(--ink); --primary-hover: var(--ink-700); --primary-light: var(--paper-100);
+  --bg: var(--paper); --card: #fff; --border: var(--paper-200);
+  --text: var(--ink); --text-muted: var(--ink-500);
+  --radius: 10px;
+  /* Type */
+  --f-display: "Instrument Serif", "Cormorant Garamond", Georgia, serif;
+  --f-sans:    "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --f-mono:    "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
+}
+
+/* ── 2. BASE ────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
+html, body { background: var(--paper); color: var(--ink); -webkit-font-smoothing: antialiased; }
+body { font-family: var(--f-sans); font-size: 14px; line-height: 1.5; }
+
+/* Typographic primitives */
+.eyebrow { font-family: var(--f-mono); font-weight: 500; font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-500); }
+.display { font-family: var(--f-display); font-style: italic; font-weight: 400; letter-spacing: -0.005em; line-height: 1.05; color: var(--ink); }
+.display-up { font-family: var(--f-display); font-style: normal; font-weight: 400; letter-spacing: -0.01em; line-height: 1.1; }
+.num { font-family: var(--f-display); font-feature-settings: "lnum","tnum"; font-style: normal; }
+.gold-rule { display: block; height: 2px; width: 32px; background: var(--gold); margin: 8px 0 14px; }
+.h1 { font-size: 28px; }
+h2 { font-family: var(--f-display); font-style: italic; font-weight: 400; font-size: 26px; line-height: 1.1; color: var(--ink); margin: 0 0 4px; }
+.subtitle { font-family: var(--f-sans); color: var(--ink-500); font-size: 13px; margin-bottom: 16px; }
+
+/* ── 3. LAYOUT SHELL ────────────────────────────────────────────────────── */
+body { padding-bottom: env(safe-area-inset-bottom); }
+#appContainer { width: 100%; max-width: 600px; margin: 0 auto; }
+@media (min-width: 1024px) {
+  body { max-width: none; }
+  /* JS reveals #appContainer via inline style.display="block"; !important keeps the
+     desktop two-column shell from being overridden by that inline value. */
+  #appContainer { max-width: none; margin: 0; display: flex !important; min-height: 100vh; }
+}
+
+/* Two-pane (View & Edit / Members on desktop) */
+.two-pane { display: block; }
+.two-pane-list, .two-pane-detail { min-width: 0; }
+.empty-pane { padding: 60px 20px; text-align: center; color: var(--ink-400); font-family: var(--f-display); font-style: italic; font-size: 22px; line-height: 1.3; background: var(--paper-100); border: 1px dashed var(--paper-300); border-radius: 14px; }
+.mobile-only-rules, .mobile-only-history { display: block; }
+.desktop-only-rules { display: none; }
+@media (min-width: 1024px) {
+  .two-pane { display: grid; grid-template-columns: 1fr 360px; gap: 24px; align-items: start; }
+  .two-pane-detail { position: sticky; top: 28px; }
+  .mobile-only-rules, .mobile-only-history { display: none; }
+  .desktop-only-rules { display: block; }
+}
+
+/* Splash + denied screens never live inside the flex shell */
+#authScreen, #deniedScreen { width: 100%; max-width: 600px; margin: 0 auto; }
+@media (min-width: 1024px) {
+  #authScreen, #deniedScreen { max-width: none; }
+}
+
+/* Sidebar (desktop) */
+#sidebar { display: none; }
+@media (min-width: 1024px) {
+  #sidebar {
+    display: flex; flex-direction: column; width: 240px; flex-shrink: 0;
+    background: var(--paper); border-right: 1px solid var(--paper-200);
+    padding: 24px 0 20px; position: sticky; top: 0; height: 100vh; overflow: auto;
+  }
+  #sidebar .brand { padding: 0 22px 24px; display: flex; align-items: center; gap: 10px; }
+  #sidebar .brand img { height: 30px; display: block; }
+  #sidebar .brand .name { font-family: var(--f-display); font-style: italic; font-size: 19px; line-height: 1; color: var(--ink); }
+  #sidebar .brand .sub  { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-500); margin-top: 2px; }
+  #sidebar .group-label { padding: 0 22px 6px; }
+  #sidebar nav { padding: 0 12px; display: flex; flex-direction: column; gap: 2px; margin-bottom: 22px; }
+  #sidebar .user { margin: auto 16px 0; padding-top: 14px; border-top: 1px solid var(--paper-200); display: flex; align-items: center; gap: 10px; }
+  #sidebar .user .avatar { width: 34px; height: 34px; border-radius: 999px; background: var(--paper-200); display: flex; align-items: center; justify-content: center; font-family: var(--f-display); font-style: italic; font-size: 15px; color: var(--ink); flex-shrink: 0; }
+  #sidebar .user .who { min-width: 0; }
+  #sidebar .user .who .name-row { font-size: 12px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #sidebar .user .who .meta { display: flex; gap: 5px; margin-top: 2px; }
+  .role-badge { font-family: var(--f-mono); font-size: 8.5px; font-weight: 700; letter-spacing: 0.14em; padding: 2px 5px; border-radius: 3px; background: var(--gold-100); color: var(--gold-700); }
+}
+
+/* Main column */
+#main { flex: 1; min-width: 0; }
+@media (min-width: 1024px) { #main { padding-bottom: 0; } }
+
+/* Top bar (mobile) */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 20px 12px; border-bottom: 1px solid var(--paper-200); background: var(--paper);
+  position: sticky; top: 0; z-index: 30;
+}
+.topbar .brand { display: flex; align-items: center; gap: 10px; }
+.topbar .brand img { height: 28px; display: block; }
+.topbar .brand .name { font-family: var(--f-display); font-style: italic; font-size: 17px; line-height: 1; color: var(--ink); }
+.topbar .brand .sub  { font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-500); margin-top: 2px; }
+.topbar .user-pill { display: flex; align-items: center; gap: 8px; }
+.topbar .user-pill .avatar { width: 30px; height: 30px; border-radius: 999px; background: var(--paper-200); display: flex; align-items: center; justify-content: center; font-family: var(--f-display); font-style: italic; font-size: 14px; color: var(--ink); }
+@media (min-width: 1024px) { .topbar { display: none; } }
+
+/* Bottom-tab nav (mobile) */
+.tab-nav {
+  display: flex; background: var(--paper); border-top: 1px solid var(--paper-200);
+  position: fixed; bottom: 0; left: 0; right: 0; max-width: 600px; margin: 0 auto;
+  padding: 10px 8px calc(20px + env(safe-area-inset-bottom));
+  z-index: 50; justify-content: space-around;
+}
+.tab-nav button {
+  background: none; border: none; cursor: pointer; padding: 4px 6px;
+  flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  font-family: var(--f-sans); font-size: 10.5px; font-weight: 500; letter-spacing: 0.02em;
+  color: var(--ink-400);
+}
+.tab-nav button > span:last-child { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab-nav button .glyph { font-family: var(--f-display); font-size: 18px; line-height: 1; color: var(--ink-400); }
+.tab-nav button.active { color: var(--ink); font-weight: 700; }
+.tab-nav button.active .glyph { color: var(--ink); }
+.tab-nav button.active::after { content:""; display: block; width: 4px; height: 4px; border-radius: 999px; background: var(--gold); margin-top: -2px; }
+@media (max-width: 380px) {
+  .tab-nav { padding-left: 4px; padding-right: 4px; }
+  .tab-nav button { font-size: 9.5px; padding: 4px 3px; gap: 3px; }
+  .tab-nav button .glyph { font-size: 16px; }
+}
+@media (min-width: 1024px) { .tab-nav { display: none; } }
+
+/* Sidebar nav items (desktop) */
+.nav-item {
+  position: relative; padding: 9px 12px 10px; border-radius: 8px; cursor: pointer;
+  color: var(--ink); font-size: 13px; font-weight: 500;
+}
+.nav-item .hint { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.08em; color: var(--ink-400); margin-top: 2px; }
+.nav-item.active { background: var(--ink); color: var(--paper); font-weight: 600; }
+.nav-item.active .hint { color: var(--gold-300); }
+.nav-item.active::before { content:""; position: absolute; left: -12px; top: 50%; transform: translateY(-50%); width: 3px; height: 22px; border-radius: 0 2px 2px 0; background: var(--gold); }
+
+/* Tab pages */
+.tab-page { display: none; padding: 20px 20px 100px; max-width: 720px; margin: 0 auto; }
+.tab-page.active { display: block; }
+@media (min-width: 1024px) {
+  .tab-page { padding: 28px 36px 36px; max-width: none; margin: 0; }
+}
+
+/* ── 4. COMPONENTS ──────────────────────────────────────────────────────── */
+
+/* Buttons */
+.btn { font-family: var(--f-sans); font-weight: 600; cursor: pointer; border: 1px solid transparent; border-radius: 10px; font-size: 13.5px; padding: 11px 18px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: transform .12s ease, background .12s ease, color .12s ease; }
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: translateY(0); }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+.btn-primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.btn-primary:hover { background: var(--ink-700); }
+.btn-secondary { background: var(--paper); color: var(--ink); border-color: var(--paper-300); }
+.btn-crimson { background: var(--crimson); color: #fff; border-color: var(--crimson-600); }
+.btn-gold { background: var(--gold); color: #fff; border-color: var(--gold-700); }
+.btn-ghost { background: transparent; color: var(--ink-700); }
+.btn-export { font-family: var(--f-sans); font-weight: 500; font-size: 12.5px; padding: 7px 14px; border-radius: 8px; background: var(--paper); border: 1px solid var(--paper-300); color: var(--ink-700); cursor: pointer; }
+.btn-export:hover { border-color: var(--ink); color: var(--ink); }
+.btn-export:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-block { width: 100%; }
+
+/* Chips */
+.chip {
+  font-family: var(--f-sans); font-weight: 600; font-size: 12px; letter-spacing: 0.01em;
+  padding: 7px 14px; border-radius: 999px; background: transparent;
+  border: 1px solid var(--paper-300); color: var(--ink-700); cursor: pointer;
+}
+.chip.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+/* Inputs */
+input[type="text"], input[type="email"], input[type="date"], input[type="time"], select, textarea, .input-like {
+  width: 100%; padding: 11px 14px; border: 1px solid var(--paper-200); border-radius: 10px;
+  background: var(--paper); font-family: var(--f-sans); font-size: 13px; color: var(--ink);
+  -webkit-appearance: none; appearance: none;
+}
+input[type="date"], input[type="time"] { font-family: var(--f-mono); font-size: 13px; }
+select { font-family: var(--f-sans); cursor: pointer; padding-right: 30px; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%238C8478' d='M0 0l5 6 5-6z'/></svg>"); background-repeat: no-repeat; background-position: right 12px center; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--gold); }
+/* Onboarding — empty required fields flagged for a resuming member */
+.needs-attention { border-color: var(--gold-700) !important; background: var(--gold-100) !important; box-shadow: 0 0 0 3px rgba(176,133,56,0.12); }
+#photoPreview.needs-attention { box-shadow: 0 0 0 3px rgba(176,133,56,0.25); }
+.form-group { margin-bottom: 14px; }
+.form-label { display: block; font-family: var(--f-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-500); margin-bottom: 6px; }
+.form-row { display: flex; gap: 10px; }
+.form-row .form-group { flex: 1; }
+
+/* Checkboxes */
+.checkbox-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.checkbox-label { display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; border-radius: 10px; background: var(--paper); border: 1px solid var(--paper-200); cursor: pointer; font-size: 13px; font-weight: 500; color: var(--ink-700); user-select: none; }
+.checkbox-label input[type="checkbox"] { appearance: none; -webkit-appearance: none; width: 18px; height: 18px; border-radius: 4px; border: 1.5px solid var(--ink-400); background: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.checkbox-label input[type="checkbox"]:checked { background: var(--ink); border-color: var(--ink); }
+.checkbox-label input[type="checkbox"]:checked::after { content: "✓"; color: #fff; font-family: var(--f-display); font-size: 12px; line-height: 1; }
+.checkbox-label:has(input:checked) { border-color: var(--ink); color: var(--ink); background: #fff; }
+
+/* Controls strip */
+.controls { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.controls > input, .controls > select, .controls > .input-like { flex: 1; min-width: 140px; }
+
+/* Cards */
+.card { background: #fff; border: 1px solid var(--paper-200); border-radius: 14px; padding: 16px; }
+.card-dark { background: var(--ink); color: var(--paper); border-radius: 14px; padding: 18px; position: relative; overflow: hidden; }
+.card-dark .watermark { position: absolute; right: -18px; top: -10px; height: 140px; opacity: 0.16; }
+
+/* Section header inside lists */
+.ensemble-header {
+  font-family: var(--f-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ink-700); padding: 14px 0 6px; border-bottom: 1px solid var(--paper-200); margin-bottom: 4px;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.role-group { margin-bottom: 14px; }
+.role-group-header { font-family: var(--f-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-500); padding: 8px 0 4px; display: flex; justify-content: space-between; align-items: center; }
+.role-group-count { font-family: var(--f-mono); font-size: 9.5px; color: var(--ink-400); letter-spacing: 0.06em; }
+
+/* Member row (Record tab) */
+.member-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 11px 4px; border-bottom: 1px solid var(--paper-200); flex-wrap: wrap;
+}
+.member-name { flex: 1; font-size: 13.5px; font-weight: 600; color: var(--ink); display: flex; align-items: center; gap: 6px; min-width: 130px; flex-wrap: wrap; }
+
+/* Tags / micro labels */
+.prob-tag { font-family: var(--f-mono); font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em; padding: 2px 5px; border-radius: 3px; background: var(--gold-100); color: var(--gold-700); white-space: nowrap; text-transform: uppercase; }
+.inactive-tag { font-family: var(--f-mono); font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em; padding: 2px 5px; border-radius: 3px; background: var(--crimson-100); color: var(--crimson-600); white-space: nowrap; text-transform: uppercase; }
+
+/* P/L/A toggle (Record tab) */
+.status-primary { display: inline-flex; border: 1px solid var(--paper-200); border-radius: 8px; overflow: hidden; background: var(--paper); }
+.status-primary button { width: 32px; height: 30px; border: none; background: transparent; cursor: pointer; font-family: var(--f-mono); font-size: 11px; font-weight: 700; color: var(--ink-500); }
+.status-primary button + button { border-left: 1px solid var(--paper-200); }
+.status-primary button.active-p { background: var(--present); color: #fff; }
+.status-primary button.active-l { background: var(--late-exc); color: #fff; }
+.status-primary button.active-a { background: var(--absent-unexc); color: #fff; }
+.status-sub { display: inline-flex; gap: 4px; }
+.status-sub button { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--paper-300); background: var(--paper); cursor: pointer; font-family: var(--f-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-500); }
+.status-sub button.active-exc    { background: var(--late-exc);    color: #fff; border-color: var(--late-exc); }
+.status-sub button.active-lunexc { background: var(--late-unexc);  color: #fff; border-color: var(--late-unexc); }
+.status-sub button.active-aexc   { background: var(--absent-exc);  color: #fff; border-color: var(--absent-exc); }
+.status-sub button.active-unexc  { background: var(--absent-unexc);color: #fff; border-color: var(--absent-unexc); }
+
+/* Five-button toggle (View tab) */
+.status-five { display: inline-flex; border: 1px solid var(--paper-200); border-radius: 8px; overflow: hidden; background: var(--paper); }
+.status-five button { padding: 6px 9px; border: none; background: transparent; cursor: pointer; font-family: var(--f-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-500); min-width: 30px; }
+.status-five button + button { border-left: 1px solid var(--paper-200); }
+.status-five button.act-p  { background: var(--present);       color: #fff; }
+.status-five button.act-le { background: var(--late-exc);      color: #fff; }
+.status-five button.act-lu { background: var(--late-unexc);    color: #fff; }
+.status-five button.act-ae { background: var(--absent-exc);    color: #fff; }
+.status-five button.act-au { background: var(--absent-unexc);  color: #fff; }
+
+/* Status badges (View by member, history) */
+.status-badge { font-family: var(--f-sans); font-size: 11px; font-weight: 600; padding: 3px 9px 4px; border-radius: 999px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.status-badge::before { content: ""; width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
+.status-badge.Present { background: var(--present-bg); color: var(--present); }
+.status-badge.Late    { background: var(--late-exc-bg); color: var(--late-exc); }
+.status-badge.Absent  { background: var(--absent-unexc-bg); color: var(--absent-unexc); }
+
+/* ── 5. TAB-SPECIFIC ────────────────────────────────────────────────────── */
+
+/* RECORD — submit area
+   Sits ABOVE the mobile tab-nav so it never covers it. */
+.submit-area {
+  position: fixed; left: 0; right: 0;
+  bottom: calc(70px + env(safe-area-inset-bottom));
+  max-width: 600px; margin: 0 auto;
+  background: var(--paper); border-top: 1px solid var(--paper-200);
+  padding: 12px 20px 14px; z-index: 40;
+}
+@media (min-width: 1024px) {
+  /* Desktop: no tab-nav. Sit at the bottom of the main column. */
+  .submit-area { left: 240px; right: 0; bottom: 0; max-width: none; margin: 0; padding: 14px 36px 18px; }
+}
+.summary-bar { display: flex; gap: 8px; justify-content: center; margin-bottom: 10px; flex-wrap: wrap; }
+.summary-bar .pill { font-family: var(--f-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; padding: 4px 9px; border-radius: 6px; background: var(--paper); border: 1px solid var(--paper-200); display: inline-flex; align-items: center; gap: 6px; }
+.summary-bar .pill .dot { width: 6px; height: 6px; border-radius: 999px; }
+.member-count { text-align: left; color: var(--ink-500); font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.06em; margin: 4px 0 10px; }
+.quick-actions { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+.quick-actions button { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--paper-300); background: transparent; cursor: pointer; font-family: var(--f-sans); font-size: 11px; font-weight: 500; color: var(--ink-600); }
+.search-bar { margin-bottom: 12px; position: relative; }
+.search-bar::before { content: "⌕"; position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--ink-400); font-size: 14px; pointer-events: none; }
+.search-bar input { padding-left: 36px; }
+
+/* VIEW — sub-mode tabs */
+.view-mode-toggle {
+  display: inline-flex; padding: 4px; border-radius: 10px;
+  background: var(--paper-100); border: 1px solid var(--paper-200);
+  margin-bottom: 16px; gap: 4px; overflow-x: auto; max-width: 100%;
+}
+.view-mode-toggle button {
+  padding: 7px 14px; border-radius: 7px; border: none; background: transparent;
+  cursor: pointer; font-family: var(--f-sans); font-size: 12.5px; font-weight: 500;
+  color: var(--ink-500); white-space: nowrap;
+}
+.view-mode-toggle button.active { background: var(--paper); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(20,17,15,0.06); }
+
+.date-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px; background: var(--paper); border: 1px solid var(--paper-200);
+  border-radius: 10px; margin-bottom: 8px; cursor: pointer;
+}
+.date-item:hover { border-color: var(--ink); }
+.date-item-info { display: flex; flex-direction: column; gap: 2px; }
+.date-item-date { font-weight: 600; font-size: 13px; color: var(--ink); }
+.date-item-groups { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.06em; color: var(--ink-500); text-transform: uppercase; }
+.date-item-arrow { font-family: var(--f-display); font-size: 18px; color: var(--ink-400); }
+
+.back-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 0; background: transparent; border: none; cursor: pointer; font-family: var(--f-sans); font-size: 12px; color: var(--ink-500); margin-bottom: 12px; }
+.back-btn:hover { color: var(--ink); }
+
+.summary-card { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+.summary-card-title { font-family: var(--f-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-700); margin-bottom: 8px; }
+.summary-card-row { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; font-weight: 600; }
+
+.stat-card { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; }
+.stat-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 12px; }
+.stat-card-group { font-weight: 600; font-size: 13px; color: var(--ink); }
+.stat-card-rate { font-family: var(--f-mono); font-weight: 700; font-size: 13px; }
+.stat-bar { height: 5px; background: var(--paper-200); border-radius: 4px; overflow: hidden; margin-top: 8px; }
+.stat-bar-fill { height: 100%; border-radius: 4px; }
+
+/* History rows (My Att + By Member) */
+.history-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 12px; background: var(--paper); border: 1px solid var(--paper-200); border-radius: 10px; margin-bottom: 6px; gap: 12px; }
+.history-row .history-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.history-date { font-weight: 600; font-size: 13px; color: var(--ink); }
+.history-group { font-family: var(--f-mono); font-size: 10.5px; letter-spacing: 0.04em; color: var(--ink-500); }
+
+/* Members list */
+.member-list-item { padding: 12px 14px; background: var(--paper); border: 1px solid var(--paper-200); border-radius: 10px; margin-bottom: 6px; display: flex; gap: 12px; align-items: flex-start; }
+.member-list-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.member-list-name { font-weight: 600; font-size: 13px; color: var(--ink); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.member-list-detail { font-family: var(--f-mono); font-size: 10.5px; letter-spacing: 0.04em; color: var(--ink-500); }
+
+/* Scoreboard rows */
+.sb-row { display: flex; align-items: center; padding: 12px 14px; background: var(--paper); border: 1px solid var(--paper-200); border-radius: 10px; margin-bottom: 6px; gap: 12px; }
+.sb-row.me { background: var(--gold-100); border-color: var(--gold-500); }
+.sb-rank { font-family: var(--f-display); font-style: normal; font-size: 22px; color: var(--ink-400); min-width: 36px; line-height: 1; }
+.sb-row.podium .sb-rank { color: var(--gold-700); }
+.sb-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sb-name { font-weight: 600; font-size: 13px; color: var(--ink); }
+.sb-detail { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.04em; color: var(--ink-500); }
+.sb-breakdown { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.04em; color: var(--ink-500); }
+.sb-points { font-family: var(--f-display); font-size: 22px; color: var(--ink); }
+.sb-points.positive { color: var(--ink); }
+.sb-points.negative { color: var(--crimson-600); }
+.sb-points.zero     { color: var(--ink-400); }
+
+/* Scoreboard desktop table */
+.sb-table-header { display: grid; grid-template-columns: 0.6fr 2fr 1.6fr 0.6fr 0.6fr 0.7fr; padding: 11px 22px; background: var(--paper-100); border-bottom: 1px solid var(--paper-200); font-family: var(--f-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.12em; color: var(--ink-500); text-transform: uppercase; }
+.sb-table-row { display: grid; grid-template-columns: 0.6fr 2fr 1.6fr 0.6fr 0.6fr 0.7fr; padding: 12px 22px; align-items: center; border-bottom: 1px solid var(--paper-200); }
+.sb-table-row:last-child { border-bottom: none; }
+.sb-table-row .sb-rank { min-width: 0; }
+
+/* Probation desktop table */
+.prob-table-header { display: grid; grid-template-columns: 1.6fr 1fr 2fr 0.7fr 0.8fr 1.1fr; padding: 12px 22px; background: var(--paper-100); border-bottom: 1px solid var(--paper-200); font-family: var(--f-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.14em; color: var(--ink-500); text-transform: uppercase; }
+.prob-table-row { display: grid; grid-template-columns: 1.6fr 1fr 2fr 0.7fr 0.8fr 1.1fr; padding: 14px 22px; align-items: center; border-bottom: 1px solid var(--paper-200); }
+.prob-table-row:last-child { border-bottom: none; }
+
+/* History desktop table (By Member) */
+.hist-table-header { display: grid; grid-template-columns: 1fr 1fr 1fr 1.4fr; padding: 11px 18px; background: var(--paper-100); border-bottom: 1px solid var(--paper-200); font-family: var(--f-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.12em; color: var(--ink-500); text-transform: uppercase; }
+.hist-table-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1.4fr; padding: 13px 18px; align-items: center; border-bottom: 1px solid var(--paper-200); }
+.hist-table-row:last-child { border-bottom: none; }
+
+/* Add-member group boxes */
+.am-group-boxes { display: flex; flex-direction: column; gap: 10px; }
+.am-group-box { border: 1px solid var(--paper-200); border-radius: 10px; padding: 12px 14px; background: var(--paper-100); }
+.am-group-box.checked { background: var(--paper); border-color: var(--ink); }
+.am-group-toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--ink); user-select: none; }
+.am-group-toggle input[type="checkbox"] { appearance: none; -webkit-appearance: none; width: 18px; height: 18px; border-radius: 4px; border: 1.5px solid var(--ink-400); background: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.am-group-toggle input[type="checkbox"]:checked { background: var(--ink); border-color: var(--ink); }
+.am-group-toggle input[type="checkbox"]:checked::after { content: "✓"; color: #fff; font-family: var(--f-display); font-size: 12px; line-height: 1; }
+.am-role-slot:not(:empty) { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--paper-200); }
+
+/* Podium hero */
+.podium-hero {
+  background: var(--paper); border: 1px solid var(--paper-200); border-radius: 14px;
+  padding: 22px 18px 0; margin-bottom: 16px;
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; align-items: end;
+}
+@media (min-width: 1024px) { .podium-hero { padding: 26px 28px 0; gap: 10px; max-width: 560px; } #tab-scoreboard-member .controls { max-width: 420px; } }
+
+/* Member scoreboard: stacked on mobile, two columns on desktop */
+.sb-split { display: block; }
+.sb-split-head { display: none; }
+@media (min-width: 1024px) {
+  .sb-split { display: grid; grid-template-columns: 0.9fr 1.6fr; gap: 24px; align-items: start; max-width: 1100px; }
+  .sb-split-head { display: block; margin-bottom: 14px; }
+}
+.podium-col { display: flex; flex-direction: column; align-items: center; }
+.podium-star { font-family: var(--f-display); font-size: 18px; line-height: 1; margin-bottom: 4px; color: var(--gold); }
+.podium-avatar { border-radius: 999px; display: flex; align-items: center; justify-content: center; font-family: var(--f-display); font-style: italic; background: var(--paper-100); }
+.podium-name { font-family: var(--f-display); font-style: italic; font-size: 13px; color: var(--ink); line-height: 1.05; text-align: center; padding: 0 4px; min-height: 26px; }
+.podium-section { font-family: var(--f-mono); font-size: 9px; color: var(--ink-400); letter-spacing: .12em; text-transform: uppercase; margin: 2px 0 4px; }
+.podium-pts { font-family: var(--f-display); font-size: 18px; color: var(--ink); font-weight: 400; }
+.podium-pts-label { font-family: var(--f-mono); font-size: 8.5px; color: var(--ink-400); letter-spacing: .14em; margin-bottom: 8px; }
+.podium-block { width: 100%; background: var(--ink); border-top: 3px solid var(--gold); border-top-left-radius: 6px; border-top-right-radius: 6px; display: flex; align-items: flex-start; justify-content: center; padding-top: 10px; }
+.podium-block-num { font-family: var(--f-display); font-weight: 400; color: var(--gold); }
+.podium-col.gold   .podium-avatar { border: 2px solid var(--gold); color: var(--gold); }
+.podium-col.silver .podium-avatar { border: 2px solid #A9A39A;     color: #7E7972; }
+.podium-col.bronze .podium-avatar { border: 2px solid #A56A3A;     color: #A56A3A; }
+.podium-col.silver .podium-block { border-top-color: #A9A39A; }
+.podium-col.bronze .podium-block { border-top-color: #A56A3A; }
+.podium-col.silver .podium-block-num { color: #A9A39A; }
+.podium-col.bronze .podium-block-num { color: #A56A3A; }
+
+/* Probation cards */
+.prob-card { background: var(--paper); border: 1px solid var(--gold-500); border-radius: 14px; padding: 16px; margin-top: 16px; }
+.prob-card-title { font-family: var(--f-mono); font-size: 10.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold-700); margin-bottom: 12px; }
+.prob-card.danger { background: var(--crimson-100); border-color: var(--crimson-500); }
+.prob-card.danger .prob-card-title { color: var(--crimson-600); }
+.prob-member { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--paper-200); gap: 12px; }
+.prob-card.danger .prob-member { border-bottom-color: var(--crimson-100); }
+.prob-member:last-child { border-bottom: none; }
+.prob-member-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.prob-member-name { font-weight: 600; font-size: 13px; color: var(--ink); }
+.prob-member-detail { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.04em; color: var(--ink-500); }
+.prob-status { font-family: var(--f-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; padding: 4px 9px; border-radius: 4px; white-space: nowrap; }
+.prob-status.on-track { background: var(--present-bg); color: var(--present); }
+.prob-status.behind   { background: var(--crimson-100); color: var(--crimson-600); }
+
+/* Export section */
+.export-section { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+.export-section-title { font-family: var(--f-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-700); margin-bottom: 10px; }
+.export-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.export-row:last-child { margin-bottom: 0; }
+.export-row input[type="date"] { flex: 1; min-width: 130px; }
+
+/* ── 6. OVERLAYS ────────────────────────────────────────────────────────── */
+
+/* Loading screens */
+.loading { text-align: center; padding: 80px 20px; color: var(--ink-500); font-family: var(--f-sans); font-size: 13px; }
+.spinner { display: inline-block; width: 22px; height: 22px; border: 2px solid var(--paper-200); border-top-color: var(--gold); border-radius: 50%; animation: spin .8s linear infinite; margin-bottom: 12px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Toast */
+.toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); padding: 12px 22px; border-radius: 10px; color: #fff; font-family: var(--f-sans); font-weight: 500; font-size: 13px; z-index: 200; max-width: 90%; text-align: center; box-shadow: 0 8px 24px rgba(20,17,15,0.25); animation: toast-in .25s ease; }
+.toast.success { background: var(--present); }
+.toast.error   { background: var(--crimson); }
+@keyframes toast-in { from { transform: translate(-50%, -8px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+
+/* Overlay / Dialog */
+.overlay { position: fixed; inset: 0; background: rgba(20,17,15,0.45); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 20px; }
+.dialog { background: var(--paper); border-radius: 18px; box-shadow: 0 24px 60px rgba(20,17,15,0.35); padding: 26px 28px 22px; max-width: 460px; width: 100%; }
+.dialog h3 { font-family: var(--f-display); font-style: italic; font-weight: 400; font-size: 26px; line-height: 1.1; margin-bottom: 10px; color: var(--ink); }
+.dialog p { color: var(--ink-600); font-size: 13px; line-height: 1.55; margin-bottom: 18px; }
+.dialog-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.dialog-actions button { padding: 10px 18px; }
+.dialog-actions .btn-danger { background: var(--crimson); color: #fff; border-color: var(--crimson-600); }
+
+/* Changes bar (View tab) — compact floating tray, centered above content */
+.changes-bar {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(80px + env(safe-area-inset-bottom));
+  width: auto; max-width: calc(100vw - 32px);
+  background: var(--ink); color: var(--paper);
+  border-radius: 16px; padding: 16px 22px;
+  z-index: 40; display: flex; align-items: center; gap: 22px;
+  box-shadow: 0 16px 40px rgba(20,17,15,0.32);
+}
+@media (min-width: 1024px) {
+  /* Offset by half the 240px sidebar so it centers within the content column */
+  .changes-bar { left: calc(50% + 120px); bottom: 28px; padding: 18px 26px; gap: 26px; min-width: 720px; }
+}
+.changes-summary { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.changes-summary .num-big { font-family: var(--f-display); font-style: normal; font-size: 38px; color: var(--gold-300); line-height: 1; }
+.changes-summary .summary-text .lead { font-family: var(--f-sans); font-size: 14px; font-weight: 600; color: var(--paper); line-height: 1.1; }
+.changes-summary .summary-text .meta { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.1em; color: var(--ink-300); text-transform: uppercase; margin-top: 3px; }
+.changes-divider { width: 1px; align-self: stretch; min-height: 46px; background: rgba(243,233,206,0.18); flex-shrink: 0; }
+.changes-chips { display: flex; gap: 10px; flex: 1; min-width: 0; overflow-x: auto; }
+.changes-chip { padding: 8px 12px; background: rgba(243,233,206,0.08); border-radius: 8px; flex-shrink: 0; }
+.changes-chip .chip-name { font-family: var(--f-sans); font-size: 11.5px; font-weight: 600; color: var(--paper); line-height: 1.2; }
+.changes-chip .chip-diff { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.04em; color: var(--ink-300); margin-top: 2px; }
+.changes-chip .chip-diff .to { color: var(--gold-300); }
+.changes-chips-more { align-self: center; font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.08em; color: var(--ink-300); flex-shrink: 0; }
+.changes-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.changes-actions button { padding: 10px 16px; border-radius: 8px; border: 1px solid rgba(243,233,206,0.22); background: transparent; color: var(--paper); font-family: var(--f-sans); font-size: 12.5px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.changes-actions .btn-save { background: var(--gold); border-color: var(--gold-700); color: #fff; font-weight: 600; }
+.changes-actions .btn-save:disabled { opacity: 0.6; cursor: not-allowed; }
+@media (max-width: 1023px) {
+  .changes-chips { display: none; }
+  .changes-divider { display: none; }
+}
+/* Phones: stack the tray so the action buttons never clip off-screen */
+@media (max-width: 560px) {
+  .changes-bar {
+    left: 12px; right: 12px; transform: none; width: auto; max-width: none;
+    flex-direction: column; align-items: stretch; gap: 12px;
+    padding: 14px 16px; border-radius: 14px;
+    bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+  .changes-bar .changes-summary { gap: 12px; flex-shrink: 1; min-width: 0; }
+  .changes-bar .changes-summary .num-big { font-size: 30px; }
+  .changes-bar .changes-summary .summary-text { min-width: 0; }
+  .changes-bar .changes-actions { gap: 10px; }
+  .changes-bar .changes-actions button { flex: 1; padding: 11px 12px; }
+}
+/* Reserve room so the floating unsaved-edit tray never covers the last list rows */
+body:has(#changesBar) #tab-view { padding-bottom: 240px; }
+@media (min-width: 1024px) { body:has(#changesBar) #tab-view { padding-bottom: 140px; } }
+
+/* Time note */
+#timeNote { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.06em; color: var(--gold-700); align-self: center; padding: 0 4px; }
+
+/* ── Birthday banner (decorative; per-celebrant markup injected by Scripts) ──
+   Sits at the very top of the content all day. --bday-accent is set inline
+   per celebrant; text stays in a normal readable ink so it reads quietly. */
+#bdayBannerMount { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 14px 20px 0; }
+.bday-banner { max-width: 100%; }
+#bdayBannerMount:empty { display: none; padding: 0; }
+@media (min-width: 1024px) { #bdayBannerMount { padding: 24px 36px 0; } }
+
+.bday-banner {
+  --bday-accent: var(--gold);
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 18px 8px 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--bday-accent) 30%, var(--paper-200));
+  background: color-mix(in srgb, var(--bday-accent) 5%, var(--paper));
+  animation: bday-in .4s ease both;
+}
+@media (prefers-reduced-motion: reduce) { .bday-banner { animation: none; } }
+@keyframes bday-in { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+
+.bday-banner__avatar {
+  width: 38px; height: 38px; border-radius: 999px; flex-shrink: 0;
+  object-fit: cover; background: var(--paper-100);
+  box-shadow: 0 0 0 2px var(--paper), 0 0 0 3.5px var(--bday-accent);
+}
+.bday-banner__avatar--initial {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--f-display); font-style: italic; font-size: 18px; line-height: 1;
+  color: var(--bday-accent);
+  background: color-mix(in srgb, var(--bday-accent) 16%, var(--paper));
+}
+.bday-banner__text {
+  font-family: var(--f-sans); font-size: 14px; font-weight: 600;
+  color: var(--ink-700); line-height: 1.3; min-width: 0;
+}
+
+/* Viewer's own birthday — a touch more festive, still calm */
+.bday-banner--self {
+  border-color: color-mix(in srgb, var(--bday-accent) 55%, var(--paper-200));
+  background: color-mix(in srgb, var(--bday-accent) 11%, var(--paper));
+}
+.bday-banner--self .bday-banner__text { color: var(--ink); }
+
+@media (max-width: 560px) {
+  .bday-banner { padding: 7px 14px 7px 8px; gap: 10px; }
+  .bday-banner__avatar { width: 34px; height: 34px; box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--bday-accent); }
+  .bday-banner__text { font-size: 13px; }
+}
+
+/* ── BIRTHDAYS — admin dashboard (Events Coordinator) ──────────────────
+   Cards reuse the per-person --accent language of the in-app banner. Accent is
+   set inline per person (read from the backend), never hardcoded here. */
+#birthdaysContent { max-width: 1080px; }
+
+.bday-range { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 4px; background: var(--paper-100); border: 1px solid var(--paper-200); border-radius: 999px; }
+.bday-range__opt { font-family: var(--f-sans); font-weight: 600; font-size: 12.5px; padding: 8px 16px; border-radius: 999px; border: none; background: transparent; color: var(--ink-500); cursor: pointer; white-space: nowrap; transition: background .12s ease, color .12s ease; }
+.bday-range__opt:hover { color: var(--ink); }
+.bday-range__opt.active { background: var(--ink); color: var(--paper); }
+
+.bday-section { margin-top: 28px; }
+.bday-section__head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+.bday-section__title { font-family: var(--f-display); font-style: italic; font-size: 25px; line-height: 1; color: var(--ink); }
+.bday-section__count { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-400); }
+.bday-quiet { font-family: var(--f-sans); font-size: 13.5px; color: var(--ink-400); margin: 0; }
+.bday-empty { margin-top: 28px; padding: 28px; text-align: center; border: 1px dashed var(--paper-300); border-radius: 14px; font-family: var(--f-sans); font-size: 14px; color: var(--ink-400); }
+
+.bday-cards { display: grid; grid-template-columns: 1fr; gap: 14px; }
+@media (min-width: 760px) { .bday-cards { grid-template-columns: 1fr 1fr; } }
+
+.bperson { --accent: var(--gold); background: #fff; border: 1px solid var(--paper-200); border-radius: 16px; padding: 18px 18px 16px 22px; position: relative; overflow: hidden; }
+.bperson::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--accent); }
+.bperson__top { display: flex; align-items: center; gap: 14px; }
+.bperson__avatar { width: 54px; height: 54px; border-radius: 999px; flex-shrink: 0; object-fit: cover; background: var(--paper-100); box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--accent); display: inline-flex; align-items: center; justify-content: center; }
+.bperson__avatar--initial { font-family: var(--f-display); font-style: italic; font-size: 25px; line-height: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, #fff); }
+.bperson__id { min-width: 0; flex: 1; }
+.bperson__name { font-family: var(--f-sans); font-weight: 700; font-size: 16px; color: var(--ink); line-height: 1.2; }
+.bperson__age { font-family: var(--f-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin-top: 5px; }
+.bperson__sent { align-self: flex-start; flex-shrink: 0; font-family: var(--f-mono); font-size: 9px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: #2A7D52; background: color-mix(in srgb, #2A7D52 11%, #fff); border: 1px solid color-mix(in srgb, #2A7D52 28%, #fff); padding: 5px 9px; border-radius: 999px; white-space: nowrap; }
+
+.bperson__auto { margin-top: 14px; display: inline-flex; align-items: center; gap: 7px; font-family: var(--f-sans); font-weight: 600; font-size: 12.5px; color: #2A7D52; }
+.bperson__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.bperson__actions .btn { padding: 9px 14px; font-size: 12.5px; }
+
+.bbtn { font-family: var(--f-sans); font-weight: 600; font-size: 12.5px; cursor: pointer; border: 1px solid transparent; border-radius: 10px; padding: 9px 15px; display: inline-flex; align-items: center; gap: 7px; transition: transform .12s ease, filter .12s ease; }
+.bbtn:hover { transform: translateY(-1px); }
+.bbtn:active { transform: translateY(0); }
+.bbtn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+.bbtn--accent { background: var(--accent); color: #fff; border-color: color-mix(in srgb, var(--accent) 76%, #000); }
+.bbtn--accent:hover { filter: brightness(1.06); }
+
+.bperson__edit { display: none; margin-top: 16px; }
+.bperson.editing .bperson__edit { display: block; }
+.bperson.editing .bperson__actions { display: none; }
+.bperson__edit .form-label { display: block; font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-500); margin-bottom: 7px; }
+.bperson__msg { width: 100%; box-sizing: border-box; min-height: 132px; padding: 12px 14px; border: 1px solid var(--paper-200); border-radius: 10px; background: var(--paper); font-family: var(--f-sans); font-size: 13.5px; line-height: 1.6; color: var(--ink); resize: vertical; }
+.bperson__msg:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.bperson__edit-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+/* Auto-send setting toggle */
+.bday-setting { display: flex; align-items: center; gap: 14px; margin-top: 18px; padding: 14px 18px; background: #fff; border: 1px solid var(--paper-200); border-radius: 14px; }
+.bday-setting__copy { flex: 1; min-width: 0; }
+.bday-setting__label { font-family: var(--f-sans); font-weight: 700; font-size: 14px; color: var(--ink); }
+.bday-setting__hint { font-family: var(--f-sans); font-size: 12px; color: var(--ink-400); margin-top: 3px; }
+.bswitch { position: relative; flex-shrink: 0; width: 48px; height: 28px; border-radius: 999px; border: none; background: var(--paper-300); cursor: pointer; padding: 0; transition: background .16s ease; }
+.bswitch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 999px; background: #fff; box-shadow: 0 1px 3px rgba(20,17,15,0.28); transition: transform .16s ease; }
+.bswitch[aria-checked="true"] { background: #2A7D52; }
+.bswitch[aria-checked="true"]::after { transform: translateX(20px); }
+.bswitch:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* Editable group draft (admin copies, then pastes into WhatsApp) */
+.bperson__group { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--paper-100); }
+.bperson__group .form-label { display: block; font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-500); margin-bottom: 7px; }
+.bperson__group-row { display: flex; gap: 8px; align-items: stretch; }
+.bperson__group-ta { flex: 1; box-sizing: border-box; min-height: 64px; padding: 10px 12px; border: 1px solid var(--paper-200); border-radius: 10px; background: var(--paper); font-family: var(--f-sans); font-size: 13px; line-height: 1.5; color: var(--ink); resize: vertical; }
+.bperson__group-ta:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.bperson__group .bbtn { align-self: flex-start; }
+
+/* Member dropdown (By Member search) */
+#memberDropdown { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 10px; padding: 4px; margin-top: -8px; margin-bottom: 14px; max-height: 280px; overflow-y: auto; }
+#memberDropdown .date-item { margin-bottom: 2px; padding: 10px 12px; }
+
+/* Hero sections (My Att) */
+.hero-greeting { padding: 4px 0 18px; }
+.hero-greeting .display { font-size: 36px; }
+.hero-rank {
+  background: var(--ink); color: var(--paper); border-radius: 14px;
+  padding: 18px 20px; position: relative; overflow: hidden; margin: 16px 0;
+}
+.hero-rank .watermark { position: absolute; right: -18px; top: -8px; height: 150px; opacity: 0.16; }
+.hero-rank .label { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.18em; color: var(--gold-300); position: relative; }
+.hero-rank .rank-num { font-family: var(--f-display); font-style: normal; font-size: 56px; color: var(--gold-300); line-height: 0.9; }
+.hero-rank .rank-pts { font-family: var(--f-mono); font-size: 18px; color: var(--paper); }
+.hero-rank .rank-row { display: flex; align-items: baseline; gap: 14px; margin-top: 10px; position: relative; }
+.hero-rank .breakdown { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(243,233,206,0.16); display: flex; gap: 14px; font-family: var(--f-sans); font-size: 11.5px; color: var(--ink-300); position: relative; }
+.hero-rank .breakdown b { color: var(--paper); font-weight: 600; }
+
+/* My Attendance — dashboard grids */
+.myatt-top-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin-bottom: 18px; }
+.myatt-top-grid .hero-rank { margin: 0; display: flex; padding: 20px 22px; }
+.next-session-card { background: var(--paper-100); border: 1px dashed var(--paper-300); border-radius: 14px; padding: 18px 20px; }
+.myatt-lower-grid { display: grid; grid-template-columns: 1fr; gap: 18px; align-items: start; }
+.myatt-apologies { display: none; }
+@media (min-width: 1024px) {
+  .myatt-top-grid { grid-template-columns: 1.4fr 1fr 1fr; gap: 16px; }
+  .myatt-lower-grid { grid-template-columns: 1.6fr 1fr; gap: 16px; }
+  .myatt-apologies { display: block; }
+}
+
+/* Section divider (h2 + gold rule) */
+.section-head { margin: 24px 0 12px; }
+.section-head .eyebrow { margin-bottom: 8px; }
+
+/* Auth screens */
+.access-screen { padding: 80px 32px; text-align: center; max-width: 420px; margin: 0 auto; position: relative; min-height: 100vh; }
+.access-screen .denied-actions { margin-top: 28px; display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.access-screen .denied-actions .btn { width: 100%; }
+.access-screen .denied-footer { position: absolute; bottom: 28px; left: 0; right: 0; text-align: center; font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.18em; color: var(--ink-400); }
+.access-screen .mark { display: inline-flex; align-items: center; justify-content: center; margin-bottom: 24px; position: relative; }
+.access-screen .mark img { height: 80px; }
+.access-screen .mark .denied-badge { position: absolute; right: -8px; bottom: -2px; width: 30px; height: 30px; border-radius: 999px; background: var(--crimson); color: #fff; display: flex; align-items: center; justify-content: center; font-family: var(--f-display); font-size: 20px; border: 3px solid var(--paper); }
+.access-screen h1 { font-family: var(--f-display); font-style: italic; font-weight: 400; font-size: 38px; line-height: 1.05; color: var(--ink); margin: 18px 0 0; }
+.access-screen .desc { font-size: 13.5px; color: var(--ink-600); line-height: 1.55; margin: 16px auto 0; max-width: 300px; }
+.access-screen .email-pill { margin-top: 22px; display: inline-flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 18px; background: var(--paper-100); border: 1px solid var(--paper-200); border-radius: 10px; }
+.access-screen .email-pill .label { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.14em; color: var(--ink-500); }
+.access-screen .email-pill .email { font-family: var(--f-mono); font-size: 12px; color: var(--ink); }
+
+/* Splash */
+#authScreen { padding: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+#authScreen .splash-logo { width: 220px; margin-bottom: 24px; }
+#authScreen .splash-quote { font-family: var(--f-display); font-style: italic; font-size: 22px; color: var(--ink-700); line-height: 1.2; max-width: 280px; padding: 0 24px; margin-bottom: 50px; }
+#authScreen .splash-status { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+#authScreen .splash-status .label { font-family: var(--f-sans); font-size: 13px; color: var(--ink-500); }
+#authScreen .footer-mark { position: fixed; bottom: 28px; left: 0; right: 0; text-align: center; font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.18em; color: var(--ink-400); }
+@media (min-width: 1024px) { #authScreen .footer-mark { display: none; } }
+
+/* Record tab — desktop: 4-column section grid + right rail */
+@media (min-width: 1024px) {
+  #tab-record .record-desktop-grid { display: grid; grid-template-columns: 1fr 280px; gap: 20px; align-items: start; }
+  #tab-record .record-main-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; align-content: start; }
+  #tab-record .record-rail { position: sticky; top: 28px; }
+}
+#tab-record .record-desktop-grid { display: block; }
+#tab-record .record-rail { display: none; }
+@media (min-width: 1024px) {
+  #tab-record .record-rail { display: block; }
+}
+
+/* Record tab — section column card */
+.record-section-col { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 12px; overflow: hidden; }
+.record-section-col .col-header { padding: 12px 14px; background: var(--paper-100); border-bottom: 1px solid var(--paper-200); display: flex; justify-content: space-between; align-items: baseline; }
+.record-section-col .col-header .eyebrow { color: var(--ink-700); }
+.record-section-col .col-body { padding: 4px 0; }
+.record-section-col .col-member { padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--paper-100); }
+.record-section-col .col-member:last-child { border-bottom: none; }
+
+/* Members roster — desktop table layout */
+@media (min-width: 1024px) {
+  .roster-table { display: block; }
+  .roster-table-header { display: grid; grid-template-columns: 2fr 1fr 1.4fr 1fr 0.8fr; padding: 12px 22px; background: var(--paper-100); border-bottom: 1px solid var(--paper-200); border-radius: 14px 14px 0 0; font-family: var(--f-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.14em; color: var(--ink-500); text-transform: uppercase; }
+  .roster-table-row { display: grid; grid-template-columns: 2fr 1fr 1.4fr 1fr 0.8fr; padding: 12px 22px; align-items: center; border-bottom: 1px solid var(--paper-200); cursor: pointer; }
+  .roster-table-row:hover { background: var(--paper-100); }
+  .roster-table-row.selected { background: var(--paper-100); border-left: 3px solid var(--gold); }
+  .member-list-item { display: none; }
+}
+@media (max-width: 1023px) {
+  .roster-table-header, .roster-table-row { display: none; }
+}
+
+/* Members roster — mobile master-detail.
+   Show the list OR the selected member's detail full-screen, one at a time.
+   On desktop both panes stay side-by-side (default two-pane grid). */
+.member-detail-back { margin-bottom: 14px; }
+@media (min-width: 1024px) {
+  .member-detail-back { display: none !important; }
+}
+@media (max-width: 1023px) {
+  #membersRosterPane .two-pane-detail { display: none; }
+  #membersRosterPane.detail-open .two-pane-list { display: none; }
+  #membersRosterPane.detail-open .two-pane-detail { display: block; }
+}
+
+/* Roster avatar */
+.roster-avatar { width: 32px; height: 32px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; font-family: var(--f-display); font-style: italic; font-size: 14px; color: var(--ink); flex-shrink: 0; }
+
+/* Attendance mini-bar */
+.att-bar { display: inline-flex; align-items: center; gap: 8px; }
+.att-bar-track { width: 56px; height: 4px; border-radius: 4px; background: var(--paper-200); overflow: hidden; }
+.att-bar-fill { height: 100%; border-radius: 4px; }
+.att-bar-label { font-family: var(--f-mono); font-size: 11px; color: var(--ink-600); font-weight: 600; }
+
+/* View & Edit — date list gold accent + dark tally strip */
+.date-item.selected { border-color: var(--ink); background: var(--paper-100); border-left: 3px solid var(--gold); }
+.tally-strip { background: var(--ink); color: var(--paper); border-radius: 12px; padding: 14px 18px; margin-bottom: 18px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.tally-strip .tally-block { display: flex; flex-direction: column; gap: 4px; }
+.tally-strip .tally-label { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.14em; color: var(--gold-300); }
+.tally-strip .tally-row { display: flex; gap: 12px; font-size: 12px; }
+.tally-strip .tally-row .num { font-family: var(--f-display); font-size: 22px; color: var(--paper); line-height: 1; font-style: normal; }
+.tally-strip .tally-divider { width: 1px; height: 44px; background: rgba(243,233,206,0.18); }
+
+/* View & Edit — desktop 2-col section grid for date detail */
+@media (min-width: 1024px) {
+  .view-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+}
+
+/* Requests — level-1 type toggle (Apologies · Transfers · Changes) */
+.req-type-toggle { display: inline-flex; padding: 4px; border-radius: 10px; background: var(--paper-100); border: 1px solid var(--paper-200); gap: 4px; overflow-x: auto; max-width: 100%; }
+.req-type-toggle button { padding: 7px 12px; border-radius: 7px; border: none; background: transparent; cursor: pointer; font-family: var(--f-sans); font-size: 12.5px; font-weight: 500; color: var(--ink-500); white-space: nowrap; display: inline-flex; align-items: center; gap: 7px; }
+.req-type-toggle button.active { background: var(--ink); color: var(--paper); font-weight: 600; }
+.req-type-toggle button .cnt { font-family: var(--f-mono); font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--paper-200); color: var(--ink-500); }
+.req-type-toggle button.active .cnt { background: rgba(243,233,206,0.18); color: var(--gold-300); }
+
+/* Apology queue — two-pane */
+.apology-queue-list .apology-queue-item { padding: 16px 18px; border-bottom: 1px solid var(--paper-200); cursor: pointer; }
+.apology-queue-list .apology-queue-item:hover { background: var(--paper-100); }
+.apology-queue-list .apology-queue-item.selected { background: var(--paper-100); border-left: 3px solid var(--gold); }
+.apology-detail-pane .consequence-preview { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 16px; background: var(--paper); border: 1px solid var(--paper-200); border-radius: 12px; margin-bottom: 18px; }
+.apology-detail-pane .consequence-arrow { font-family: var(--f-display); font-size: 20px; color: var(--ink-400); }
+
+/* ── Member apology form (sub-page of My attendance) ── */
+.apol-back { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; cursor: pointer; padding: 2px 0 10px; font-family: var(--f-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-500); }
+.apol-back:hover { color: var(--ink); }
+.apol-card { padding: 20px 22px; }
+.apol-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.apol-session-meta { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.08em; color: var(--ink-500); margin-top: 3px; }
+.apol-session-select { width: 100%; box-sizing: border-box; padding: 11px 14px; border-radius: 10px; border: 1px solid var(--paper-200); background: var(--paper-100); font-family: var(--f-sans); font-size: 13.5px; font-weight: 600; color: var(--ink); cursor: pointer; }
+.apol-session-detail { margin-top: 8px; }
+.apol-session-deadline { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.08em; color: var(--gold-700); margin-top: 6px; }
+.apol-session-deadline.passed { color: var(--crimson-600); }
+.apol-other-date { position: relative; display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 14px; padding: 11px 14px; border: 1px dashed var(--ink-400); border-radius: 10px; background: transparent; cursor: pointer; }
+.apol-other-date:hover { border-color: var(--ink); }
+.apol-other-date-title { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.apol-other-date-sub { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.06em; color: var(--ink-500); margin-top: 2px; }
+.apol-other-date-plus { font-family: var(--f-display); font-size: 17px; color: var(--ink-400); line-height: 1; flex-shrink: 0; }
+.apol-other-date-input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: none; background: transparent; opacity: 0; cursor: pointer; }
+.apol-type { display: flex; gap: 8px; }
+.apol-type-btn { flex: 1; display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-radius: 10px; border: 1px solid var(--paper-200); background: var(--paper); color: var(--ink-700); cursor: pointer; font-family: var(--f-sans); font-size: 13px; font-weight: 600; text-align: left; transition: background 0.12s, border-color 0.12s; }
+.apol-type-btn .apol-radio { width: 14px; height: 14px; border-radius: 999px; border: 2px solid var(--ink-400); flex-shrink: 0; box-sizing: border-box; }
+.apol-type-btn.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.apol-type-btn.active .apol-radio { border-color: var(--paper); background: var(--paper); }
+.apol-reason { width: 100%; box-sizing: border-box; min-height: 88px; resize: vertical; padding: 11px 14px; border-radius: 10px; border: 1px solid var(--paper-300); background: var(--paper-100); font-family: var(--f-sans); font-size: 13px; line-height: 1.55; color: var(--ink); }
+.apol-reason::placeholder { color: var(--ink-400); }
+.apol-hint { font-size: 11px; color: var(--ink-500); margin-top: 7px; }
+.apol-confirm { display: flex; align-items: flex-start; gap: 10px; margin-top: 16px; padding: 12px 14px; border-radius: 10px; background: var(--present-bg); }
+.apol-confirm.passed { background: var(--gold-100); }
+.apol-confirm-mark { color: var(--present); font-size: 15px; line-height: 1.25; flex-shrink: 0; }
+.apol-confirm.passed .apol-confirm-mark { color: var(--gold-700); }
+.apol-confirm-title { font-size: 13px; font-weight: 600; color: var(--present); }
+.apol-confirm.passed .apol-confirm-title { color: var(--gold-700); }
+.apol-confirm-body { font-size: 11.5px; color: var(--ink-600); margin-top: 4px; line-height: 1.5; }
+.apol-foot { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--paper-200); }
+.apol-cutoff { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.1em; color: var(--ink-500); }
+.apol-foot-actions { display: flex; gap: 10px; margin-left: auto; }
+.apol-foot-actions .btn { padding: 10px 18px; }
+.apol-longhint { display: flex; align-items: center; gap: 9px; margin-top: 16px; padding: 11px 14px; border: 1px dashed var(--paper-300); border-radius: 10px; background: var(--paper); cursor: pointer; font-size: 12px; color: var(--ink-600); line-height: 1.4; }
+.apol-longhint-mark { color: var(--gold-700); flex-shrink: 0; }
+.apol-longhint:hover { border-color: var(--gold-500); color: var(--ink); }
+.apol-history { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 14px; padding: 4px 16px; }
+@media (min-width: 1024px) { .apol-grid { grid-template-columns: 1.35fr 1fr; } }
+
+/* ── COMMUNIQUÉ — admin message composer ──────────────────────────────────
+   The client injects the whole composer into #communiqueContent; these rules
+   style that injected markup so it reads as a considered "compose" panel. */
+#tab-communique .comm-shell { max-width: 1100px; }
+@media (min-width: 1024px) { #tab-communique .comm-shell { margin: 0; } }
+@media (min-width: 1024px) { #tab-communique .comm-two-pane { grid-template-columns: 1fr 392px; } }
+#tab-communique .two-pane-list { max-width: 620px; }
+
+/* Live letterhead preview pane */
+#communiquePreview .cp-frame {
+  border: 1px solid var(--paper-200); border-radius: 12px; overflow: hidden;
+  background: var(--paper-100); box-shadow: 0 1px 2px rgba(20,17,15,0.04);
+}
+#communiquePreview .cp-bar {
+  padding: 8px 14px; border-bottom: 1px solid var(--paper-200); background: var(--paper-100);
+  display: flex; justify-content: space-between; align-items: center;
+}
+#communiquePreview .cp-bar .form-label { margin: 0; font-size: 9px; }
+#communiquePreview .cp-bar .cp-file { font-family: var(--f-mono); font-size: 9px; color: var(--ink-400); letter-spacing: .08em; }
+#communiquePreview .cp-sheet { background: #fff; }
+#communiquePreview .cp-recipients {
+  padding: 10px 14px; background: var(--paper); border-bottom: 1px solid var(--paper-200);
+  font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .04em; color: var(--ink-500);
+  display: flex; gap: 6px; align-items: baseline; line-height: 1.5;
+}
+#communiquePreview .cp-recipients b { color: var(--gold-700); font-weight: 700; }
+
+/* The composer sits on a single sheet of stationery */
+#communiqueContent {
+  background: #fff; border: 1px solid var(--paper-200); border-radius: 14px;
+  padding: 22px 22px 24px; position: relative; overflow: hidden;
+  box-shadow: 0 1px 2px rgba(20,17,15,0.03);
+}
+#communiqueContent::before {
+  content: ""; position: absolute; left: 0; top: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, var(--gold-700), var(--gold), var(--gold-300));
+}
+@media (min-width: 1024px) { #communiqueContent { padding: 28px 30px 30px; } }
+
+/* form-input is the class the client stamps on the subject/body/signature.
+   Mirror the design-system field styling so they all match. */
+#communiqueContent .form-input {
+  width: 100%; padding: 11px 14px; border: 1px solid var(--paper-200); border-radius: 10px;
+  background: var(--paper); font-family: var(--f-sans); font-size: 13px; color: var(--ink);
+  -webkit-appearance: none; appearance: none;
+}
+#communiqueContent .form-input:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px rgba(176,133,56,0.10); }
+#communiqueContent textarea.form-input { line-height: 1.6; resize: vertical; min-height: 168px; }
+#communiqueContent input.form-input::placeholder,
+#communiqueContent textarea.form-input::placeholder { color: var(--ink-400); }
+
+/* Separate the recipient picker from the message with a hairline */
+#communiqueContent #commGroupSelect,
+#communiqueContent #commMemberSelect { margin-top: 2px; }
+
+/* "Send to" radio rows — give radios the design-system treatment */
+#tab-communique .checkbox-label input[type="radio"] {
+  appearance: none; -webkit-appearance: none; width: 18px; height: 18px; border-radius: 999px;
+  border: 1.5px solid var(--ink-400); background: #fff; cursor: pointer; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+#tab-communique .checkbox-label input[type="radio"]:checked { border-color: var(--ink); }
+#tab-communique .checkbox-label input[type="radio"]:checked::after {
+  content: ""; width: 8px; height: 8px; border-radius: 999px; background: var(--ink);
+}
+#tab-communique .checkbox-label:has(input[type="radio"]:checked) { border-color: var(--ink); color: var(--ink); background: #fff; }
+
+/* Searchable member list — comfortable to scan */
+#communiqueContent #commMemberList {
+  background: var(--paper); scrollbar-width: thin; scrollbar-color: var(--paper-300) transparent;
+}
+#communiqueContent #commMemberList::-webkit-scrollbar { width: 9px; }
+#communiqueContent #commMemberList::-webkit-scrollbar-thumb { background: var(--paper-300); border-radius: 999px; border: 2px solid var(--paper); }
+#communiqueContent #commMemberList .checkbox-label {
+  width: 100%; padding: 9px 10px !important; border-radius: 8px; margin: 0;
+  background: transparent !important; font-weight: 500;
+}
+#communiqueContent #commMemberList .checkbox-label + .checkbox-label { border-top: 1px solid var(--paper-100) !important; }
+#communiqueContent #commMemberList .checkbox-label:hover { background: var(--paper-100) !important; }
+#communiqueContent #commMemberList .checkbox-label:has(input:checked) { background: var(--gold-100) !important; }
+
+/* CC-admins toggle reads as a footnote-ish option above Send */
+#communiqueContent #commCcAdmins { }
+
+/* The send button is stamped with only .btn-primary — give it the full .btn shape */
+#communiqueContent #btnSendComm {
+  font-family: var(--f-sans); font-weight: 600; font-size: 13.5px; cursor: pointer;
+  padding: 12px 20px; border-radius: 10px; border: 1px solid var(--ink); width: 100%;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  transition: transform .12s ease, background .12s ease; margin-top: 4px;
+}
+#communiqueContent #btnSendComm:hover { transform: translateY(-1px); background: var(--ink-700); }
+#communiqueContent #btnSendComm:active { transform: translateY(0); }
+#communiqueContent #btnSendComm:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+
+/* ── RECORD · schedule-a-meeting panel ──────────────────────────────────── */
+.meeting-panel { border: 1px solid var(--paper-200); border-radius: 12px; background: var(--paper); margin-bottom: 16px; overflow: hidden; }
+.meeting-panel[open] { background: #fff; }
+.meeting-summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; user-select: none; }
+.meeting-summary::-webkit-details-marker { display: none; }
+.meeting-summary-label { display: flex; align-items: center; gap: 9px; font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.meeting-plus { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 6px; background: var(--ink); color: var(--paper); font-family: var(--f-display); font-size: 16px; line-height: 1; transition: transform .15s ease; }
+.meeting-panel[open] .meeting-plus { transform: rotate(45deg); }
+.meeting-summary-hint { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-400); }
+.meeting-panel-body { padding: 0 16px 16px; border-top: 1px solid var(--paper-200); }
+
+/* Scheduled-meeting rows (client may re-render; these style the result) */
+.meeting-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; background: var(--paper); border: 1px solid var(--paper-200); border-radius: 10px; margin-bottom: 8px; }
+.meeting-item-info { min-width: 0; }
+.meeting-item-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.meeting-item-meta { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.04em; color: var(--ink-500); margin-top: 3px; }
+.meeting-del { flex-shrink: 0; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--paper-300); background: var(--paper); color: var(--crimson-600); font-family: var(--f-sans); font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.meeting-del:hover { border-color: var(--crimson); background: var(--crimson-100); }
+
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     AUTH SCREENS (shown before role check resolves)
+     ═══════════════════════════════════════════════════════════════════ -->
+
+<div id="authScreen">
+  <img class="splash-logo" src="https://drive.google.com/thumbnail?id=1C3aBPIj6coFErat6BEzjGTYAZ9JapZ2J&sz=w800" alt="Strathmore Chorale"
+       onerror="this.style.display='none'">
+  <div class="eyebrow">Attendance · MMXXVI</div>
+  <span class="gold-rule" style="margin: 18px auto;"></span>
+  <div class="splash-quote">“One voice from many.”</div>
+  <div class="splash-status">
+    <div class="spinner"></div>
+    <div class="label">Verifying access…</div>
+  </div>
+  <div class="footer-mark">STRATHMORE · NAIROBI</div>
+</div>
+
+<div id="deniedScreen" style="display:none">
+  <div class="access-screen">
+    <div class="mark">
+      <img src="https://drive.google.com/thumbnail?id=1_mYJ9YIiaaTmiBc5MhxMhddihLACoquj&sz=w400" alt="" style="height:80px" onerror="this.style.display='none'">
+      <span class="denied-badge">×</span>
+    </div>
+    <div class="eyebrow" style="color: var(--crimson); font-size: 10px">Access denied</div>
+    <span class="gold-rule" style="margin: 16px auto;"></span>
+    <h1>We don’t<br>know you yet.</h1>
+    <p class="desc" id="deniedMsg">No account is registered for the email below. Contact the chorale admin to be added to the roster.</p>
+    <div class="email-pill">
+      <span class="label">SIGNED IN AS</span>
+      <span class="email" id="deniedEmail"></span>
+    </div>
+    <div class="denied-actions">
+      <button class="btn btn-primary" onclick="emailDeniedAdmin()">Email the admin</button>
+      <button class="btn btn-ghost" style="color:var(--ink-500);font-size:12px" onclick="signInDifferentAccount()">Sign in with a different account</button>
+    </div>
+    <div class="denied-footer">STRATHMORE · NAIROBI</div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     APP (hidden until auth completes)
+     ═══════════════════════════════════════════════════════════════════ -->
+
+<div id="appContainer" style="display:none">
+
+  <!-- Desktop sidebar -->
+  <aside id="sidebar">
+    <div class="brand">
+      <img src="https://drive.google.com/thumbnail?id=1_mYJ9YIiaaTmiBc5MhxMhddihLACoquj&sz=w400" alt="" onerror="this.style.display='none'">
+      <div>
+        <div class="name">Chorale</div>
+        <div class="sub">Attendance</div>
+      </div>
+    </div>
+    <div class="eyebrow group-label">Work</div>
+    <nav id="sidebarNav"></nav>
+    <div class="user" onclick="openProfile()" style="cursor:pointer" title="My profile">
+      <div class="avatar" id="sideAvatar">·</div>
+      <div class="who">
+        <div class="name-row" id="sideName">—</div>
+        <div class="meta"><span class="role-badge" id="sideRole">USER</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <main id="main">
+    <!-- Mobile topbar -->
+    <header class="topbar">
+      <div class="brand">
+        <img src="https://drive.google.com/thumbnail?id=1_mYJ9YIiaaTmiBc5MhxMhddihLACoquj&sz=w400" alt="" onerror="this.style.display='none'">
+        <div>
+          <div class="name">Chorale</div>
+          <div class="sub" id="topbarSub">Attendance</div>
+        </div>
+      </div>
+      <div class="user-pill" onclick="openProfile()" style="cursor:pointer" title="My profile">
+        <div class="avatar" id="topAvatar">·</div>
+      </div>
+    </header>
+
+    <!-- Mobile bottom-tab nav (rendered by Scripts) -->
+    <nav class="tab-nav" id="tabNav"></nav>
+
+    <!-- Birthday banner mount (decorative; markup injected per-celebrant by Scripts) -->
+    <div id="bdayBannerMount"></div>
+
+    <!-- ─── RECORD TAB ─── -->
+    <section id="tab-record" class="tab-page">
+      <div class="section-head">
+        <div class="eyebrow">Today’s session</div>
+        <span class="gold-rule"></span>
+        <h2>Record attendance.</h2>
+        <p class="subtitle">Choose a date, pick the groups, and mark who showed up.</p>
+      </div>
+
+      <div class="controls">
+        <input type="date" id="attendanceDate" onchange="onDateChange()">
+        <select id="sessionType" onchange="onSessionTypeChange()">
+          <option value="practice">Practice</option>
+          <option value="meeting">Meeting</option>
+        </select>
+      </div>
+
+      <!-- Meeting picker — shown by Scripts only when session type is "Meeting" -->
+      <div class="form-group" id="meetingPickerWrap" style="display:none">
+        <label class="form-label" for="meetingPicker">Scheduled meeting</label>
+        <select id="meetingPicker" onchange="onMeetingPicked()">
+          <option value="">Select a scheduled meeting…</option>
+        </select>
+      </div>
+
+      <div class="controls" id="timeRow">
+        <input type="time" id="sessionTime">
+        <span id="timeNote"></span>
+      </div>
+
+      <div class="form-label" style="margin-top:4px">Groups</div>
+      <div class="checkbox-row" style="margin-bottom:14px">
+        <label class="checkbox-label"><input type="checkbox" id="grpChoir"     value="Choir"     onchange="onGroupCheckChange()">Choir</label>
+        <label class="checkbox-label"><input type="checkbox" id="grpBand"      value="Band"      onchange="onGroupCheckChange()">Band</label>
+        <label class="checkbox-label"><input type="checkbox" id="grpOrchestra" value="Orchestra" onchange="onGroupCheckChange()">Orchestra</label>
+      </div>
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+        <button class="btn btn-primary" onclick="onGroupChange()">Load members</button>
+        <button class="btn btn-secondary" onclick="sendReminder()">Send reminder</button>
+      </div>
+
+      <!-- Schedule a meeting (one-off sessions) — collapsed by default -->
+      <details class="meeting-panel" id="meetingPanel" ontoggle="onMeetingPanelToggle()">
+        <summary class="meeting-summary">
+          <span class="meeting-summary-label"><span class="meeting-plus">+</span> Schedule a meeting</span>
+          <span class="meeting-summary-hint">One-off sessions</span>
+        </summary>
+        <div class="meeting-panel-body">
+          <p style="font-size:12px;color:var(--ink-500);line-height:1.5;margin:10px 0 14px">Set up a one-time meeting for any group. It shows up on the Record tab’s “Meeting” option and members can apologise for it.</p>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Date</label><input type="date" id="mtgDate"></div>
+            <div class="form-group"><label class="form-label">Time</label><input type="time" id="mtgTime"></div>
+          </div>
+          <div class="form-group"><label class="form-label">Title</label><input type="text" id="mtgTitle" placeholder="e.g. Committee meeting, Sectional planning"></div>
+          <div class="form-group" style="margin-bottom:14px">
+            <label class="form-label">Groups</label>
+            <div class="checkbox-row">
+              <label class="checkbox-label"><input type="checkbox" class="mtgGroup" value="Choir">Choir</label>
+              <label class="checkbox-label"><input type="checkbox" class="mtgGroup" value="Band">Band</label>
+              <label class="checkbox-label"><input type="checkbox" class="mtgGroup" value="Orchestra">Orchestra</label>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end">
+            <button class="btn btn-primary" id="btnScheduleMtg" onclick="scheduleMeeting()">Schedule meeting</button>
+          </div>
+          <div class="eyebrow" style="margin:20px 0 10px">Upcoming meetings</div>
+          <div id="meetingsList"><p class="loading" style="padding:10px 0">Loading meetings…</p></div>
+        </div>
+      </details>
+
+      <div class="quick-actions" id="quickActions" style="display:none">
+        <button onclick="setAll('Present')">All present</button>
+        <button onclick="setAll('Absent Unexcused')">Clear</button>
+        <div style="flex:1"></div>
+        <span style="font-family:var(--f-mono);font-size:10px;letter-spacing:.08em;color:var(--ink-400)" id="memberCount"></span>
+      </div>
+
+      <div class="search-bar" id="searchArea" style="display:none">
+        <input type="text" id="searchInput" placeholder="Search members…" oninput="renderMembers()">
+      </div>
+
+      <div id="memberList"><p class="loading">Select groups and tap Load members.</p></div>
+      <div id="probationCard"></div>
+
+      <div class="submit-area" id="submitArea" style="display:none">
+        <div class="summary-bar" id="summaryBar"></div>
+        <button class="btn btn-primary btn-block" id="btnSubmit" onclick="handleSubmit()">Submit attendance</button>
+      </div>
+    </section>
+
+    <!-- ─── VIEW & EDIT TAB ─── -->
+    <section id="tab-view" class="tab-page">
+      <div id="viewRoot"></div>
+    </section>
+
+    <!-- ─── MEMBERS TAB ─── -->
+    <section id="tab-members" class="tab-page">
+      <div class="section-head">
+        <div class="eyebrow">Roster · admin</div>
+        <span class="gold-rule"></span>
+        <h2>Members.</h2>
+        <p class="subtitle">Add new members, record offenses, browse the roster.</p>
+      </div>
+
+      <!-- Sub-mode toggle -->
+      <div class="view-mode-toggle" id="membersModeToggle">
+        <button class="active" onclick="setMembersMode('roster')">Roster</button>
+        <button onclick="setMembersMode('add')">Add member</button>
+        <button onclick="setMembersMode('offense')">Record offense</button>
+      </div>
+
+      <!-- ROSTER (two-pane on desktop) -->
+      <div id="membersRosterPane">
+        <div class="two-pane">
+          <div class="two-pane-list">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+              <div class="eyebrow">Roster</div>
+              <button class="btn-export" onclick="refreshMemberList()">Refresh ⟳</button>
+            </div>
+            <div class="search-bar">
+              <input type="text" id="memberListSearch" placeholder="Search members…" oninput="renderMemberList()">
+            </div>
+            <div id="memberListContent"><p class="loading">Tap Refresh to load.</p></div>
+          </div>
+          <div class="two-pane-detail">
+            <div id="memberDetailPane"><div class="empty-pane">Select a member to see their profile.</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADD MEMBER (form + live preview on desktop) -->
+      <div id="membersAddPane" style="display:none">
+        <div class="two-pane">
+          <div class="two-pane-list">
+            <div class="card" id="addMemberForm">
+              <div class="form-label" style="margin-bottom:14px">New member</div>
+              <div class="form-group"><label class="form-label">Name *</label><input type="text" id="amName" placeholder="Full name" oninput="renderAddMemberPreview()"></div>
+              <div class="form-group"><label class="form-label">Email</label><input type="email" id="amEmail" placeholder="email@strathmore.edu" oninput="renderAddMemberPreview()"></div>
+              <div class="form-row">
+                <div class="form-group"><label class="form-label">Phone</label><input type="text" id="amPhone"></div>
+                <div class="form-group"><label class="form-label">Adm. no.</label><input type="text" id="amAdmNo"></div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Groups & roles *</label>
+                <div id="amGroupBoxes" class="am-group-boxes">
+                  <div class="am-group-box" data-group="Choir">
+                    <label class="am-group-toggle"><input type="checkbox" value="Choir" onchange="onAmGroupToggle()"><span>Choir</span></label>
+                    <div class="am-role-slot" id="amRoleSlot_Choir"></div>
+                  </div>
+                  <div class="am-group-box" data-group="Band">
+                    <label class="am-group-toggle"><input type="checkbox" value="Band" onchange="onAmGroupToggle()"><span>Band</span></label>
+                    <div class="am-role-slot" id="amRoleSlot_Band"></div>
+                  </div>
+                  <div class="am-group-box" data-group="Orchestra">
+                    <label class="am-group-toggle"><input type="checkbox" value="Orchestra" onchange="onAmGroupToggle()"><span>Orchestra</span></label>
+                    <div class="am-role-slot" id="amRoleSlot_Orchestra"></div>
+                  </div>
+                </div>
+                <div style="font-size:11.5px;color:var(--ink-500);line-height:1.5;margin-top:10px">A member can belong to more than one group — attendance is tracked per group.</div>
+              </div>
+              <div class="form-group" id="amProbationBox" style="background:var(--gold-100);border:1px solid var(--gold-500);border-radius:12px;padding:14px 16px">
+                <label class="checkbox-label" style="margin-bottom:0;background:transparent;border:none;padding:0"><input type="checkbox" id="amProbation" onchange="onAmProbationToggle();renderAddMemberPreview()">Start on probation</label>
+                <div style="font-size:11.5px;color:var(--ink-600);line-height:1.5;margin-top:8px">New members complete 10 sessions before joining the scoreboard. ≥80% passes cleanly; 50–79% with a penalty; below 50% removed.</div>
+                <div id="amProbStartWrap" style="display:none;margin-top:12px">
+                  <div class="form-row">
+                    <div class="form-group" style="margin-bottom:0"><label class="form-label">Probation start</label><input type="date" id="amProbStart" oninput="updateProbationCalc()"></div>
+                    <div class="form-group" style="margin-bottom:0"><label class="form-label">Estimated end</label><div class="input-like" id="amProbEnd" style="font-family:var(--f-mono);font-size:12px;color:var(--ink-500)">— · 10 sessions</div></div>
+                  </div>
+                </div>
+              </div>
+              <label class="checkbox-label" id="amSendWelcomeLabel" style="margin-top:6px;width:100%;border:none;background:transparent;padding:9px 0"><input type="checkbox" id="amSendWelcome" checked onchange="renderAddMemberPreview()"> Send welcome email</label>
+              <div style="display:flex;justify-content:flex-end;margin-top:10px"><button class="btn btn-primary" id="btnAddMember" onclick="submitAddMember()">Add member</button></div>
+            </div>
+          </div>
+          <div class="two-pane-detail">
+            <div id="addMemberPreview"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RECORD OFFENSE -->
+      <div id="membersOffensePane" style="display:none">
+        <div class="two-pane">
+          <div class="two-pane-list">
+            <div class="card" style="border-color:var(--crimson-100)">
+              <div class="form-label" style="margin-bottom:14px;color:var(--crimson-600)">New offense</div>
+              <div class="form-group">
+                <label class="form-label">Member *</label>
+                <input type="text" id="offName" list="offNameList" placeholder="Type to search a member" oninput="onOffenseNameInput()" autocomplete="off">
+                <datalist id="offNameList"></datalist>
+                <div id="offNameWarn" style="display:none;font-size:11.5px;color:var(--crimson-600);margin-top:6px">No member matches that name exactly.</div>
+              </div>
+              <div class="form-row">
+                <div class="form-group"><label class="form-label">Date *</label><input type="date" id="offDate"></div>
+              </div>
+              <div class="form-group"><label class="form-label">Description *</label><textarea id="offDesc" placeholder="What happened? Kept on the member's record." style="min-height:90px;resize:vertical"></textarea></div>
+              <div style="padding:12px 14px;background:var(--crimson-100);border-radius:10px;display:flex;align-items:flex-start;gap:10px;margin-bottom:16px">
+                <span style="color:var(--crimson);font-family:var(--f-display);font-size:18px;line-height:1">!</span>
+                <div>
+                  <div style="font-size:12.5px;font-weight:600;color:var(--crimson-600)">This will deduct 3 points</div>
+                  <div style="font-size:11.5px;color:var(--ink-600);margin-top:4px;line-height:1.5">The offense is recorded on the member's conduct log and they're emailed a notice.</div>
+                </div>
+              </div>
+              <div style="display:flex;justify-content:flex-end;gap:10px">
+                <button class="btn btn-secondary" onclick="setMembersMode('roster')">Cancel</button>
+                <button class="btn btn-crimson" id="btnAddOffense" onclick="submitOffense()">Record offense</button>
+              </div>
+            </div>
+          </div>
+          <div class="two-pane-detail">
+            <div class="eyebrow" style="margin-bottom:12px">Recent offenses</div>
+            <div id="offenseLogContent"><p class="loading" style="font-size:12px">Conduct log appears here.</p></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── MY ATTENDANCE TAB ─── -->
+    <section id="tab-myatt" class="tab-page">
+      <div id="myAttContent"><div class="loading"><div class="spinner"></div><div>Loading your attendance…</div></div></div>
+    </section>
+
+    <!-- ─── COMMUNIQUÉ TAB ─── -->
+    <section id="tab-communique" class="tab-page" data-screen-label="Communiqué">
+      <div class="comm-shell">
+        <div class="section-head">
+          <div class="eyebrow">Compose · admin</div>
+          <span class="gold-rule"></span>
+          <h2>Send a communiqué.</h2>
+          <p class="subtitle">Write once, send to the whole chorale or a chosen few. Every message goes out on the official chorale letterhead.</p>
+        </div>
+        <div class="two-pane comm-two-pane">
+          <div class="two-pane-list">
+            <div id="communiqueContent"></div>
+          </div>
+          <div class="two-pane-detail">
+            <div id="communiquePreview"><div class="empty-pane">Live letterhead preview will show here.</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── BIRTHDAYS TAB (admin) ─── -->
+    <section id="tab-birthdays" class="tab-page" data-screen-label="Birthdays">
+      <div class="section-head">
+        <div class="eyebrow">Celebrations · admin</div>
+        <span class="gold-rule"></span>
+        <h2>Birthdays.</h2>
+        <p class="subtitle">See who’s celebrating and send a little joy — a card, a group shout-out, or a printable poster.</p>
+      </div>
+      <div id="birthdaysContent"><div class="loading"><div class="spinner"></div><div>Loading birthdays…</div></div></div>
+    </section>
+
+    <!-- ─── PROFILE PAGE (opened by tapping your avatar) ─── -->
+    <section id="tab-profile" class="tab-page">
+      <button class="back-btn" onclick="closeProfile()"><span style="font-family:var(--f-display);font-size:14px">←</span> Back</button>
+      <div id="profileContent"><div class="loading"><div class="spinner"></div><div>Loading your profile…</div></div></div>
+    </section>
+
+    <!-- ─── APOLOGY TAB (sub-page of My attendance) ─── -->
+    <section id="tab-apology" class="tab-page">
+
+      <!-- Header: back link + title + subtitle -->
+      <button class="apol-back" onclick="closeApology()">← My attendance</button>
+      <h2 style="margin-top:4px">Submit an apology.</h2>
+      <p class="subtitle" style="max-width:62ch">Tell admins ahead of time. Apologies submitted before 4:00&nbsp;PM on the day are auto-accepted as Late or Absent&nbsp;·&nbsp;Excused.</p>
+
+      <!-- One-session / Extended period segmented control -->
+      <div class="view-mode-toggle" id="apologyTypeToggle" style="margin-bottom:16px">
+        <button class="active" onclick="setApologyKind('single')">One session</button>
+        <button onclick="setApologyKind('extended')">Extended period</button>
+      </div>
+
+      <!-- Two-pane on desktop: form left, context rail right -->
+      <div class="two-pane">
+        <div class="two-pane-list">
+
+          <!-- ONE-SESSION FORM -->
+          <div class="card apol-card" id="apologySingleForm">
+            <div class="apol-grid">
+              <!-- Session — now the unified upcoming-sessions dropdown -->
+              <div>
+                <div class="form-label">Upcoming sessions</div>
+                <select id="apolSessionSelect" class="apol-session-select" onchange="onApolSessionSelect()">
+                  <option value="">Loading sessions…</option>
+                </select>
+                <div class="apol-session-detail">
+                  <div class="apol-session-meta" id="apolSessionMeta">PRACTICE · 6:00 PM · CHOIR</div>
+                  <div class="apol-session-deadline" id="apolSessionDeadline">APOLOGISE BY 4 PM · 28 MAY</div>
+                </div>
+
+                <!-- Apologise for another date — escape hatch for sessions not in the list -->
+                <label class="apol-other-date" for="apolDate">
+                  <div>
+                    <div class="apol-other-date-title">Apologise for another date</div>
+                    <div class="apol-other-date-sub" id="apolOtherDateSub">NOT LISTED ABOVE? PICK A DATE</div>
+                  </div>
+                  <span class="apol-other-date-plus">+</span>
+                  <input type="date" id="apolDate" class="apol-other-date-input" onchange="onApolDateChange()">
+                </label>
+              </div>
+              <!-- Type -->
+              <div>
+                <div class="form-label">Type</div>
+                <div class="apol-type" id="apolTypePills">
+                  <button type="button" class="apol-type-btn" data-type="Late" onclick="setApolType('Late')"><span class="apol-radio"></span>Late</button>
+                  <button type="button" class="apol-type-btn active" data-type="Absent" onclick="setApolType('Absent')"><span class="apol-radio"></span>Absent</button>
+                </div>
+                <input type="hidden" id="apolType" value="Absent">
+              </div>
+            </div>
+
+            <!-- Reason -->
+            <div class="form-label" style="margin-top:18px">Reason</div>
+            <textarea id="apolReason" class="apol-reason" rows="3" placeholder="Travelling for a family wedding outside Nairobi…"></textarea>
+            <div class="apol-hint">Honest and brief works best. Admins read every one.</div>
+
+            <!-- Confirmation notice -->
+            <div class="apol-confirm" id="apolConfirm">
+              <span class="apol-confirm-mark" id="apolConfirmMark">✓</span>
+              <div>
+                <div class="apol-confirm-title" id="apolConfirmTitle">You’re submitting in time.</div>
+                <div class="apol-confirm-body" id="apolConfirmBody">This will auto-accept and pre-fill your attendance as <strong>Absent&nbsp;·&nbsp;Excused</strong> when the admin marks Thursday.</div>
+              </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="apol-foot">
+              <div class="apol-cutoff" id="apolCutoff">CUT-OFF · THU 28 MAY · 4:00 PM</div>
+              <div class="apol-foot-actions">
+                <button class="btn btn-secondary" onclick="closeApology()">Cancel</button>
+                <button class="btn btn-primary" id="btnSubmitApology" onclick="submitMemberApology()">Submit apology</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- LONG-TERM FORM -->
+          <div class="card apol-card" id="apologyLongForm" style="display:none">
+            <p class="subtitle" style="margin-bottom:16px">For extended absences (max 3 months). Requires admin approval.</p>
+            <div class="apol-grid">
+              <div><div class="form-label">Start</div><input type="date" id="ltStart"></div>
+              <div><div class="form-label">End</div><input type="date" id="ltEnd"></div>
+            </div>
+            <div class="form-label" style="margin-top:18px">Reason</div>
+            <textarea id="ltReason" class="apol-reason" rows="3" placeholder="Reason for the extended absence…"></textarea>
+            <div class="apol-foot">
+              <div class="apol-cutoff">ADMIN APPROVAL · MAX 3 MONTHS</div>
+              <div class="apol-foot-actions">
+                <button class="btn btn-secondary" onclick="closeApology()">Cancel</button>
+                <button class="btn btn-primary" id="btnLtApology" onclick="submitLtApology()">Submit apology</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Long-term hint strip (single mode only) -->
+          <div class="apol-longhint" id="apolLongHint" onclick="setApologyKind('extended')">
+            <span class="apol-longhint-mark">▸</span>
+            Need to miss multiple weeks? Submit a long-term apology instead (admin approval, max&nbsp;3&nbsp;months).
+          </div>
+
+          <!-- Rules card — mobile only, sits below the form -->
+          <div class="card-dark mobile-only-rules" style="margin-top:18px">
+            <img class="watermark" src="https://drive.google.com/thumbnail?id=1_mYJ9YIiaaTmiBc5MhxMhddihLACoquj&sz=w400" onerror="this.style.display='none'">
+            <div style="position:relative">
+              <div style="font-family:var(--f-mono);font-size:10px;letter-spacing:.18em;color:var(--gold-300)">HOW APOLOGIES WORK</div>
+              <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px">
+                <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:5px;height:5px;border-radius:999px;background:var(--gold-300);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">Before 4 PM on the day</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Auto-accepted · counted as Excused</div></div></div>
+                <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:5px;height:5px;border-radius:999px;background:var(--gold-500);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">After the cut-off</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Counted as Unexcused — points still deducted</div></div></div>
+                <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:5px;height:5px;border-radius:999px;background:var(--gold-700);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">Extended absence (1+ week)</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Long-term apology · admin approval needed</div></div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- History — mobile only, below the rules card -->
+          <div class="mobile-only-history" style="margin-top:20px">
+            <div class="eyebrow" style="margin-bottom:10px">My recent apologies</div>
+            <div id="myApologiesContentMobile" class="apol-history"><p class="loading">Loading…</p></div>
+          </div>
+        </div>
+
+        <!-- DESKTOP RAIL: rules card (full, with quote) + history -->
+        <div class="two-pane-detail">
+          <div class="card-dark desktop-only-rules" style="margin-bottom:18px">
+            <img class="watermark" src="https://drive.google.com/thumbnail?id=1_mYJ9YIiaaTmiBc5MhxMhddihLACoquj&sz=w400" onerror="this.style.display='none'">
+            <div style="position:relative">
+              <div style="font-family:var(--f-mono);font-size:10px;letter-spacing:.18em;color:var(--gold-300)">HOW APOLOGIES WORK</div>
+              <div class="display" style="font-size:22px;color:var(--paper);line-height:1.15;margin-top:8px">The earlier you tell us,<br>the kinder the count.</div>
+              <div style="margin-top:16px;display:flex;flex-direction:column;gap:12px">
+                <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:6px;height:6px;border-radius:999px;background:var(--gold-300);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">Before 4 PM on the day</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Auto-accepted · counted as Excused</div></div></div>
+                <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:6px;height:6px;border-radius:999px;background:var(--gold-500);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">After the cut-off</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Counted as Unexcused — points still deducted</div></div></div>
+                <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:6px;height:6px;border-radius:999px;background:var(--gold-700);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">Extended absence (1+ week)</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Long-term apology · admin approval needed</div></div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="eyebrow desktop-only-rules" style="margin-bottom:10px">My recent apologies</div>
+          <div id="myApologiesContentApol" class="apol-history desktop-only-rules"><p class="loading">Loading…</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── SCOREBOARD TAB (member) ─── -->
+    <section id="tab-scoreboard-member" class="tab-page">
+      <div class="section-head">
+        <div class="eyebrow">Standings · MMXXVI</div>
+        <span class="gold-rule"></span>
+        <h2>Scoreboard.</h2>
+        <p class="subtitle">How everyone is ranking this term.</p>
+      </div>
+      <div class="controls">
+        <select id="sbMemberGroupSelect" onchange="loadMemberScoreboard()">
+          <option value="All" selected>All</option>
+          <option value="Choir">Choir</option>
+          <option value="Band">Band</option>
+          <option value="Orchestra">Orchestra</option>
+        </select>
+        <button class="btn-export" onclick="toggleRankMode()" id="rankToggleMember">Competitive</button>
+      </div>
+      <div id="memberScoreboardContent"><div class="loading"><div class="spinner"></div><div>Loading…</div></div></div>
+    </section>
+  </main>
+</div>
+
+<!-- ─── OVERWRITE DIALOG ─── -->
+<div id="overwriteDialog" class="overlay" style="display:none">
+  <div class="dialog">
+    <div class="eyebrow" style="color: var(--crimson-600); margin-bottom: 8px">Records exist</div>
+    <h3>Overwrite attendance?</h3>
+    <p id="overwriteMsg"></p>
+    <div class="dialog-actions">
+      <button class="btn btn-secondary" onclick="closeDialog()">Cancel</button>
+      <button class="btn btn-danger btn-crimson" onclick="confirmOverwrite()">Yes, overwrite</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── POST-SUBMIT SUMMARY DIALOG ─── -->
+<div id="postSubmitDialog" class="overlay" style="display:none">
+  <div class="dialog" style="max-width:560px">
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:12px">
+      <div style="width:38px;height:38px;border-radius:999px;background:var(--present-bg);color:var(--present);display:flex;align-items:center;justify-content:center;font-family:var(--f-display);font-size:22px;flex-shrink:0">✓</div>
+      <div>
+        <div class="eyebrow" id="postSubmitEyebrow">Attendance · recorded</div>
+        <h3 style="margin:2px 0 0">Attendance recorded.</h3>
+      </div>
+    </div>
+    <div id="postSubmitBody"></div>
+    <div class="dialog-actions" style="margin-top:20px">
+      <button class="btn btn-secondary" onclick="closePostSubmit()">View attendance</button>
+      <button class="btn btn-primary" onclick="closePostSubmit()">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── SEND REMINDER DIALOG ─── -->
+<div id="reminderDialog" class="overlay" style="display:none">
+  <div class="dialog" style="max-width:480px">
+    <div class="eyebrow" style="margin-bottom:8px">Practice reminder</div>
+    <h3>Send a reminder.</h3>
+    <p id="reminderContext" style="margin-bottom:18px">—</p>
+
+    <div class="form-label">Optional note</div>
+    <textarea id="reminderNote" placeholder="e.g. Bring your folders — we begin with the new piece." style="min-height:74px;resize:vertical;margin-bottom:16px"></textarea>
+
+    <div class="form-label">Signed from</div>
+    <select id="reminderSignature"><option value="general">Loading signatures…</option></select>
+    <p style="font-size:11.5px;color:var(--ink-500);line-height:1.5;margin:7px 0 0">Choose who the email is signed by. The chorale letterhead is added automatically.</p>
+
+    <div class="dialog-actions" style="margin-top:22px">
+      <button class="btn btn-secondary" onclick="closeReminderDialog()">Cancel</button>
+      <button class="btn btn-primary" id="btnSendReminder" onclick="confirmSendReminder()">Send reminder</button>
+    </div>
+  </div>
+</div>
+
+<?!= include("Scripts") ?>
+</body>
+</html>

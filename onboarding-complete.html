@@ -1,0 +1,45 @@
+
+<!-- onboarding-complete.html — Strathmore Chorale · Onboarding complete (to admins)
+     Body content for EmailLayout.html. Sent to admins when a member finishes onboarding.
+     The detail rows are static samples — repeat the <tr> per field your backend stores.
+-->
+<!--META
+title: Onboarding complete.
+subtitle: A member has submitted their full details.
+-->
+
+<!--BODY-->
+<p style="margin:0 0 18px;"><strong>{{memberName}}</strong> has completed onboarding. Their submitted details are below for your records.</p>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E8DEC6;border-radius:12px;overflow:hidden;margin:0 0 20px;">
+  <tr><td style="background:#FBF7EE;padding:10px 18px;border-bottom:1px solid #E8DEC6;">
+    <span style="font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:2px;color:#8E6A2A;text-transform:uppercase;font-weight:bold;">Member record</span>
+  </td></tr>
+  <tr><td style="padding:6px 18px 14px;">
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="font-size:13px;color:#2A2522;">
+      <tr><td width="42%" style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Admission no.</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{admNo}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Name</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{memberName}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Email</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{email}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Gender</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{gender}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Phone</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{phone}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Date of birth</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{dateOfBirth}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Residence</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{residence}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Next of kin — name</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{nokName}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Next of kin — phone</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{nokPhone}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Next of kin — relationship</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{nokRelationship}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Next of kin — residence</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{nokResidence}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Course faculty</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{faculty}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Course name</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{course}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Year of study</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{yearOfStudy}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">Passport no.</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{passportNumber}}</td></tr>
+      <tr><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;color:#6B6058;">National ID</td><td style="padding:9px 0;border-bottom:1px solid #F4ECD9;font-weight:600;">{{nationalIdNumber}}</td></tr>
+      <tr><td style="padding:9px 0;color:#6B6058;">Passport photo</td><td style="padding:9px 0;font-weight:600;"><a href="{{photoUrl}}" target="_blank" style="color:#8E6A2A;text-decoration:underline;">View photo &rarr;</a></td></tr>
+    </table>
+  </td></tr>
+</table>
+<!--/BODY-->
+
+<!--SIG-->
+<p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:16px;color:#14110F;">The Strathmore Chorale system</p>
+<p style="margin:2px 0 0;font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:2px;color:#8C8478;text-transform:uppercase;">Automated notification</p>
+<!--/SIG-->

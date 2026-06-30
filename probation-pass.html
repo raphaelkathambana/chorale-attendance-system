@@ -1,0 +1,31 @@
+
+<!-- probation-pass.html — Probation outcome · CLEAN PASS (≥80%). To the member.
+     Body content for EmailLayout.html. Celebratory treatment.
+-->
+<!--META
+title: You’ve passed probation.
+subtitle: A clean record — welcome to the scoreboard.
+-->
+
+<!--BODY-->
+<p style="margin:0 0 16px;">Dear <strong>{{firstName}}</strong>,</p>
+<p style="margin:0 0 20px;">Congratulations — you’ve completed your probation with a clean record. You’re now a full member on the chorale scoreboard.</p>
+
+<!-- Celebratory stat band -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#EAF1EB;border:1px solid #4A7C59;border-radius:12px;margin:0 0 18px;">
+  <tr><td style="padding:22px 24px;text-align:center;">
+    <p style="margin:0 0 4px;font-family:'Courier New',Courier,monospace;font-size:10px;letter-spacing:2px;color:#3C6349;text-transform:uppercase;font-weight:bold;">Your attendance</p>
+    <p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:42px;line-height:1;color:#2F5740;">{{attendanceRate}}%</p>
+    <p style="margin:6px 0 0;font-size:12.5px;color:#3C6349;">{{attended}} of {{totalSessions}} sessions attended</p>
+  </td></tr>
+</table>
+
+<p style="margin:0 0 16px;font-size:13.5px;line-height:1.65;color:#2A2522;">From here on, every session counts toward your standing. Keep showing up — and when you can’t, send an apology at least an hour ahead so it stays excused.</p>
+
+<a href="{{appUrl}}" target="_blank" style="display:inline-block;background:#14110F;color:#FBF7EE;padding:11px 24px;border-radius:10px;text-decoration:none;font-weight:600;font-size:13px;">See your place on the scoreboard &rarr;</a>
+<!--/BODY-->
+
+<!--SIG-->
+<p style="margin:0 0 2px;font-size:13px;color:#2A2522;">With gladness,</p>
+<p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:17px;color:#14110F;">The Strathmore Chorale</p>
+<!--/SIG-->
