@@ -457,12 +457,159 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--g
 .export-row:last-child { margin-bottom: 0; }
 .export-row input[type="date"] { flex: 1; min-width: 130px; }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   PHASE 4 · SESSIONS DASHBOARD + GROUP DASHBOARD
+   Mobile-first; desktop refinements in the 1024px block at the end.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* Filter toolbar (shared by Sessions + Group Dashboard) */
+.sess-toolbar { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
+.filter-group { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.filter-label { font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.12em; color: var(--ink-400); text-transform: uppercase; margin-right: 2px; flex-shrink: 0; }
+.filter-chip { font-family: var(--f-sans); font-weight: 600; font-size: 11.5px; padding: 6px 12px; border-radius: 999px; background: transparent; border: 1px solid var(--paper-300); color: var(--ink-700); cursor: pointer; white-space: nowrap; }
+.filter-chip.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.seg-control { display: inline-flex; padding: 3px; border-radius: 9px; background: var(--paper-100); border: 1px solid var(--paper-200); gap: 2px; }
+.seg-control button { padding: 6px 12px; border-radius: 6px; border: none; background: transparent; cursor: pointer; font-family: var(--f-sans); font-size: 12px; font-weight: 500; color: var(--ink-500); white-space: nowrap; }
+.seg-control button.active { background: var(--paper); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px rgba(20,17,15,0.06); }
+.sess-custom { display: flex; align-items: center; gap: 8px; }
+.sess-custom input[type="date"] { flex: 1; min-width: 120px; }
+.toolbar-divider { width: 1px; height: 22px; background: var(--paper-200); }
+
+/* Session card */
+.session-card {
+  background: var(--paper); border: 1px solid var(--paper-200); border-radius: 14px;
+  padding: 16px 18px; margin-bottom: 12px; cursor: pointer;
+  display: grid; grid-template-columns: 64px 1fr; gap: 14px 16px; align-items: center;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.session-card:hover { border-color: var(--ink-300); box-shadow: 0 2px 10px rgba(20,17,15,0.05); }
+.sess-datebox { text-align: center; }
+.sess-dow { font-family: var(--f-mono); font-size: 9.5px; color: var(--ink-400); letter-spacing: 0.14em; }
+.sess-daynum { font-family: var(--f-display); font-size: 28px; color: var(--ink); line-height: 1; margin-top: 2px; }
+.sess-mon { font-family: var(--f-mono); font-size: 9.5px; color: var(--ink-500); letter-spacing: 0.14em; }
+.sess-body { min-width: 0; }
+.sess-cardhead { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 6px; }
+.sess-title { font-family: var(--f-display); font-style: italic; font-size: 19px; color: var(--ink); line-height: 1.1; margin-bottom: 8px; }
+.sess-recmeta { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-family: var(--f-mono); font-size: 9.5px; color: var(--ink-400); letter-spacing: 0.06em; }
+.sess-recmeta .apol { color: var(--gold-700); }
+.sess-breakdown { grid-column: 1 / -1; }
+.sess-rateblock { display: flex; align-items: center; justify-content: flex-end; gap: 12px; grid-column: 1 / -1; }
+.sess-rate-num { font-family: var(--f-display); font-size: 30px; color: var(--ink); line-height: 0.9; }
+.sess-rate-label { font-family: var(--f-mono); font-size: 9px; color: var(--ink-400); letter-spacing: 0.1em; margin-top: 3px; text-align: right; }
+.sess-chev { font-family: var(--f-display); font-size: 24px; color: var(--ink-300); }
+
+.type-badge { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: 0.14em; padding: 3px 7px; border-radius: 4px; background: var(--gold-100); color: var(--gold-700); white-space: nowrap; }
+.type-badge.meeting { background: var(--ink); color: var(--gold-300); }
+.grp-chip { font-family: var(--f-mono); font-size: 9px; font-weight: 600; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 5px; background: var(--paper-100); border: 1px solid var(--paper-200); color: var(--ink-600); white-space: nowrap; }
+.grp-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* Mini proportional status bar + legend */
+.ministat-bar { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: var(--paper-200); gap: 1.5px; }
+.ministat-seg { min-width: 2px; }
+.ministat-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 9px; }
+.ministat-leg { display: inline-flex; align-items: center; gap: 5px; }
+.ministat-leg .sw { width: 7px; height: 7px; border-radius: 2px; }
+.ministat-leg .ab { font-family: var(--f-mono); font-size: 10.5px; color: var(--ink-600); font-weight: 600; }
+.ministat-leg .ct { font-family: var(--f-mono); font-size: 10.5px; color: var(--ink-400); }
+.ministat-leg.zero { opacity: 0.4; }
+
+/* Session detail tally strip (dark) */
+.sess-tally { background: var(--ink); border-radius: 14px; padding: 16px 20px; margin-bottom: 22px; display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+.sess-tally-rate-label { font-family: var(--f-mono); font-size: 10px; color: var(--gold-300); letter-spacing: 0.14em; }
+.sess-tally-rate { font-family: var(--f-display); font-size: 38px; color: var(--gold-300); line-height: 0.9; margin-top: 4px; }
+.sess-tally-div { width: 1px; height: 44px; background: rgba(243,233,206,0.2); }
+.sess-tally-counts { display: flex; gap: 20px; flex-wrap: wrap; }
+.sess-tally-cell .lab { display: flex; align-items: center; gap: 5px; }
+.sess-tally-cell .dot { width: 7px; height: 7px; border-radius: 999px; }
+.sess-tally-cell .ab { font-family: var(--f-mono); font-size: 9.5px; color: var(--paper-200); letter-spacing: 0.1em; }
+.sess-tally-cell .num { font-family: var(--f-display); font-size: 22px; color: var(--paper); margin-top: 4px; }
+
+/* Session detail register grid */
+/* (Session register reuses .view-detail-grid / .role-group / .member-row / .status-five
+   from the View & Edit tab — see those rules above.) */
+
+/* ── GROUP DASHBOARD ── */
+.dash-hero-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+.dash-hero { background: var(--ink); color: var(--paper); border-radius: 16px; padding: 18px 20px; grid-column: 1 / -1; }
+.dash-hero-eyebrow { font-family: var(--f-mono); font-size: 10px; color: var(--gold-300); letter-spacing: 0.14em; }
+.dash-hero-num { font-family: var(--f-display); font-size: 56px; color: var(--gold-300); line-height: 0.85; margin-top: 8px; }
+.dash-hero-delta { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; }
+.dash-hero-delta .tag { font-family: var(--f-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.06em; padding: 3px 7px; border-radius: 4px; background: rgba(74,124,89,0.28); color: #A6D7B4; }
+.dash-hero-delta .tag.down { background: rgba(182,32,42,0.28); color: #E8A6AB; }
+.dash-hero-sub { font-size: 11px; color: var(--ink-300); margin-top: 12px; }
+.dash-stat { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 16px; padding: 16px 18px; }
+.dash-stat-head { display: flex; align-items: center; gap: 8px; }
+.dash-stat-head .dot { width: 8px; height: 8px; border-radius: 999px; }
+.dash-stat-num { font-family: var(--f-display); font-size: 38px; color: var(--ink); line-height: 0.9; margin-top: 10px; }
+.dash-stat-sub { font-family: var(--f-mono); font-size: 9px; color: var(--ink-400); letter-spacing: 0.08em; margin-top: 6px; }
+
+.trend-card { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 16px; padding: 18px 20px; margin-bottom: 20px; }
+.trend-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; gap: 10px; }
+.trend-svg { width: 100%; height: auto; display: block; }
+
+.dash-panels { display: grid; grid-template-columns: 1fr; gap: 18px; align-items: start; }
+.dash-panel { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 16px; overflow: hidden; }
+.dash-panel-pad { padding: 16px 20px; }
+.dash-panel-head { padding: 16px 20px 12px; border-bottom: 1px solid var(--paper-200); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dash-panel-head .big { font-family: var(--f-display); font-size: 28px; }
+.atrisk-row { display: flex; align-items: center; gap: 12px; padding: 13px 20px; border-bottom: 1px solid var(--paper-200); }
+.atrisk-row:last-child { border-bottom: none; }
+.atrisk-info { flex: 1; min-width: 0; }
+.atrisk-name { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.atrisk-meta { font-family: var(--f-mono); font-size: 9.5px; color: var(--ink-400); letter-spacing: 0.08em; margin-top: 2px; }
+.atrisk-dots { display: flex; gap: 5px; }
+.status-dot { width: 11px; height: 11px; border-radius: 999px; }
+.status-dot.present  { background: var(--present); }
+.status-dot.late     { background: var(--late-exc); }
+.status-dot.abs-exc  { background: var(--ink-300); border: 1px solid var(--ink-200); }
+.status-dot.abs-unexc{ background: var(--absent-unexc); }
+.atrisk-badge { font-family: var(--f-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.06em; padding: 4px 9px; border-radius: 999px; background: var(--crimson-100); color: var(--crimson-600); white-space: nowrap; }
+.prob-summary { display: flex; gap: 10px; margin-bottom: 16px; }
+.prob-mini { flex: 1; border-radius: 12px; padding: 12px; }
+.prob-mini .num { font-family: var(--f-display); font-size: 28px; color: var(--ink); line-height: 0.9; }
+.prob-mini .lab { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.1em; margin-top: 5px; text-transform: uppercase; }
+.prob-mini.gold { background: var(--gold-100); } .prob-mini.gold .lab { color: var(--gold-700); }
+.prob-mini.ok   { background: var(--present-bg); } .prob-mini.ok .lab { color: var(--present); }
+.prob-mini.bad  { background: var(--crimson-100); } .prob-mini.bad .lab { color: var(--crimson-600); }
+.prob-fall-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.prob-seg { display: flex; gap: 2px; margin-top: 5px; }
+.prob-seg span { flex: 1; height: 6px; border-radius: 2px; background: var(--paper-200); }
+.prob-seg span.fill { background: var(--crimson); }
+
+@media (min-width: 1024px) {
+  .sess-toolbar { flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+  .session-card { grid-template-columns: 100px 1fr 230px 110px; }
+  .session-card .sess-breakdown { grid-column: auto; }
+  .session-card .sess-rateblock { grid-column: auto; }
+  .sess-daynum { font-size: 32px; }
+  .sess-datebox { border-right: 1px solid var(--paper-200); padding-right: 16px; }
+  .sess-title { font-size: 21px; }
+  .reg-grid { grid-template-columns: 1fr 1fr; }
+  .dash-hero-grid { grid-template-columns: 1.3fr 1fr 1fr 1fr; }
+  .dash-hero { grid-column: auto; }
+  .dash-hero-num { font-size: 60px; }
+  .dash-stat-num { font-size: 44px; }
+  .dash-panels { grid-template-columns: 1.4fr 1fr; }
+}
+
 /* ── 6. OVERLAYS ────────────────────────────────────────────────────────── */
 
 /* Loading screens */
 .loading { text-align: center; padding: 80px 20px; color: var(--ink-500); font-family: var(--f-sans); font-size: 13px; }
 .spinner { display: inline-block; width: 22px; height: 22px; border: 2px solid var(--paper-200); border-top-color: var(--gold); border-radius: 50%; animation: spin .8s linear infinite; margin-bottom: 12px; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Mobile "More" overflow sheet (admin has 9 tabs; bottom bar shows 3 + More) */
+.more-sheet { position: fixed; inset: 0; z-index: 60; background: rgba(20,17,15,0.4); display: none; }
+.more-sheet.open { display: block; }
+.more-sheet-card { position: absolute; left: 0; right: 0; bottom: 0; max-width: 600px; margin: 0 auto; background: var(--paper); border-top-left-radius: 18px; border-top-right-radius: 18px; padding: 14px 16px calc(24px + env(safe-area-inset-bottom)); box-shadow: 0 -8px 30px rgba(20,17,15,0.22); animation: sheet-up .22s ease; }
+@keyframes sheet-up { from { transform: translateY(18px); } to { transform: translateY(0); } }
+.more-sheet-head { font-family: var(--f-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-500); padding: 4px 6px 10px; }
+.more-sheet-item { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; background: transparent; border: none; border-top: 1px solid var(--paper-200); padding: 13px 6px; cursor: pointer; }
+.more-sheet-item .glyph { font-family: var(--f-display); font-size: 18px; color: var(--ink-500); width: 24px; text-align: center; }
+.more-sheet-label { font-size: 14px; font-weight: 600; color: var(--ink); flex: 1; }
+.more-sheet-hint { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.08em; color: var(--ink-400); text-transform: uppercase; }
+@media (min-width: 1024px) { .more-sheet { display: none !important; } }
 
 /* Toast */
 .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); padding: 12px 22px; border-radius: 10px; color: #fff; font-family: var(--f-sans); font-weight: 500; font-size: 13px; z-index: 200; max-width: 90%; text-align: center; box-shadow: 0 8px 24px rgba(20,17,15,0.25); animation: toast-in .25s ease; }
@@ -527,8 +674,11 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--g
   .changes-bar .changes-actions button { flex: 1; padding: 11px 12px; }
 }
 /* Reserve room so the floating unsaved-edit tray never covers the last list rows */
-body:has(#changesBar) #tab-view { padding-bottom: 240px; }
-@media (min-width: 1024px) { body:has(#changesBar) #tab-view { padding-bottom: 140px; } }
+body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-bottom: 240px; }
+@media (min-width: 1024px) { body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-bottom: 140px; } }
+/* Edited register row — cream glow + badge (Sessions detail & View & Edit) */
+.member-row.row-edited { background: var(--gold-100); border-radius: 8px; padding: 11px 10px; border-bottom-color: transparent; }
+.edited-badge { font-family: var(--f-mono); font-size: 8.5px; font-weight: 700; letter-spacing: 0.12em; padding: 2px 6px; border-radius: 3px; background: var(--gold); color: #fff; }
 
 /* Time note */
 #timeNote { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.06em; color: var(--gold-700); align-self: center; padding: 0 4px; }
@@ -719,6 +869,9 @@ body:has(#changesBar) #tab-view { padding-bottom: 240px; }
 @media (min-width: 1024px) {
   #tab-record .record-rail { display: block; }
 }
+/* Reserve room so the fixed submit bar never covers the last content —
+   on desktop this is the bottom of the sticky rail (apologies list). */
+#tab-record { padding-bottom: 150px; }
 
 /* Record tab — section column card */
 .record-section-col { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 12px; overflow: hidden; }
@@ -775,6 +928,10 @@ body:has(#changesBar) #tab-view { padding-bottom: 240px; }
 /* View & Edit — desktop 2-col section grid for date detail */
 @media (min-width: 1024px) {
   .view-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  /* Section (ensemble) titles head their section full-width, so role columns
+     sit beneath them instead of in-line beside the first role group. */
+  .view-detail-grid .ensemble-header { grid-column: 1 / -1; margin-top: 6px; }
+  .view-detail-grid .ensemble-header:first-child { margin-top: 0; }
 }
 
 /* Requests — level-1 type toggle (Apologies · Transfers · Changes) */
@@ -1006,6 +1163,8 @@ body:has(#changesBar) #tab-view { padding-bottom: 240px; }
     </div>
     <div class="eyebrow group-label">Work</div>
     <nav id="sidebarNav"></nav>
+    <div class="eyebrow group-label" id="sidebarPersonalLabel" style="display:none">Personal</div>
+    <nav id="sidebarNavPersonal"></nav>
     <div class="user" onclick="openProfile()" style="cursor:pointer" title="My profile">
       <div class="avatar" id="sideAvatar">·</div>
       <div class="who">
@@ -1127,9 +1286,248 @@ body:has(#changesBar) #tab-view { padding-bottom: 240px; }
       </div>
     </section>
 
-    <!-- ─── VIEW & EDIT TAB ─── -->
+    <!-- ─── VIEW & EDIT TAB (legacy shell — retained so existing render fns keep working during the cutover) ─── -->
     <section id="tab-view" class="tab-page">
       <div id="viewRoot"></div>
+    </section>
+
+    <!-- ─── SESSIONS TAB (new · replaces "By date") ─── -->
+    <section id="tab-sessions" class="tab-page" data-screen-label="Sessions">
+      <div class="section-head">
+        <div class="eyebrow">Recorded sessions · admin</div>
+        <span class="gold-rule"></span>
+        <h2>Sessions.</h2>
+        <p class="subtitle">Every practice and meeting you’ve recorded. Tap one to review, correct or export it.</p>
+      </div>
+
+      <!-- Filters. loadSessions() reads: active .filter-chip[data-section] in #sessSectionChips,
+           active #sessRangeSeg button[data-range], #sessStart/#sessEnd, active #sessTypeChips chip[data-type]. -->
+      <div class="sess-toolbar">
+        <div class="filter-group" id="sessSectionChips">
+          <span class="filter-label">Section</span>
+          <button class="filter-chip active" data-section="All" onclick="chipSelect(this); sessFiltersChanged()">All</button>
+          <button class="filter-chip" data-section="Choir" onclick="chipSelect(this); sessFiltersChanged()">Choir</button>
+          <button class="filter-chip" data-section="Band" onclick="chipSelect(this); sessFiltersChanged()">Band</button>
+          <button class="filter-chip" data-section="Orchestra" onclick="chipSelect(this); sessFiltersChanged()">Orchestra</button>
+        </div>
+        <div class="filter-group">
+          <div class="seg-control" id="sessRangeSeg">
+            <button data-range="week" onclick="segSelect(this); sessToggleCustom(); sessFiltersChanged()">This week</button>
+            <button class="active" data-range="month" onclick="segSelect(this); sessToggleCustom(); sessFiltersChanged()">This month</button>
+            <button data-range="custom" onclick="segSelect(this); sessToggleCustom(); sessFiltersChanged()">Custom</button>
+          </div>
+          <div class="sess-custom" id="sessCustomRange" style="display:none">
+            <input type="date" id="sessStart" onchange="sessFiltersChanged()">
+            <span style="color:var(--ink-400)">→</span>
+            <input type="date" id="sessEnd" onchange="sessFiltersChanged()">
+          </div>
+          <span class="toolbar-divider"></span>
+          <div class="filter-group" id="sessTypeChips">
+            <span class="filter-label">Type</span>
+            <button class="filter-chip active" data-type="all" onclick="chipSelect(this); sessFiltersChanged()">All</button>
+            <button class="filter-chip" data-type="practice" onclick="chipSelect(this); sessFiltersChanged()">Practices</button>
+            <button class="filter-chip" data-type="meeting" onclick="chipSelect(this); sessFiltersChanged()">Meetings</button>
+          </div>
+          <button class="btn-export" onclick="exportSessionsList && exportSessionsList()">Export · CSV</button>
+        </div>
+      </div>
+
+      <!-- LIST mount. renderSessionsList() replaces the inner HTML with .session-card rows.
+           The markup below is the canonical contract + the graceful pre-wiring demo. -->
+      <div id="sessionsList">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div class="eyebrow">3 sessions</div>
+          <span style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-400);letter-spacing:.1em">NEWEST FIRST</span>
+        </div>
+
+        <div class="session-card" onclick="openSession &amp;&amp; openSession('2026-06-10','Band,Choir,Orchestra')">
+          <div class="sess-datebox"><div class="sess-dow">WED</div><div class="sess-daynum">10</div><div class="sess-mon">JUN</div></div>
+          <div class="sess-body">
+            <div class="sess-cardhead"><span class="type-badge">PRACTICE</span><span class="grp-chips"><span class="grp-chip">CHOIR</span><span class="grp-chip">BAND</span><span class="grp-chip">ORCHESTRA</span></span></div>
+            <div class="sess-title">Mid-week practice</div>
+            <div class="sess-recmeta"><span>REC · WANJIRŨ MWANGI</span><span class="apol">✉ 6 APOLOGIES</span></div>
+          </div>
+          <div class="sess-breakdown">
+            <div class="ministat-bar"><span class="ministat-seg" style="flex:38;background:var(--present)"></span><span class="ministat-seg" style="flex:4;background:var(--late-exc)"></span><span class="ministat-seg" style="flex:2;background:var(--late-unexc)"></span><span class="ministat-seg" style="flex:3;background:var(--absent-exc)"></span><span class="ministat-seg" style="flex:5;background:var(--absent-unexc)"></span></div>
+            <div class="ministat-legend">
+              <span class="ministat-leg"><span class="sw" style="background:var(--present)"></span><span class="ab">P</span><span class="ct">38</span></span>
+              <span class="ministat-leg"><span class="sw" style="background:var(--late-exc)"></span><span class="ab">LE</span><span class="ct">4</span></span>
+              <span class="ministat-leg"><span class="sw" style="background:var(--late-unexc)"></span><span class="ab">LU</span><span class="ct">2</span></span>
+              <span class="ministat-leg"><span class="sw" style="background:var(--absent-exc)"></span><span class="ab">AE</span><span class="ct">3</span></span>
+              <span class="ministat-leg"><span class="sw" style="background:var(--absent-unexc)"></span><span class="ab">AU</span><span class="ct">5</span></span>
+            </div>
+          </div>
+          <div class="sess-rateblock"><div><div class="sess-rate-num">85%</div><div class="sess-rate-label">44/52 HERE</div></div><span class="sess-chev">›</span></div>
+        </div>
+
+        <div class="session-card" onclick="openSession &amp;&amp; openSession('2026-06-08','Band,Choir')">
+          <div class="sess-datebox"><div class="sess-dow">MON</div><div class="sess-daynum">08</div><div class="sess-mon">JUN</div></div>
+          <div class="sess-body">
+            <div class="sess-cardhead"><span class="type-badge meeting">MEETING</span><span class="grp-chips"><span class="grp-chip">CHOIR</span><span class="grp-chip">BAND</span></span></div>
+            <div class="sess-title">Committee briefing</div>
+            <div class="sess-recmeta"><span>REC · JAMES KARIŨKI</span><span class="apol">✉ 3 APOLOGIES</span></div>
+          </div>
+          <div class="sess-breakdown">
+            <div class="ministat-bar"><span class="ministat-seg" style="flex:22;background:var(--present)"></span><span class="ministat-seg" style="flex:2;background:var(--late-exc)"></span><span class="ministat-seg" style="flex:1;background:var(--late-unexc)"></span><span class="ministat-seg" style="flex:2;background:var(--absent-exc)"></span><span class="ministat-seg" style="flex:2;background:var(--absent-unexc)"></span></div>
+            <div class="ministat-legend">
+              <span class="ministat-leg"><span class="sw" style="background:var(--present)"></span><span class="ab">P</span><span class="ct">22</span></span>
+              <span class="ministat-leg"><span class="sw" style="background:var(--late-exc)"></span><span class="ab">LE</span><span class="ct">2</span></span>
+              <span class="ministat-leg"><span class="sw" style="background:var(--late-unexc)"></span><span class="ab">LU</span><span class="ct">1</span></span>
+              <span class="ministat-leg"><span class="sw" style="background:var(--absent-exc)"></span><span class="ab">AE</span><span class="ct">2</span></span>
+              <span class="ministat-leg"><span class="sw" style="background:var(--absent-unexc)"></span><span class="ab">AU</span><span class="ct">2</span></span>
+            </div>
+          </div>
+          <div class="sess-rateblock"><div><div class="sess-rate-num">86%</div><div class="sess-rate-label">25/29 HERE</div></div><span class="sess-chev">›</span></div>
+        </div>
+
+        <div class="session-card" onclick="openSession &amp;&amp; openSession('2026-06-05','Choir')">
+          <div class="sess-datebox"><div class="sess-dow">FRI</div><div class="sess-daynum">05</div><div class="sess-mon">JUN</div></div>
+          <div class="sess-body">
+            <div class="sess-cardhead"><span class="type-badge">PRACTICE</span><span class="grp-chips"><span class="grp-chip">CHOIR</span></span></div>
+            <div class="sess-title">Sectional · sopranos &amp; altos</div>
+            <div class="sess-recmeta"><span>REC · WANJIRŨ MWANGI</span><span class="apol">✉ 1 APOLOGY</span></div>
+          </div>
+          <div class="sess-breakdown">
+            <div class="ministat-bar"><span class="ministat-seg" style="flex:18;background:var(--present)"></span><span class="ministat-seg" style="flex:1;background:var(--late-exc)"></span><span class="ministat-seg" style="flex:1;background:var(--absent-exc)"></span><span class="ministat-seg" style="flex:1;background:var(--absent-unexc)"></span></div>
+            <div class="ministat-legend">
+              <span class="ministat-leg"><span class="sw" style="background:var(--present)"></span><span class="ab">P</span><span class="ct">18</span></span>
+              <span class="ministat-leg"><span class="sw" style="background:var(--late-exc)"></span><span class="ab">LE</span><span class="ct">1</span></span>
+              <span class="ministat-leg zero"><span class="sw" style="background:var(--late-unexc)"></span><span class="ab">LU</span><span class="ct">0</span></span>
+              <span class="ministat-leg"><span class="sw" style="background:var(--absent-exc)"></span><span class="ab">AE</span><span class="ct">1</span></span>
+              <span class="ministat-leg"><span class="sw" style="background:var(--absent-unexc)"></span><span class="ab">AU</span><span class="ct">1</span></span>
+            </div>
+          </div>
+          <div class="sess-rateblock"><div><div class="sess-rate-num">90%</div><div class="sess-rate-label">19/21 HERE</div></div><span class="sess-chev">›</span></div>
+        </div>
+      </div>
+
+      <!-- DETAIL mount. openSession()/getSessionDetail wiring renders the editable register here
+           and hides #sessionsList. Toggle the two with sessShowList()/sessShowDetail(). -->
+      <div id="sessionDetail" style="display:none"></div>
+    </section>
+
+    <!-- ─── GROUP DASHBOARD TAB (new · section analytics) ─── -->
+    <section id="tab-dashboard" class="tab-page" data-screen-label="Group Dashboard">
+      <div class="section-head">
+        <div class="eyebrow">Group dashboard · admin</div>
+        <span class="gold-rule"></span>
+        <h2>Group dashboard.</h2>
+        <p class="subtitle">How a section is doing over time — the rate, the trend, and who needs a nudge before a penalty hits.</p>
+      </div>
+
+      <!-- Filters. loadGroupDashboard() reads active #dashSectionChips chip[data-section],
+           active #dashRangeSeg button[data-range], #dashStart/#dashEnd. -->
+      <div class="sess-toolbar">
+        <div class="filter-group" id="dashSectionChips">
+          <span class="filter-label">Section</span>
+          <button class="filter-chip" data-section="All" onclick="chipSelect(this); dashFiltersChanged()">All</button>
+          <button class="filter-chip active" data-section="Choir" onclick="chipSelect(this); dashFiltersChanged()">Choir</button>
+          <button class="filter-chip" data-section="Band" onclick="chipSelect(this); dashFiltersChanged()">Band</button>
+          <button class="filter-chip" data-section="Orchestra" onclick="chipSelect(this); dashFiltersChanged()">Orchestra</button>
+        </div>
+        <div class="filter-group">
+          <div class="seg-control" id="dashRangeSeg">
+            <button data-range="week" onclick="segSelect(this); dashToggleCustom(); dashFiltersChanged()">This week</button>
+            <button class="active" data-range="month" onclick="segSelect(this); dashToggleCustom(); dashFiltersChanged()">This month</button>
+            <button data-range="custom" onclick="segSelect(this); dashToggleCustom(); dashFiltersChanged()">Custom</button>
+          </div>
+          <div class="sess-custom" id="dashCustomRange" style="display:none">
+            <input type="date" id="dashStart" onchange="dashFiltersChanged()">
+            <span style="color:var(--ink-400)">→</span>
+            <input type="date" id="dashEnd" onchange="dashFiltersChanged()">
+          </div>
+        </div>
+      </div>
+
+      <!-- Dashboard body mount. loadGroupDashboard() replaces #dashboardBody.
+           Markup below is the canonical contract + graceful demo. -->
+      <div id="dashboardBody">
+        <!-- Hero + status distribution -->
+        <div class="dash-hero-grid" id="dashRate">
+          <div class="dash-hero">
+            <div class="dash-hero-eyebrow">CHOIR · ATTENDANCE RATE</div>
+            <div class="dash-hero-num">86%</div>
+            <div class="dash-hero-delta"><span class="tag">▲ 4 PTS</span><span style="font-size:11px;color:var(--ink-300)">vs. last month</span></div>
+            <div class="dash-hero-sub">287 of 332 records present · 5 sessions in range</div>
+          </div>
+          <div class="dash-stat"><div class="dash-stat-head"><span class="dot" style="background:var(--present)"></span><span class="eyebrow" style="font-size:9.5px">Present</span></div><div class="dash-stat-num">254</div><div class="dash-stat-sub">76% OF RECORDS</div></div>
+          <div class="dash-stat"><div class="dash-stat-head"><span class="dot" style="background:var(--late-exc)"></span><span class="eyebrow" style="font-size:9.5px">Late</span></div><div class="dash-stat-num">33</div><div class="dash-stat-sub">10% OF RECORDS</div></div>
+          <div class="dash-stat"><div class="dash-stat-head"><span class="dot" style="background:var(--absent-unexc)"></span><span class="eyebrow" style="font-size:9.5px">Absent</span></div><div class="dash-stat-num">45</div><div class="dash-stat-sub">14% OF RECORDS</div></div>
+        </div>
+
+        <!-- Trend chart. drawTrend(data) replaces #dashTrend's <svg>. data = [{date,rate}]. -->
+        <div class="trend-card">
+          <div class="trend-head"><div class="eyebrow">Attendance-rate trend</div><span style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-400);letter-spacing:.08em">% PRESENT + LATE · PER SESSION</span></div>
+          <div id="dashTrend">
+            <svg class="trend-svg" viewBox="0 0 760 220" preserveAspectRatio="none">
+              <defs><linearGradient id="trendFillPort" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#B08538" stop-opacity="0.22"></stop><stop offset="100%" stop-color="#B08538" stop-opacity="0"></stop></linearGradient></defs>
+              <line x1="34" y1="194" x2="746" y2="194" stroke="#E8DEC6" stroke-width="1"></line>
+              <line x1="34" y1="149" x2="746" y2="149" stroke="#E8DEC6" stroke-width="1" stroke-dasharray="3 4"></line>
+              <line x1="34" y1="104" x2="746" y2="104" stroke="#E8DEC6" stroke-width="1" stroke-dasharray="3 4"></line>
+              <line x1="34" y1="59" x2="746" y2="59" stroke="#E8DEC6" stroke-width="1" stroke-dasharray="3 4"></line>
+              <line x1="34" y1="14" x2="746" y2="14" stroke="#E8DEC6" stroke-width="1" stroke-dasharray="3 4"></line>
+              <text x="26" y="197" text-anchor="end" font-family="monospace" font-size="9" fill="#8C8478">0</text>
+              <text x="26" y="107" text-anchor="end" font-family="monospace" font-size="9" fill="#8C8478">50</text>
+              <text x="26" y="17" text-anchor="end" font-family="monospace" font-size="9" fill="#8C8478">100</text>
+              <path d="M34,51.8 L113,44.6 L192,35.6 L271,48.2 L350,57.2 L430,42.8 L509,32 L588,50 L667,39.2 L746,42.8 L746,194 L34,194 Z" fill="url(#trendFillPort)"></path>
+              <polyline points="34,51.8 113,44.6 192,35.6 271,48.2 350,57.2 430,42.8 509,32 588,50 667,39.2 746,42.8" fill="none" stroke="#B08538" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>
+              <circle cx="746" cy="42.8" r="4.5" fill="#B08538" stroke="#FBF7EE" stroke-width="2"></circle>
+              <text x="746" y="30" text-anchor="middle" font-family="Georgia,serif" font-size="16" fill="#14110F">84%</text>
+            </svg>
+          </div>
+        </div>
+
+        <!-- At risk + Probation -->
+        <div class="dash-panels">
+          <div class="dash-panel" id="dashAtRisk">
+            <div class="dash-panel-head">
+              <div><div class="eyebrow" style="color:var(--crimson-600)">At risk · early warning</div><div style="font-size:11.5px;color:var(--ink-500);margin-top:4px">2+ unexcused absences in a row — before the 3-AU penalty fires.</div></div>
+              <span class="big" style="color:var(--crimson-600)">3</span>
+            </div>
+            <div class="atrisk-row">
+              <div class="atrisk-info"><div class="atrisk-name">Brian Mwendwa</div><div class="atrisk-meta">CHOIR · BASS</div></div>
+              <div class="atrisk-dots"><span class="status-dot present"></span><span class="status-dot abs-exc"></span><span class="status-dot abs-unexc"></span><span class="status-dot abs-unexc"></span><span class="status-dot abs-unexc"></span></div>
+              <span class="atrisk-badge">3× AU</span>
+            </div>
+            <div class="atrisk-row">
+              <div class="atrisk-info"><div class="atrisk-name">Dennis Ouma</div><div class="atrisk-meta">CHOIR · TENOR</div></div>
+              <div class="atrisk-dots"><span class="status-dot late"></span><span class="status-dot present"></span><span class="status-dot abs-exc"></span><span class="status-dot abs-unexc"></span><span class="status-dot abs-unexc"></span></div>
+              <span class="atrisk-badge">2× AU</span>
+            </div>
+            <div class="atrisk-row">
+              <div class="atrisk-info"><div class="atrisk-name">Grace Akinyi</div><div class="atrisk-meta">BAND</div></div>
+              <div class="atrisk-dots"><span class="status-dot present"></span><span class="status-dot late"></span><span class="status-dot present"></span><span class="status-dot abs-unexc"></span><span class="status-dot abs-unexc"></span></div>
+              <span class="atrisk-badge">2× AU</span>
+            </div>
+          </div>
+
+          <div class="dash-panel dash-panel-pad" id="dashProbation">
+            <div class="eyebrow" style="margin-bottom:14px">Probation · in this section</div>
+            <div class="prob-summary">
+              <div class="prob-mini gold"><div class="num">2</div><div class="lab">On probation</div></div>
+              <div class="prob-mini ok"><div class="num">1</div><div class="lab">On track</div></div>
+              <div class="prob-mini bad"><div class="num">1</div><div class="lab">Behind</div></div>
+            </div>
+            <div style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-400);letter-spacing:.1em;margin-bottom:8px">FALLING BEHIND</div>
+            <div class="prob-fall-row">
+              <div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--ink)">Susan Nyokabi</div>
+                <div class="prob-seg"><span class="fill"></span><span class="fill"></span><span class="fill"></span><span class="fill"></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+              </div>
+              <span style="font-family:var(--f-mono);font-size:12px;font-weight:600;color:var(--crimson-600)">40%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── PROBATION TAB (was a View & Edit sub-mode · now top-level. initProbationTab() mounts the existing renderProbationView() here) ─── -->
+    <section id="tab-probation" class="tab-page" data-screen-label="Probation">
+      <div id="probationRoot"><div class="loading"><div class="spinner"></div><div>Loading probation pipeline…</div></div></div>
+    </section>
+
+    <!-- ─── REQUESTS TAB (was a View & Edit sub-mode · now top-level. initRequestsTab() mounts the existing renderApologiesView() here) ─── -->
+    <section id="tab-requests" class="tab-page" data-screen-label="Requests">
+      <div id="requestsRoot"><div class="loading"><div class="spinner"></div><div>Loading requests…</div></div></div>
     </section>
 
     <!-- ─── MEMBERS TAB ─── -->
@@ -1138,14 +1536,16 @@ body:has(#changesBar) #tab-view { padding-bottom: 240px; }
         <div class="eyebrow">Roster · admin</div>
         <span class="gold-rule"></span>
         <h2>Members.</h2>
-        <p class="subtitle">Add new members, record offenses, browse the roster.</p>
+        <p class="subtitle">Browse the roster and each member’s history, watch the live scoreboard, add members and record offenses.</p>
       </div>
 
-      <!-- Sub-mode toggle -->
+      <!-- Sub-mode toggle (By member + Scoreboard folded in from the old View & Edit tab) -->
       <div class="view-mode-toggle" id="membersModeToggle">
-        <button class="active" onclick="setMembersMode('roster')">Roster</button>
-        <button onclick="setMembersMode('add')">Add member</button>
-        <button onclick="setMembersMode('offense')">Record offense</button>
+        <button class="active" data-mode="roster" onclick="setMembersMode('roster')">Roster</button>
+        <button data-mode="member" onclick="setMembersMode('member')">By member</button>
+        <button data-mode="scoreboard" onclick="setMembersMode('scoreboard')">Scoreboard</button>
+        <button data-mode="add" onclick="setMembersMode('add')">Add member</button>
+        <button data-mode="offense" onclick="setMembersMode('offense')">Record offense</button>
       </div>
 
       <!-- ROSTER (two-pane on desktop) -->
@@ -1251,6 +1651,16 @@ body:has(#changesBar) #tab-view { padding-bottom: 240px; }
             <div id="offenseLogContent"><p class="loading" style="font-size:12px">Conduct log appears here.</p></div>
           </div>
         </div>
+      </div>
+
+      <!-- BY MEMBER (history) — folded in from the old View & Edit. setMembersMode('member') injects renderByMemberView() here. -->
+      <div id="membersMemberPane" style="display:none">
+        <div id="memberHistoryRoot"><div class="loading"><div class="spinner"></div><div>Loading…</div></div></div>
+      </div>
+
+      <!-- SCOREBOARD — folded in from the old View & Edit. setMembersMode('scoreboard') injects renderScoreboardView() here. -->
+      <div id="membersScoreboardPane" style="display:none">
+        <div id="scoreboardRoot"><div class="loading"><div class="spinner"></div><div>Loading…</div></div></div>
       </div>
     </section>
 

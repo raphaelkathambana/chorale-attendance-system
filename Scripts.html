@@ -643,7 +643,7 @@ function renderProbationContent() {
 
   if (isDesktop) {
     // Table layout
-    h += '<div class="eyebrow" style="margin-bottom:10px">Members in pipeline</div>';
+    h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:10px"><span class="eyebrow" style="margin:0">Members in pipeline</span>' + probSegLegend() + '</div>';
     h += '<div style="background:var(--paper);border:1px solid var(--paper-200);border-radius:14px;overflow:hidden">';
     h += '<div class="prob-table-header"><span>Name</span><span>Started</span><span>Progress</span><span>Rate</span><span>Required</span><span style="text-align:right">Status</span></div>';
     for (var i = 0; i < sorted.length; i++) {
@@ -661,9 +661,7 @@ function renderProbationContent() {
         +    '<div style="display:flex;align-items:center;gap:12px">' + memberAvatar(d.profilePhoto, initial, { size: 32, font: 14 }) + '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + esc(d.name) + '</div><div style="font-family:var(--f-mono);font-size:10px;color:var(--ink-500);letter-spacing:.06em;margin-top:2px">' + ((d.groups && d.groups[0]) || '').toUpperCase() + '</div></div></div>'
         +    '<span style="font-family:var(--f-mono);font-size:11px;color:var(--ink-700)">' + esc(d.probationStart || '') + '</span>'
         +    '<div style="display:flex;align-items:center;gap:10px"><span style="font-family:var(--f-mono);font-size:12px;color:var(--ink);font-weight:600;min-width:36px">' + d.attended + '/' + d.maxSessions + '</span><div style="flex:1;display:flex;gap:2px">';
-      for (var idx = 0; idx < d.maxSessions; idx++) {
-        h += '<div style="flex:1;height:7px;border-radius:2px;background:' + (idx < d.attended ? segColor : 'var(--paper-200)') + '"></div>';
-      }
+      h += probSegBar(d, 9);
       h += '</div></div>'
         +    '<span style="font-family:var(--f-mono);font-size:12px;color:var(--ink);font-weight:600">' + d.rate + '%</span>'
         +    '<span style="font-family:var(--f-mono);font-size:11px;color:var(--ink-600)">' + (complete ? '—' : stillNeeds + '/' + remaining) + '</span>'
@@ -687,9 +685,7 @@ function renderProbationContent() {
         +    (d2.remaining > 0 ? '<span style="color:var(--ink-500)">' + d2.remaining + ' left</span>' : '')
         +  '</div>'
         +  '<div style="display:flex;gap:2px">';
-      for (var idx2 = 0; idx2 < d2.maxSessions; idx2++) {
-        h += '<div style="flex:1;height:6px;border-radius:2px;background:' + (idx2 < d2.attended ? color : 'var(--paper-200)') + '"></div>';
-      }
+      h += probSegBar(d2, 6);
       h += '</div></div>';
     }
   }
@@ -701,6 +697,53 @@ function probStatusBadge(complete, failing, onTrack) {
   if (failing)  return '<span style="font-family:var(--f-mono);font-size:9.5px;font-weight:700;letter-spacing:.12em;padding:4px 8px;border-radius:4px;background:var(--crimson-100);color:var(--crimson-600)">AT RISK</span>';
   if (onTrack)  return '<span style="font-family:var(--f-mono);font-size:9.5px;font-weight:700;letter-spacing:.12em;padding:4px 8px;border-radius:4px;background:var(--present-bg);color:var(--present)">ON TRACK</span>';
   return '<span style="font-family:var(--f-mono);font-size:9.5px;font-weight:700;letter-spacing:.12em;padding:4px 8px;border-radius:4px;background:var(--gold-100);color:var(--gold-700)">BEHIND</span>';
+}
+
+// Segment fill per session outcome (matches the attendance encoding):
+// green = Present · yellow = Late (excused or unexcused) · grey = Absent Excused · red = Absent Unexcused
+var PROB_SEG_COLOR = {
+  "Present":          "var(--present)",
+  "Late Excused":     "var(--late-exc)",
+  "Late Unexcused":   "var(--late-exc)",
+  "Absent Excused":   "var(--absent-exc)",
+  "Absent Unexcused": "var(--absent-unexc)"
+};
+
+// Renders the segmented probation bar from d.sessionSequence (one coloured segment per
+// completed session) plus d.pendingSlots outline segments for sessions not yet held.
+// Falls back to the old attended-count fill if the backend predates sessionSequence.
+function probSegBar(d, segH) {
+  segH = segH || 8;
+  var max = d.maxSessions || 10;
+  var out = "";
+  if (d.sessionSequence == null && d.pendingSlots == null) {
+    var segColor = d.rate < 50 ? "var(--crimson)" : (d.rate >= (d.threshold || 80) ? "var(--present)" : "var(--gold)");
+    for (var f = 0; f < max; f++) {
+      out += '<div style="flex:1;height:' + segH + 'px;box-sizing:border-box;border-radius:2px;background:' + (f < (d.attended || 0) ? segColor : 'var(--paper-200)') + '"></div>';
+    }
+    return out;
+  }
+  var seq = d.sessionSequence || [];
+  var pending = (d.pendingSlots != null) ? d.pendingSlots : Math.max(0, max - seq.length);
+  for (var i = 0; i < seq.length; i++) {
+    var c = PROB_SEG_COLOR[seq[i].status] || "var(--paper-300)";
+    out += '<div title="' + esc(seq[i].status || "") + '" style="flex:1;height:' + segH + 'px;box-sizing:border-box;border-radius:2px;background:' + c + '"></div>';
+  }
+  for (var p = 0; p < pending; p++) {
+    out += '<div title="Upcoming session" style="flex:1;height:' + segH + 'px;box-sizing:border-box;border-radius:2px;background:transparent;border:1px solid var(--paper-300)"></div>';
+  }
+  return out;
+}
+
+function probSegLegend() {
+  var items = [["Present", "var(--present)"], ["Late", "var(--late-exc)"], ["Absent · exc.", "var(--absent-exc)"], ["Absent", "var(--absent-unexc)"]];
+  var s = '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">';
+  for (var i = 0; i < items.length; i++) {
+    s += '<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:9px;height:9px;border-radius:2px;background:' + items[i][1] + '"></span><span style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-500);letter-spacing:.04em">' + items[i][0] + '</span></span>';
+  }
+  s += '<span style="display:inline-flex;align-items:center;gap:5px"><span style="width:9px;height:9px;border-radius:2px;border:1px solid var(--paper-300)"></span><span style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-500);letter-spacing:.04em">Upcoming</span></span>';
+  s += '</div>';
+  return s;
 }
 
 function renderScoreboardView() {
@@ -940,7 +983,7 @@ function requestTypeChips() {
   }
   return h + '</div>';
 }
-function setRequestTypeFilter(t) { requestTypeFilter = t; selectedApologyIdx = null; renderViewTab(); renderApologyQueueContent(); }
+function setRequestTypeFilter(t) { requestTypeFilter = t; selectedApologyIdx = null; refreshRequestsChrome(); renderApologyQueueContent(); }
 
 var apologyFilter = "Pending";
 function apologyFilterChips() {
@@ -951,7 +994,7 @@ function apologyFilterChips() {
   }
   return chips + '</div>';
 }
-function setApologyFilter(f) { apologyFilter = f; selectedApologyIdx = null; renderViewTab(); renderApologyQueueContent(); }
+function setApologyFilter(f) { apologyFilter = f; selectedApologyIdx = null; refreshRequestsChrome(); renderApologyQueueContent(); }
 function apologyMatchesFilter(a) {
   if (requestTypeFilter !== "all" && reqBucket(a) !== requestTypeFilter) return false;
   if (apologyFilter === "All") return true;
@@ -1634,18 +1677,30 @@ function renderAddMemberPreview() {
 
 function setMembersMode(mode) {
   var btns = document.querySelectorAll('#membersModeToggle button');
-  btns[0].className = mode === 'roster'  ? 'active' : '';
-  btns[1].className = mode === 'add'     ? 'active' : '';
-  btns[2].className = mode === 'offense' ? 'active' : '';
+  for (var b = 0; b < btns.length; b++) btns[b].className = (btns[b].getAttribute('data-mode') === mode) ? 'active' : '';
   // Leaving the roster resets the mobile master-detail back to the list view.
   if (mode !== 'roster') {
     var rp = document.getElementById('membersRosterPane');
     if (rp) rp.classList.remove('detail-open');
   }
-  document.getElementById('membersRosterPane').style.display  = mode === 'roster'  ? 'block' : 'none';
-  document.getElementById('membersAddPane').style.display     = mode === 'add'     ? 'block' : 'none';
-  document.getElementById('membersOffensePane').style.display = mode === 'offense' ? 'block' : 'none';
+  var panes = { roster: 'membersRosterPane', member: 'membersMemberPane', scoreboard: 'membersScoreboardPane', add: 'membersAddPane', offense: 'membersOffensePane' };
+  for (var k in panes) { var pe = document.getElementById(panes[k]); if (pe) pe.style.display = (k === mode) ? 'block' : 'none'; }
   if (mode === 'add') renderAddMemberPreview();
+  // By member + Scoreboard folded in from the old View & Edit — reuse the existing render fns.
+  if (mode === 'member') {
+    var mr = document.getElementById('memberHistoryRoot');
+    if (mr && !membersMemberInit && typeof renderByMemberView === 'function') {
+      mr.innerHTML = renderByMemberView(); membersMemberInit = true;
+      if (typeof loadMemberNames === 'function') loadMemberNames();
+    }
+  }
+  if (mode === 'scoreboard') {
+    var sr = document.getElementById('scoreboardRoot');
+    if (sr && !membersScoreboardInit && typeof renderScoreboardView === 'function') {
+      sr.innerHTML = renderScoreboardView(); membersScoreboardInit = true;
+      if (typeof loadScoreboard === 'function') loadScoreboard();
+    }
+  }
   if (mode === 'offense') {
     var od = document.getElementById('offDate'); if (od && !od.value) od.value = todayStr();
     // Populate datalist of member names
@@ -2502,44 +2557,87 @@ function syncApologySlots() {
 
 // ─── 1.5  TAB NAV (mobile bottom-tabs + desktop sidebar) ──────────────────
 
+// Mobile bottom-tabs can't hold 9 admin tabs — show these, fold the rest into a "More" sheet.
+var MOBILE_PRIMARY = ["record", "sessions", "members"];
+var PERSONAL_TAB_IDS = ["myatt"];   // desktop sidebar: split under a "Personal" heading
+var NAV_GLYPHS = { record: "\u270E", sessions: "\u274F", members: "\u25D0", probation: "\u25D4", requests: "\u21CC", dashboard: "\u25A6", view: "\u229F", communique: "\u2709", birthdays: "\u2740", myatt: "\u25C9", "scoreboard-member": "\u2726", apology: "\u2709" };
+var NAV_HINTS = { record: "Mark tonight", sessions: "Recorded sessions", members: "Roster & standings", probation: "New-member pipeline", requests: "Approvals", dashboard: "Section analytics", view: "Past sessions", communique: "Email members", birthdays: "Celebrations", myatt: "This term", "scoreboard-member": "Standings", apology: "Submit apology" };
+var moreTabIds = [];
+
+function navBtnHtml(t, active) {
+  return '<button data-tab="' + t.id + '"' + (active ? ' class="active"' : '') + ' onclick="switchTab(\'' + t.id + '\')">'
+       +   '<span class="glyph">' + (NAV_GLYPHS[t.id] || "\u00b7") + '</span>'
+       +   '<span>' + (t.short || t.label) + '</span>'
+       + '</button>';
+}
+
 function renderTabNav() {
   var tabs = userRole === "admin" ? adminTabs : memberTabs;
-
-  // Mobile bottom-tabs
+  var current = activeTab || (tabs[0] && tabs[0].id);
   var nav = document.getElementById("tabNav");
-  var glyphs = { record: "✎", view: "⊟", members: "◐", communique: "✉", birthdays: "❀", myatt: "◉", "scoreboard-member": "✦", apology: "✉" };
   var navHtml = "";
-  for (var i = 0; i < tabs.length; i++) {
-    var t = tabs[i];
-    navHtml += '<button' + (i === 0 ? ' class="active"' : '') + ' onclick="switchTab(\'' + t.id + '\')">'
-            +    '<span class="glyph">' + (glyphs[t.id] || "·") + '</span>'
-            +    '<span>' + (t.short || t.label) + '</span>'
+  moreTabIds = [];
+
+  // Mobile: more than 5 tabs → primary set + a "More" overflow sheet.
+  if (userRole === "admin" && tabs.length > 5) {
+    var primary = tabs.filter(function (t) { return MOBILE_PRIMARY.indexOf(t.id) !== -1; })
+                      .sort(function (a, b) { return MOBILE_PRIMARY.indexOf(a.id) - MOBILE_PRIMARY.indexOf(b.id); });
+    tabs.forEach(function (t) { if (MOBILE_PRIMARY.indexOf(t.id) === -1) moreTabIds.push(t.id); });
+    primary.forEach(function (t) { navHtml += navBtnHtml(t, t.id === current); });
+    navHtml += '<button id="moreNavBtn" data-more="1" onclick="toggleMoreSheet()"'
+            +    (moreTabIds.indexOf(current) !== -1 ? ' class="active"' : '') + '>'
+            +    '<span class="glyph">\u22EF</span><span>More</span>'
             +  '</button>';
+  } else {
+    for (var i = 0; i < tabs.length; i++) navHtml += navBtnHtml(tabs[i], tabs[i].id === current);
   }
   nav.innerHTML = navHtml;
+  renderMoreSheet();
 
-  // Desktop sidebar
-  var side = document.getElementById("sidebarNav");
-  var hints = {
-    record: "Mark tonight",
-    view: "Past sessions",
-    members: "Roster & forms",
-    communique: "Email members",
-    birthdays: "Celebrations",
-    myatt: "This term",
-    "scoreboard-member": "Standings",
-    apology: "Submit apology"
-  };
-  var sideHtml = "";
-  for (var j = 0; j < tabs.length; j++) {
-    var tt = tabs[j];
-    sideHtml += '<div class="nav-item' + (j === 0 ? ' active' : '') + '" onclick="switchTab(\'' + tt.id + '\')">'
-              +   '<div>' + tt.label + '</div>'
-              +   '<div class="hint">' + (hints[tt.id] || "") + '</div>'
-              + '</div>';
+  // Desktop sidebar — "Work" items, then a "Personal" group (My attendance), matching Chorale Design.
+  function sideItemHtml(tt) {
+    return '<div class="nav-item' + (tt.id === current ? ' active' : '') + '" data-tab="' + tt.id + '" onclick="switchTab(\'' + tt.id + '\')">'
+         +   '<div>' + tt.label + '</div>'
+         +   '<div class="hint">' + (NAV_HINTS[tt.id] || "") + '</div>'
+         + '</div>';
   }
-  side.innerHTML = sideHtml;
+  var workHtml = "", personalHtml = "";
+  for (var j = 0; j < tabs.length; j++) {
+    if (PERSONAL_TAB_IDS.indexOf(tabs[j].id) !== -1) personalHtml += sideItemHtml(tabs[j]);
+    else workHtml += sideItemHtml(tabs[j]);
+  }
+  document.getElementById("sidebarNav").innerHTML = workHtml;
+  var pNav = document.getElementById("sidebarNavPersonal");
+  var pLabel = document.getElementById("sidebarPersonalLabel");
+  if (pNav) pNav.innerHTML = personalHtml;
+  if (pLabel) pLabel.style.display = personalHtml ? "" : "none";
 }
+
+// "More" overflow sheet (mobile) — holds the admin tabs that don't fit the bottom bar.
+function renderMoreSheet() {
+  var sheet = document.getElementById("moreSheet");
+  if (!moreTabIds.length) { if (sheet) sheet.remove(); return; }
+  if (!sheet) {
+    sheet = document.createElement("div");
+    sheet.id = "moreSheet";
+    sheet.className = "more-sheet";
+    sheet.onclick = function (e) { if (e.target === sheet) closeMoreSheet(); };
+    document.body.appendChild(sheet);
+  }
+  var tabs = userRole === "admin" ? adminTabs : memberTabs;
+  var rows = moreTabIds.map(function (id) {
+    var t = tabs.filter(function (x) { return x.id === id; })[0];
+    if (!t) return "";
+    return '<button class="more-sheet-item" onclick="switchTab(\'' + id + '\'); closeMoreSheet()">'
+         +   '<span class="glyph">' + (NAV_GLYPHS[id] || "\u00b7") + '</span>'
+         +   '<span class="more-sheet-label">' + t.label + '</span>'
+         +   '<span class="more-sheet-hint">' + (NAV_HINTS[id] || "") + '</span>'
+         + '</button>';
+  }).join("");
+  sheet.innerHTML = '<div class="more-sheet-card"><div class="more-sheet-head">More</div>' + rows + '</div>';
+}
+function toggleMoreSheet() { var s = document.getElementById("moreSheet"); if (s) s.classList.toggle("open"); }
+function closeMoreSheet() { var s = document.getElementById("moreSheet"); if (s) s.classList.remove("open"); }
 
 function renderUser(name, email) {
   var initial = (name || email || "·").trim().charAt(0).toUpperCase();
@@ -2696,7 +2794,7 @@ function statusColor(st) {
 var userRole = "unknown", userName = "", userEmail = "", activeTab = "";
 // Apology is NOT a top-level tab — it is a sub-page reached from My attendance
 // (keeps "My attendance" active in the nav, like the Profile sub-page).
-var adminTabs  = [{ id: "record", label: "Record" }, { id: "view", label: "View & Edit", short: "View" }, { id: "members", label: "Members" }, { id: "communique", label: "Communiqué", short: "Send" }, { id: "birthdays", label: "Birthdays", short: "Bdays" }, { id: "myatt", label: "My attendance", short: "Mine" }];
+var adminTabs  = [{ id: "record", label: "Record" }, { id: "sessions", label: "Sessions" }, { id: "members", label: "Members" }, { id: "probation", label: "Probation", short: "Prob." }, { id: "requests", label: "Requests", short: "Reqs" }, { id: "dashboard", label: "Group Dashboard", short: "Stats" }, { id: "communique", label: "Communiqué", short: "Send" }, { id: "birthdays", label: "Birthdays", short: "Bdays" }, { id: "myatt", label: "My attendance", short: "Mine" }];
 var memberTabs = [{ id: "myatt", label: "My attendance", short: "Attendance" }, { id: "scoreboard-member", label: "Scoreboard" }];
 
 google.script.run.withSuccessHandler(function (r) {
@@ -2750,18 +2848,24 @@ function renderBirthdayBanner() {
 
 function switchTab(tab) {
   activeTab = tab;
-  var tabs = userRole === "admin" ? adminTabs : memberTabs;
+  // Editing state (View & Edit / Sessions) must not leak into other tabs.
+  if (tab !== "view" && tab !== "sessions") { hideChangesBar(); }
+  if (tab !== "sessions") { sessDetailActive = false; }
   // Apology is a sub-page of My attendance — keep "My attendance" lit in the nav.
   var navTab = (tab === "apology") ? "myatt" : tab;
-  // Mobile tab buttons
+  // Mobile tab buttons (primary + optional "More")
   var mBtns = document.querySelectorAll(".tab-nav button");
-  for (var i = 0; i < mBtns.length; i++) mBtns[i].className = tabs[i].id === navTab ? "active" : "";
-  // Sidebar items
-  var sBtns = document.querySelectorAll("#sidebarNav .nav-item");
-  for (var j = 0; j < sBtns.length; j++) sBtns[j].className = "nav-item" + (tabs[j].id === navTab ? " active" : "");
+  for (var i = 0; i < mBtns.length; i++) {
+    var b = mBtns[i];
+    if (b.getAttribute("data-more")) b.className = (moreTabIds.indexOf(navTab) !== -1) ? "active" : "";
+    else b.className = (b.getAttribute("data-tab") === navTab) ? "active" : "";
+  }
+  // Sidebar items (matched by data-tab, not index)
+  var sBtns = document.querySelectorAll("#sidebarNav .nav-item, #sidebarNavPersonal .nav-item");
+  for (var j = 0; j < sBtns.length; j++) sBtns[j].className = "nav-item" + (sBtns[j].getAttribute("data-tab") === navTab ? " active" : "");
 
   // Hide all tab pages
-  var allPages = ["record", "view", "members", "communique", "birthdays", "myatt", "scoreboard-member", "apology", "profile"];
+  var allPages = ["record", "sessions", "dashboard", "probation", "requests", "view", "members", "communique", "birthdays", "myatt", "scoreboard-member", "apology", "profile"];
   for (var p = 0; p < allPages.length; p++) {
     var el = document.getElementById("tab-" + allPages[p]);
     if (el) el.className = "tab-page";
@@ -2777,11 +2881,458 @@ function switchTab(tab) {
 
   if (tab === "communique"        && !communiqueLoaded) loadCommunique();
   if (tab === "birthdays"         && !birthdaysLoaded)  loadBirthdays();
-  if (tab === "view"              && !viewInitialized) initViewTab();
+  if (tab === "view"              && !viewInitialized)  initViewTab();
+  if (tab === "sessions"          && !sessionsLoaded && typeof loadSessions === "function")        { sessionsLoaded = true; loadSessions(); }
+  if (tab === "dashboard"         && !dashboardLoaded && typeof loadGroupDashboard === "function") { dashboardLoaded = true; loadGroupDashboard(); }
+  if (tab === "probation"         && !probationTabLoaded) initProbationTab();
+  if (tab === "requests"          && !requestsTabLoaded)  initRequestsTab();
   if (tab === "myatt"             && !myAttLoaded)     loadMyAttendance();
   if (tab === "scoreboard-member" && !memberSbLoaded)  loadMemberScoreboard();
   if (tab === "apology"           && !apologyLoaded)   loadApologyTab();
   if (tab === "profile")          { profileMode = "view"; loadProfile(); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PHASE 4 · SESSIONS + GROUP DASHBOARD plumbing
+//  Structure + UI helpers only. The data-wiring (loadSessions, renderSessionsList,
+//  loadGroupDashboard, drawTrend, getSessionDetail → register edit) arrives as
+//  verbatim LOGIC blocks. Probation + Requests reuse the existing render fns.
+// ═══════════════════════════════════════════════════════════════════════════
+var probationTabLoaded = false, requestsTabLoaded = false; // sessionsLoaded + dashboardLoaded are declared in the Sessions/Dashboard LOGIC block below
+var membersMemberInit = false, membersScoreboardInit = false;
+
+// Generic filter-chrome helpers (pure UI; the loaders read the active state).
+function chipSelect(btn) {
+  var sibs = btn.parentNode.querySelectorAll(".filter-chip");
+  for (var i = 0; i < sibs.length; i++) sibs[i].classList.remove("active");
+  btn.classList.add("active");
+}
+function segSelect(btn) {
+  var sibs = btn.parentNode.querySelectorAll("button");
+  for (var i = 0; i < sibs.length; i++) sibs[i].classList.remove("active");
+  btn.classList.add("active");
+}
+function activeData(sel, attr) { var el = document.querySelector(sel + " .active"); return el ? el.getAttribute(attr) : null; }
+function sessToggleCustom() {
+  var box = document.getElementById("sessCustomRange");
+  if (box) box.style.display = (activeData("#sessRangeSeg", "data-range") === "custom") ? "flex" : "none";
+}
+function dashToggleCustom() {
+  var box = document.getElementById("dashCustomRange");
+  if (box) box.style.display = (activeData("#dashRangeSeg", "data-range") === "custom") ? "flex" : "none";
+}
+// Read the Sessions filters into the shape getSessionsList(filters) expects.
+function sessGetFilters() {
+  return {
+    section: activeData("#sessSectionChips", "data-section") || "All",
+    range: activeData("#sessRangeSeg", "data-range") || "month",
+    type: activeData("#sessTypeChips", "data-type") || "all",
+    start: (document.getElementById("sessStart") || {}).value || "",
+    end: (document.getElementById("sessEnd") || {}).value || ""
+  };
+}
+// Read the Group Dashboard filters into the shape getGroupDashboard(opts) expects.
+function dashGetOpts() {
+  return {
+    section: activeData("#dashSectionChips", "data-section") || "All",
+    range: activeData("#dashRangeSeg", "data-range") || "month",
+    start: (document.getElementById("dashStart") || {}).value || "",
+    end: (document.getElementById("dashEnd") || {}).value || ""
+  };
+}
+// Filter-change hooks (sessFiltersChanged / dashFiltersChanged) are defined in the
+// Sessions + Group Dashboard LOGIC block below, alongside loadSessions/loadGroupDashboard.
+// Sessions list ⇄ detail visibility (detail rendered by the LOGIC block into #sessionDetail).
+function sessShowDetail() { var l = document.getElementById("sessionsList"), d = document.getElementById("sessionDetail"); if (l) l.style.display = "none"; if (d) d.style.display = "block"; }
+function sessShowList()   { var l = document.getElementById("sessionsList"), d = document.getElementById("sessionDetail"); if (d) { d.style.display = "none"; } if (l) l.style.display = "block"; }
+
+// Probation + Requests now have their own top-level tabs — reuse the existing render fns.
+function initProbationTab() {
+  probationTabLoaded = true;
+  var root = document.getElementById("probationRoot");
+  if (root && typeof renderProbationView === "function") root.innerHTML = renderProbationView();
+  if (typeof loadProbationDashboard === "function") loadProbationDashboard();
+}
+function renderRequestsTab() {
+  var root = document.getElementById("requestsRoot");
+  if (root && typeof renderApologiesView === "function") root.innerHTML = renderApologiesView();
+}
+function initRequestsTab() {
+  requestsTabLoaded = true;
+  renderRequestsTab();
+  if (typeof loadApologyQueue === "function") loadApologyQueue();
+}
+// When the Requests tab is live, refresh its chrome there; else fall back to the legacy view shell.
+function refreshRequestsChrome() {
+  if (activeTab === "requests" && document.getElementById("requestsRoot")) renderRequestsTab();
+  else if (typeof renderViewTab === "function" && document.getElementById("viewRoot")) renderViewTab();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PHASE 4 · SESSIONS + GROUP DASHBOARD · CLIENT LOGIC
+//  google.script.run calls + payload shapes are verbatim (match Code.gs).
+//  Emitted HTML reconciled to the Page.html static-demo class names.
+// ═══════════════════════════════════════════════════════════════════════════
+var sessionsLoaded = false, dashboardLoaded = false;
+var sessDetailActive = false;             // true while a session register is open (shares View & Edit state)
+var sessCurrent = null;                 // currently-open session detail
+var SESS_ORDER = ["Present", "Late Excused", "Late Unexcused", "Absent Excused", "Absent Unexcused"];
+var SESS_ABBR  = { "Present": "P", "Late Excused": "LE", "Late Unexcused": "LU", "Absent Excused": "AE", "Absent Unexcused": "AU" };
+var SESS_VAR   = { "Present": "var(--present)", "Late Excused": "var(--late-exc)", "Late Unexcused": "var(--late-unexc)", "Absent Excused": "var(--absent-exc)", "Absent Unexcused": "var(--absent-unexc)" };
+
+// ---------- SESSIONS TAB ----------
+function loadSessions() {
+  var mount = document.getElementById("sessionsList");
+  if (!mount) return;
+  sessShowList();
+  mount.innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading sessions\u2026</div></div>';
+  var filters = (typeof sessGetFilters === "function") ? sessGetFilters() : { range: "month", section: "All", type: "all" };
+  google.script.run
+    .withSuccessHandler(renderSessionsList)
+    .withFailureHandler(function (e) { mount.innerHTML = '<p class="loading">Error: ' + esc(e.message) + '</p>'; })
+    .getSessionsList(filters);
+}
+function sessFiltersChanged() { loadSessions(); }
+
+// "2026-06-10" → { dow:"WED", day:"10", mon:"JUN" }
+function sessDateParts_(ds) {
+  var p = String(ds).split("-");
+  var dt = new Date(p[0], (p[1] || 1) - 1, p[2] || 1);
+  return {
+    dow: ["SUN","MON","TUE","WED","THU","FRI","SAT"][dt.getDay()] || "",
+    day: p[2] || "",
+    mon: ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"][(p[1] || 1) - 1] || ""
+  };
+}
+// proportional status bar + legend → .ministat-bar / .ministat-legend
+function ministatHtml_(counts) {
+  counts = counts || {};
+  var bar = "", legend = "";
+  for (var i = 0; i < SESS_ORDER.length; i++) {
+    var st = SESS_ORDER[i], n = counts[st] || 0;
+    if (n > 0) bar += '<span class="ministat-seg" style="flex:' + n + ';background:' + SESS_VAR[st] + '"></span>';
+    legend += '<span class="ministat-leg' + (n ? '' : ' zero') + '"><span class="sw" style="background:' + SESS_VAR[st] + '"></span><span class="ab">' + SESS_ABBR[st] + '</span><span class="ct">' + n + '</span></span>';
+  }
+  return '<div class="ministat-bar">' + bar + '</div><div class="ministat-legend">' + legend + '</div>';
+}
+
+function renderSessionsList(list) {
+  var mount = document.getElementById("sessionsList");
+  if (!mount) return;
+  if (!list || !list.length) { mount.innerHTML = '<div class="empty-pane">No sessions in this range.</div>'; return; }
+  var h = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">'
+        +   '<div class="eyebrow">' + list.length + ' session' + (list.length === 1 ? '' : 's') + '</div>'
+        +   '<span style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-400);letter-spacing:.1em">NEWEST FIRST</span>'
+        + '</div>';
+  for (var i = 0; i < list.length; i++) {
+    var s = list[i], dp = sessDateParts_(s.date), meeting = s.type === "Meeting";
+    var groups = (s.groups || []).map(function (g) { return '<span class="grp-chip">' + esc(g.toUpperCase()) + '</span>'; }).join("");
+    var apol = s.apologyCount > 0 ? '<span class="apol">\u2709 ' + s.apologyCount + ' APOLOG' + (s.apologyCount === 1 ? 'Y' : 'IES') + '</span>' : '';
+    var rec = (s.recordedBy && s.recordedBy.length) ? '<span>REC \u00b7 ' + esc(s.recordedBy.join(", ").toUpperCase()) + '</span>' : '';
+    h += '<div class="session-card" onclick="openSession(\'' + s.date + '\',\'' + jsAttr(s.sessionKey) + '\')">'
+      +    '<div class="sess-datebox"><div class="sess-dow">' + dp.dow + '</div><div class="sess-daynum">' + dp.day + '</div><div class="sess-mon">' + dp.mon + '</div></div>'
+      +    '<div class="sess-body">'
+      +      '<div class="sess-cardhead"><span class="type-badge' + (meeting ? ' meeting' : '') + '">' + (meeting ? 'MEETING' : 'PRACTICE') + '</span><span class="grp-chips">' + groups + '</span></div>'
+      +      '<div class="sess-title">' + esc(s.title || (meeting ? "Meeting" : "Practice")) + '</div>'
+      +      '<div class="sess-recmeta">' + rec + apol + '</div>'
+      +    '</div>'
+      +    '<div class="sess-breakdown">' + ministatHtml_(s.counts) + '</div>'
+      +    '<div class="sess-rateblock"><div><div class="sess-rate-num">' + s.attendanceRate + '%</div><div class="sess-rate-label">' + s.attended + '/' + s.total + ' HERE</div></div><span class="sess-chev">\u203a</span></div>'
+      +  '</div>';
+  }
+  mount.innerHTML = h;
+}
+
+// Session-detail records carry no profile photo (backend getSessionDetail omits it),
+// so we keep a name→photo map, sourced from getMemberList (reused if already loaded).
+var memberPhotoMap = null;
+function ensureMemberPhotos(cb) {
+  if (memberPhotoMap) { cb(); return; }
+  function build(list) {
+    memberPhotoMap = {};
+    (list || []).forEach(function (m) { if (m && m.name) memberPhotoMap[m.name] = m.profilePhoto || ""; });
+    cb();
+  }
+  if (memberListData && memberListData.length) { build(memberListData); return; }
+  google.script.run
+    .withSuccessHandler(function (list) { memberListData = list || memberListData; build(list); })
+    .withFailureHandler(function () { memberPhotoMap = {}; cb(); })
+    .getMemberList();
+}
+
+// (data-wiring verbatim)
+function openSession(dateStr, sessionKey) {
+  var mount = document.getElementById("sessionDetail");
+  if (mount) mount.innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading\u2026</div></div>';
+  if (typeof sessShowDetail === "function") sessShowDetail();
+  ensureMemberPhotos(function () {
+    google.script.run
+      .withSuccessHandler(renderSessionDetail)
+      .withFailureHandler(function (e) { if (mount) mount.innerHTML = '<p class="loading">Error: ' + esc(e.message) + '</p>'; })
+      .getSessionDetail(dateStr, sessionKey);
+  });
+}
+
+// Fresh load: adopt the shared edit-state machinery (same as View & Edit) so the
+// session register gets role-grouped columns, the EDITED glow, and the floating
+// unsaved-changes tray — no persistent "Save changes" button.
+function renderSessionDetail(d) {
+  sessCurrent = d;
+  viewRecords = d.records || [];
+  viewCurrentDate = d.date;
+  viewGroup = (d.groups && d.groups.length === 1) ? d.groups[0] : "All";
+  viewOriginalStatuses = {};
+  viewEditedStatuses = {};
+  for (var i = 0; i < viewRecords.length; i++) viewOriginalStatuses[viewRecords[i].rowIndex] = viewRecords[i].status;
+  sessDetailActive = true;
+  if (typeof sessShowDetail === "function") sessShowDetail();
+  paintSessionDetail();
+}
+
+function sessRoleTint(role, group) {
+  return { Soprano: '#F3E9CE', Alto: '#F0E0CE', Tenor: '#ECE7DE', Bass: '#E1ECDF' }[role]
+      || { Choir: '#F3E9CE', Band: '#F0E0CE', Orchestra: '#E1ECDF' }[group]
+      || 'var(--paper-200)';
+}
+
+// Re-render the open session from current state (original + in-flight edits). Called on
+// every status change so the tally, EDITED glow and changes-bar stay in sync.
+function paintSessionDetail() {
+  var d = sessCurrent;
+  var mount = document.getElementById("sessionDetail");
+  if (!d || !mount) return;
+  var isDesktop = window.matchMedia && window.matchMedia('(min-width: 1024px)').matches;
+
+  // Live tally from the current (possibly edited) statuses
+  var counts = {}, attended = 0, total = viewRecords.length;
+  for (var i = 0; i < viewRecords.length; i++) {
+    var cur = viewEditedStatuses[viewRecords[i].rowIndex] || viewRecords[i].status;
+    counts[cur] = (counts[cur] || 0) + 1;
+    if (cur === "Present" || cur === "Late Excused" || cur === "Late Unexcused") attended++;
+  }
+  var rate = total ? Math.round(attended / total * 100) : 0;
+  var cells = "";
+  for (var s = 0; s < SESS_ORDER.length; s++) {
+    var stt = SESS_ORDER[s];
+    cells += '<div class="sess-tally-cell"><div class="lab"><span class="dot" style="background:' + SESS_VAR[stt] + '"></span><span class="ab">' + SESS_ABBR[stt] + '</span></div><div class="num">' + (counts[stt] || 0) + '</div></div>';
+  }
+
+  // Register grouped by ensemble → role, 2-col on desktop, with EDITED glow
+  var byEns = {};
+  for (var r = 0; r < viewRecords.length; r++) { var rc = viewRecords[r]; (byEns[rc.group] = byEns[rc.group] || []).push(rc); }
+  var ensKeys = Object.keys(byEns).sort();
+  var multiEns = ensKeys.length > 1;
+  var reg = isDesktop ? '<div class="view-detail-grid">' : '';
+  for (var ei = 0; ei < ensKeys.length; ei++) {
+    var en = ensKeys[ei];
+    if (multiEns) reg += '<div class="ensemble-header"><span>' + esc(en) + '</span></div>';
+    var rm = {};
+    for (var k = 0; k < byEns[en].length; k++) { var rl = byEns[en][k].role || "Other"; (rm[rl] = rm[rl] || []).push(byEns[en][k]); }
+    var rk = Object.keys(rm).sort(function (a, b) { return a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b); });
+    for (var ki = 0; ki < rk.length; ki++) {
+      var recs = rm[rk[ki]];
+      reg += '<div class="role-group"><div class="role-group-header"><span>' + esc(rk[ki]) + '</span><span class="role-group-count">' + recs.length + '</span></div>';
+      for (var mi = 0; mi < recs.length; mi++) {
+        var rec = recs[mi];
+        var cur2 = viewEditedStatuses[rec.rowIndex] || rec.status;
+        var edited = viewEditedStatuses[rec.rowIndex] && viewEditedStatuses[rec.rowIndex] !== viewOriginalStatuses[rec.rowIndex];
+        var initial = (rec.name || '\u00b7').trim().charAt(0).toUpperCase();
+        var photo = (memberPhotoMap && memberPhotoMap[rec.name]) || rec.profilePhoto || "";
+        reg += '<div class="member-row' + (edited ? ' row-edited' : '') + '">'
+          +    '<span class="member-name">' + memberAvatar(photo, initial, { size: 26, font: 11, bg: sessRoleTint(rec.role, en) })
+          +      esc(rec.name) + (edited ? ' <span class="edited-badge">EDITED</span>' : '') + '</span>'
+          +    '<div class="status-five">'
+          +      fiveBtn(rec.rowIndex, "P",  "Present",          cur2)
+          +      fiveBtn(rec.rowIndex, "LE", "Late Excused",     cur2)
+          +      fiveBtn(rec.rowIndex, "LU", "Late Unexcused",   cur2)
+          +      fiveBtn(rec.rowIndex, "AE", "Absent Excused",   cur2)
+          +      fiveBtn(rec.rowIndex, "AU", "Absent Unexcused", cur2)
+          +    '</div>'
+          + '</div>';
+      }
+      reg += '</div>';
+    }
+  }
+  if (isDesktop) reg += '</div>';
+
+  var groupsTxt = (d.groups || []).join(" \u00b7 ");
+  mount.innerHTML = ''
+    + '<button class="back-btn" onclick="closeSession()">\u2190 All sessions</button>'
+    + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px">'
+    +   '<div><div class="eyebrow">' + esc(groupsTxt.toUpperCase()) + '</div><h2 style="margin-top:4px">' + formatDateDisplay(d.date) + '</h2>'
+    +     '<div style="font-family:var(--f-mono);font-size:10.5px;color:var(--ink-500);letter-spacing:.08em;margin-top:6px">' + (d.recordedBy && d.recordedBy.length ? 'REC \u00b7 ' + esc(d.recordedBy.join(", ").toUpperCase()) : '') + '</div></div>'
+    +   '<button class="btn-export" onclick="exportThisSession()">Export \u00b7 CSV</button>'
+    + '</div>'
+    + '<div class="sess-tally"><div><div class="sess-tally-rate-label">ATTENDANCE</div><div class="sess-tally-rate">' + rate + '%</div></div>'
+    +   '<div class="sess-tally-div"></div><div class="sess-tally-counts">' + cells + '</div>'
+    +   '<div style="flex:1"></div><div style="text-align:right"><div class="sess-tally-rate-label">APOLOGIES</div><div class="num" style="font-family:var(--f-display);font-size:28px;color:var(--paper);margin-top:4px">' + (d.apologyCount || 0) + '</div></div>'
+    + '</div>'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="eyebrow">Register \u00b7 ' + total + ' members</div><span style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-400);letter-spacing:.1em">TAP A STATUS TO CORRECT</span></div>'
+    + reg;
+  updateChangesBar();
+}
+
+// Leave the open session — drop any unsaved edits and return to the list.
+function closeSession() {
+  sessDetailActive = false;
+  viewEditedStatuses = {};
+  hideChangesBar();
+  if (typeof sessShowList === "function") sessShowList();
+}
+
+// (data-wiring verbatim)
+function exportThisSession() {
+  if (!sessCurrent) return;
+  google.script.run
+    .withSuccessHandler(function (csv) { downloadCSV_(csv, "session-" + sessCurrent.date + ".csv"); })
+    .withFailureHandler(function (e) { showToast("Export failed: " + e.message, "error"); })
+    .exportSessionCSV(sessCurrent.date, sessCurrent.sessionKey);
+}
+
+// (data-wiring verbatim)
+function exportSessionsList() {
+  var filters = (typeof sessGetFilters === "function") ? sessGetFilters() : { range: "month", section: "All", type: "all" };
+  google.script.run
+    .withSuccessHandler(function (csv) { downloadCSV_(csv, "sessions.csv"); })
+    .withFailureHandler(function (e) { showToast("Export failed: " + e.message, "error"); })
+    .exportSessionsListCSV(filters);
+}
+
+// ---------- GROUP DASHBOARD ----------
+function loadGroupDashboard() {
+  var opts = (typeof dashGetOpts === "function") ? dashGetOpts() : { section: "All", range: "month" };
+  var body = document.getElementById("dashboardBody");
+  if (body) body.style.opacity = "0.5";
+  google.script.run
+    .withSuccessHandler(function (d) { if (body) body.style.opacity = "1"; renderGroupDashboard(d); })
+    .withFailureHandler(function (e) { if (body) body.style.opacity = "1"; showToast("Dashboard error: " + e.message, "error"); })
+    .getGroupDashboard(opts);
+}
+function dashFiltersChanged() { loadGroupDashboard(); }
+
+function dashStatCard_(label, n, total, color) {
+  var pct = total ? Math.round(n / total * 100) : 0;
+  return '<div class="dash-stat"><div class="dash-stat-head"><span class="dot" style="background:' + color + '"></span><span class="eyebrow" style="font-size:9.5px">' + label + '</span></div>'
+       + '<div class="dash-stat-num">' + n + '</div><div class="dash-stat-sub">' + pct + '% OF RECORDS</div></div>';
+}
+
+function renderGroupDashboard(d) {
+  var sc = d.statusCounts || {};
+  var present = sc["Present"] || 0,
+      late = (sc["Late Excused"] || 0) + (sc["Late Unexcused"] || 0),
+      absent = (sc["Absent Excused"] || 0) + (sc["Absent Unexcused"] || 0);
+  var total = d.totalRecords || (present + late + absent) || 1;
+  var delta = (d.trend && d.trend.length > 1) ? (d.trend[d.trend.length - 1].rate - d.trend[0].rate) : 0;
+  var sectionLabel = (d.section && d.section !== "All") ? d.section : "All sections";
+  var deltaTag = delta >= 0
+    ? '<span class="tag">\u25b2 ' + delta + ' PTS</span>'
+    : '<span class="tag down">\u25bc ' + Math.abs(delta) + ' PTS</span>';
+
+  // Hero + status distribution
+  var rateEl = document.getElementById("dashRate");
+  if (rateEl) rateEl.innerHTML =
+      '<div class="dash-hero"><div class="dash-hero-eyebrow">' + esc(sectionLabel.toUpperCase()) + ' \u00b7 ATTENDANCE RATE</div>'
+    +   '<div class="dash-hero-num">' + d.overallRate + '%</div>'
+    +   '<div class="dash-hero-delta">' + deltaTag + '<span style="font-size:11px;color:var(--ink-300)">vs. start of range</span></div>'
+    +   '<div class="dash-hero-sub">' + (present + late) + ' of ' + total + ' records present \u00b7 ' + (d.trend ? d.trend.length : 0) + ' sessions in range</div></div>'
+    + dashStatCard_("Present", present, total, "var(--present)")
+    + dashStatCard_("Late", late, total, "var(--late-exc)")
+    + dashStatCard_("Absent", absent, total, "var(--absent-unexc)");
+
+  // Trend chart (SVG) — data: d.trend = [{date, rate}]
+  drawTrendChart(d.trend);
+
+  // At-Risk panel
+  var risk = document.getElementById("dashAtRisk");
+  if (risk) {
+    var rows = "";
+    (d.nearAU || []).forEach(function (m) {
+      var dots = (m.lastSessions || []).map(function (ls) {
+        return '<span class="status-dot ' + statusDotClass_(ls.status) + '" title="' + esc(ls.date + ': ' + ls.status) + '"></span>';
+      }).join("");
+      rows += '<div class="atrisk-row"><div class="atrisk-info"><div class="atrisk-name">' + esc(m.name) + '</div>'
+           +    '<div class="atrisk-meta">' + esc((m.groups || []).join(" \u00b7 ").toUpperCase()) + '</div></div>'
+           +    '<div class="atrisk-dots">' + dots + '</div>'
+           +    '<span class="atrisk-badge">' + m.consecutiveAU + '\u00d7 AU</span></div>';
+    });
+    if (!rows) rows = '<div class="atrisk-row" style="color:var(--ink-400);justify-content:center">No members at risk in this range.</div>';
+    risk.innerHTML = '<div class="dash-panel-head"><div><div class="eyebrow" style="color:var(--crimson-600)">At risk \u00b7 early warning</div>'
+      + '<div style="font-size:11.5px;color:var(--ink-500);margin-top:4px">2+ unexcused absences in a row \u2014 before the 3-AU penalty fires.</div></div>'
+      + '<span class="big" style="color:var(--crimson-600)">' + ((d.nearAU || []).length) + '</span></div>' + rows;
+  }
+
+  // Probation panel
+  var prob = document.getElementById("dashProbation");
+  if (prob) {
+    var fb = d.probationFallingBehind || [];
+    var minis = '<div class="prob-summary"><div class="prob-mini gold"><div class="num">' + d.probationCount + '</div><div class="lab">On probation</div></div>'
+              + '<div class="prob-mini ok"><div class="num">' + d.probationOnTrack + '</div><div class="lab">On track</div></div>'
+              + '<div class="prob-mini bad"><div class="num">' + fb.length + '</div><div class="lab">Behind</div></div></div>';
+    var list = "";
+    if (fb.length) {
+      list = '<div style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-400);letter-spacing:.1em;margin-bottom:8px">FALLING BEHIND</div>';
+      fb.forEach(function (p) {
+        var att = p.attended || 0, max = p.maxSessions || 10, seg = "";
+        for (var i = 0; i < max; i++) seg += '<span' + (i < att ? ' class="fill"' : '') + '></span>';
+        list += '<div class="prob-fall-row"><div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--ink)">' + esc(p.name) + '</div>'
+             +    '<div class="prob-seg">' + seg + '</div></div>'
+             +    '<span style="font-family:var(--f-mono);font-size:12px;font-weight:600;color:var(--crimson-600)">' + p.rate + '%</span></div>';
+      });
+    }
+    prob.innerHTML = '<div class="eyebrow" style="margin-bottom:14px">Probation \u00b7 in this section</div>' + minis + list;
+  }
+}
+
+// green=Present, yellow=Late(both), grey=Absent Excused, red=Absent Unexcused → my CSS modifiers
+function statusDotClass_(status) {
+  if (status === "Present") return "present";
+  if (status === "Late Excused" || status === "Late Unexcused") return "late";
+  if (status === "Absent Excused") return "abs-exc";
+  if (status === "Absent Unexcused") return "abs-unexc";
+  return "abs-exc";
+}
+
+// SVG area+line chart into #dashTrend (matches the static-demo trend).
+function drawTrendChart(trend) {
+  var host = document.getElementById("dashTrend");
+  if (!host) return;
+  if (!trend || !trend.length) { host.innerHTML = '<div class="empty-pane">No data in range.</div>'; return; }
+  var W = 760, H = 220, padL = 34, padR = 14, padT = 14, padB = 26, n = trend.length;
+  var iw = W - padL - padR, ih = H - padT - padB;
+  function x(i) { return padL + (n === 1 ? iw / 2 : i / (n - 1) * iw); }
+  function y(r) { return padT + (1 - r / 100) * ih; }
+  var line = trend.map(function (t, i) { return x(i) + "," + y(t.rate); }).join(" ");
+  var area = "M " + x(0) + "," + y(trend[0].rate) + " " + trend.map(function (t, i) { return "L " + x(i) + "," + y(t.rate); }).join(" ") + " L " + x(n - 1) + "," + (padT + ih) + " L " + x(0) + "," + (padT + ih) + " Z";
+  var grid = [0, 25, 50, 75, 100].map(function (g) {
+    return '<line x1="' + padL + '" y1="' + y(g) + '" x2="' + (W - padR) + '" y2="' + y(g) + '" stroke="#E8DEC6" stroke-width="1"' + (g ? ' stroke-dasharray="3 4"' : '') + '></line>'
+         + ((g % 50 === 0) ? '<text x="' + (padL - 8) + '" y="' + (y(g) + 3) + '" text-anchor="end" font-family="monospace" font-size="9" fill="#8C8478">' + g + '</text>' : '');
+  }).join("");
+  var dots = trend.map(function (t, i) {
+    var lastp = i === n - 1;
+    return '<circle cx="' + x(i) + '" cy="' + y(t.rate) + '" r="' + (lastp ? 4.5 : 2.8) + '" fill="' + (lastp ? '#B08538' : '#FBF7EE') + '" stroke="#B08538" stroke-width="2"></circle>';
+  }).join("");
+  var xlabels = trend.map(function (t, i) {
+    return (i % 2 === 0 || i === n - 1) ? '<text x="' + x(i) + '" y="' + (H - 8) + '" text-anchor="middle" font-family="monospace" font-size="8.5" fill="#8C8478">' + esc(String(t.date).toUpperCase()) + '</text>' : '';
+  }).join("");
+  var last = trend[n - 1];
+  host.innerHTML = '<svg class="trend-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">'
+    + '<defs><linearGradient id="trendFillLive" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#B08538" stop-opacity="0.22"></stop><stop offset="100%" stop-color="#B08538" stop-opacity="0"></stop></linearGradient></defs>'
+    + grid
+    + '<path d="' + area + '" fill="url(#trendFillLive)"></path>'
+    + '<polyline points="' + line + '" fill="none" stroke="#B08538" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>'
+    + dots + xlabels
+    + '<text x="' + x(n - 1) + '" y="' + (y(last.rate) - 12) + '" text-anchor="middle" font-family="Georgia,serif" font-size="16" fill="#14110F">' + last.rate + '%</text>'
+    + '</svg>';
+}
+
+// ---------- shared helpers (esc + showToast already exist in Scripts) ----------
+function jsAttr(s) { return String(s).replace(/'/g, "\\'").replace(/"/g, "&quot;"); }
+function downloadCSV_(csv, filename) {
+  var blob = new Blob([csv], { type: "text/csv" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
 function initAdmin() {
@@ -3217,7 +3768,7 @@ function loadDateDetail(ds) {
     .getAttendanceForDate(ds, viewGroup);
 }
 
-function editStatus(ri, ns) { viewEditedStatuses[ri] = ns; updateChangesBar(); renderViewTab(); }
+function editStatus(ri, ns) { viewEditedStatuses[ri] = ns; updateChangesBar(); if (sessDetailActive) paintSessionDetail(); else renderViewTab(); }
 function backToDateList() {
   viewCurrentDate = null; viewRecords = []; viewOriginalStatuses = {}; viewEditedStatuses = {}; viewSearchVal = "";
   hideChangesBar(); renderViewTab();
@@ -3296,7 +3847,7 @@ function getChangeCount() {
   return c;
 }
 function hideChangesBar() { var b = document.getElementById("changesBar"); if (b) b.remove(); }
-function discardChanges() { viewEditedStatuses = {}; hideChangesBar(); renderViewTab(); }
+function discardChanges() { viewEditedStatuses = {}; hideChangesBar(); if (sessDetailActive) paintSessionDetail(); else renderViewTab(); }
 function saveChanges() {
   var u = [];
   for (var ri in viewEditedStatuses) {
@@ -3315,7 +3866,7 @@ function saveChanges() {
         if (viewRecords[i].rowIndex === parseInt(ri2)) { viewRecords[i].status = viewEditedStatuses[ri2]; break; }
       }
     }
-    viewEditedStatuses = {}; hideChangesBar(); renderViewTab();
+    viewEditedStatuses = {}; hideChangesBar(); if (sessDetailActive) paintSessionDetail(); else renderViewTab();
   }).withFailureHandler(function (e) {
     showToast("Failed: " + e.message, "error");
     if (btn) { btn.disabled = false; btn.textContent = "Save changes"; }
@@ -3770,7 +4321,8 @@ var apologyQueue = [];
 function loadApologyQueue() {
   google.script.run.withSuccessHandler(function (data) {
     apologyQueue = data;
-    if (viewMode === "apologies") renderViewTab(); // refresh type-filter counts
+    if (activeTab === "requests") refreshRequestsChrome(); // refresh type-filter counts
+    else if (viewMode === "apologies") renderViewTab();
     renderApologyQueueContent();
   })
     .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
