@@ -12,6 +12,10 @@ var ADMINS_SHEET     = "Admins";
 var SCHEDULE_SHEET   = "Schedule";
 var MEETINGS_SHEET   = "Meetings";
 var APOLOGIES_SHEET  = "Apologies";
+var REQUEST_TYPES = ["Name Change", "Section Transfer", "Course Details", "Restart Probation"];
+function isRequestType_(type) {
+  return REQUEST_TYPES.indexOf(String(type || "").trim()) !== -1;
+}
 var MEMBER_DETAILS_SHEET = "Member Details";
 var CONFIG_SHEET     = "Config";
 var SIGNATURES_SHEET = "Signatures";
@@ -337,6 +341,7 @@ function saveAttendance(dateStr, selectedGroups, records, overwrite) {
   // Mark matching apologies as Applied
   markApologiesApplied_(ss, dateStr, records);
   var probEvals = evaluateProbation_(ss);
+  try { syncConsecutiveAuOffenses_(ss); } catch(e) {}
   return { success: true, summary: sm, date: dateStr, selectedGroups: selectedGroups, totalRows: rows.length, probationEvals: probEvals };
 }
  
@@ -393,7 +398,9 @@ function batchUpdateAttendance(updates) {
   var ss=getSpreadsheet_(),sheet=ss.getSheetByName(ATTENDANCE_SHEET); if(!sheet)throw new Error("Attendance sheet not found.");
   var user=Session.getActiveUser().getEmail()||"Unknown",now=new Date(),changed=0;
   for(var i=0;i<updates.length;i++){var row=updates[i].rowIndex;if(row<2||row>sheet.getLastRow())continue;sheet.getRange(row,5).setValue(updates[i].newStatus);sheet.getRange(row,6).setValue(user);sheet.getRange(row,7).setValue(now);changed++;}
-  if(changed>0)refreshAllRegisters_(ss); return{success:true,changed:changed};
+  if(changed>0)refreshAllRegisters_(ss);
+  try { syncConsecutiveAuOffenses_(ss); } catch(e) {}
+  return{success:true,changed:changed};
 }
  
 // -------------------------------------------------------
@@ -473,6 +480,16 @@ function calculateProbationStats_(member, attData) {
   var rate = sessionsToCount > 0 ? Math.round((attended / sessionsToCount) * 100) : 0;
   var required = Math.ceil(PROBATION_SESSIONS * PROBATION_THRESHOLD);
  
+  // Per-session status sequence (for the segmented probation bar). One entry per
+  // counted session in chronological order, plus empty slots up to PROBATION_SESSIONS
+  // so the bar shows the full probation period filling up.
+  var sessionSequence = [];
+  for (var q = 0; q < sessionsToCount; q++) {
+    var sq = sessionMap[sessionKeys[q]];
+    sessionSequence.push({ date: sq.date, status: sq.status });
+  }
+  var pendingSlots = Math.max(0, PROBATION_SESSIONS - sessionSequence.length);
+ 
   return {
     name: member.name,
     probationStart: start,
@@ -486,7 +503,9 @@ function calculateProbationStats_(member, attData) {
     required: required,
     complete: totalSessions >= PROBATION_SESSIONS,
     passed: totalSessions >= PROBATION_SESSIONS && attended >= required,
-    lastSessionDate: lastSessionDate
+    lastSessionDate: lastSessionDate,
+    sessionSequence: sessionSequence,
+    pendingSlots: pendingSlots
   };
 }
  
@@ -720,25 +739,18 @@ function getScoreboard(group) {
       statusCounts[st] = (statusCounts[st] || 0) + 1;
     }
  
-    // Consecutive absence penalty — only Absent Unexcused counts
+    // Consecutive-AU penalty is no longer deducted inline here — it is now recorded
+    // as an OFFENSE (see syncConsecutiveAuOffenses_) and flows in via offensePts below.
+    // Kept as 0 for backward compatibility with export/display columns.
     var consecPenalty = 0;
-    var consecCount = 0;
-    for (var c = 0; c < dayStatuses.length; c++) {
-      var dst = dayStatuses[c].status;
-      if (dst === "Absent Unexcused") {
-        consecCount++;
-        if (consecCount >= CONSECUTIVE_ABSENCE_COUNT) {
-          consecPenalty += CONSECUTIVE_ABSENCE_PENALTY;
-          consecCount = 0;
-        }
-      } else {
-        consecCount = 0;
-      }
-    }
  
-    // Offense penalty
+    // Offense penalty — each offense carries its own points (consecutive-AU offenses
+    // score at CONSECUTIVE_ABSENCE_PENALTY; manual offenses at OFFENSE_PENALTY).
     var memberOffenses = offenses.filter(function(o) { return o.name === m.name; });
-    var offensePts = memberOffenses.length * OFFENSE_PENALTY;
+    var offensePts = 0;
+    for (var oi = 0; oi < memberOffenses.length; oi++) {
+      offensePts += (memberOffenses[oi].points !== undefined ? memberOffenses[oi].points : OFFENSE_PENALTY);
+    }
  
     // Probation penalty (for conditional pass members)
     var probPenalty = m.probationPenalty || 0;
@@ -796,32 +808,61 @@ function readOffenses_(ss) {
   var sheet = ss.getSheetByName(OFFENSES_SHEET);
   if (!sheet) return [];
   var data = sheet.getDataRange().getValues();
+  if (data.length < 2) return [];
+  // Points column is optional (index 5). If absent/blank, fall back to OFFENSE_PENALTY.
+  var headers = data[0].map(function(x){ return x.toString().trim().toLowerCase(); });
+  var ptsIdx = headers.indexOf("points");
   var offenses = [];
   for (var i = 1; i < data.length; i++) {
+    var pts = OFFENSE_PENALTY;
+    if (ptsIdx !== -1 && data[i][ptsIdx] !== "" && data[i][ptsIdx] != null) {
+      var p = Number(data[i][ptsIdx]);
+      if (!isNaN(p)) pts = p;
+    }
     offenses.push({
       date: formatSheetDate_(data[i][0]),
       name: data[i][1].toString(),
       description: data[i][2].toString(),
-      recordedBy: data[i][3] ? data[i][3].toString() : ""
+      recordedBy: data[i][3] ? data[i][3].toString() : "",
+      points: pts
     });
   }
   return offenses;
 }
  
-/**
- * Adds an offense to the Offenses sheet.
- */
-function addOffense(dateStr, memberName, description) {
-  var ss = getSpreadsheet_();
+/** Ensures the Offenses sheet exists and has a Points column; returns the sheet. */
+function ensureOffensesSheet_(ss) {
   var sheet = ss.getSheetByName(OFFENSES_SHEET);
   if (!sheet) {
     sheet = ss.insertSheet(OFFENSES_SHEET);
-    sheet.appendRow(["Date", "Name", "Description", "Recorded By", "Timestamp"]);
-    sheet.getRange(1, 1, 1, 5).setFontWeight("bold");
+    sheet.appendRow(["Date", "Name", "Description", "Recorded By", "Timestamp", "Points"]);
+    sheet.getRange(1, 1, 1, 6).setFontWeight("bold");
     sheet.setFrozenRows(1);
+    return sheet;
   }
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+    .map(function(x){ return x.toString().trim().toLowerCase(); });
+  if (headers.indexOf("points") === -1) {
+    var col = sheet.getLastColumn() + 1;
+    sheet.getRange(1, col).setValue("Points").setFontWeight("bold");
+  }
+  return sheet;
+}
+ 
+/**
+ * Adds an offense to the Offenses sheet. Optional points override (defaults to flat penalty).
+ */
+function addOffense(dateStr, memberName, description, points) {
+  var ss = getSpreadsheet_();
+  var sheet = ensureOffensesSheet_(ss);
   var user = Session.getActiveUser().getEmail() || "Unknown";
-  sheet.appendRow([dateStr, memberName, description, user, new Date()]);
+  var pts = (points === undefined || points === null || points === "") ? OFFENSE_PENALTY : points;
+  var dmap = headerIndexMap_(sheet);
+  // Build the row positionally for the first 5, then set Points by header
+  var row = [dateStr, memberName, description, user, new Date()];
+  sheet.appendRow(row);
+  var newRow = sheet.getLastRow();
+  if (dmap["points"] != null) sheet.getRange(newRow, dmap["points"] + 1).setValue(pts);
   return { success: true };
 }
  
@@ -831,6 +872,409 @@ function addOffense(dateStr, memberName, description) {
 function getOffenseList() {
   var ss = getSpreadsheet_();
   return readOffenses_(ss);
+}
+ 
+// -------------------------------------------------------
+//  CONSECUTIVE-AU → OFFENSE (Part C.1)
+// -------------------------------------------------------
+var CONSEC_AU_OFFENSE_TAG = "[auto:3AU]"; // marker in the description for idempotency
+ 
+/**
+ * Detects completed, non-overlapping sets of 3 consecutive Absent-Unexcused sessions
+ * per member and records each as an OFFENSE (points = CONSECUTIVE_ABSENCE_PENALTY).
+ * Idempotent: each set is keyed by the date of its 3rd AU; if an auto-offense with
+ * that key already exists for the member, it is not written again. Does NOT toggle
+ * anyone inactive. Runs at record/edit time and via the daily sweep.
+ *
+ * Rule: count AU in runs; every time the run reaches 3, log one offense and reset the
+ * counter to 0 (so 6 straight AU = 2 offenses; a non-AU also resets).
+ */
+function syncConsecutiveAuOffenses_(ss) {
+  ss = ss || getSpreadsheet_();
+  var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (!attSheet) return { added: 0 };
+  var data = attSheet.getDataRange().getValues();
+ 
+  // Build per-member chronological best-status-per-date (across all their groups)
+  var byMember = {};
+  for (var i = 1; i < data.length; i++) {
+    var ds = formatSheetDate_(data[i][0]);
+    var n = data[i][1].toString();
+    var st = data[i][4].toString();
+    if (!byMember[n]) byMember[n] = {};
+    byMember[n][ds] = bestStatus_(byMember[n][ds], st);
+  }
+ 
+  // Existing auto-offense keys per member (to avoid double-logging)
+  var existing = readOffenses_(ss);
+  var existingKeys = {}; // name -> { "date": true }
+  existing.forEach(function(o) {
+    if (o.description && o.description.indexOf(CONSEC_AU_OFFENSE_TAG) !== -1) {
+      if (!existingKeys[o.name]) existingKeys[o.name] = {};
+      existingKeys[o.name][o.date] = true; // set-key (3rd-AU date) stored as offense date
+    }
+  });
+ 
+  var added = 0;
+  for (var name in byMember) {
+    var dates = Object.keys(byMember[name]).sort(); // chronological
+    var run = 0;
+    for (var d = 0; d < dates.length; d++) {
+      if (byMember[name][dates[d]] === "Absent Unexcused") {
+        run++;
+        if (run >= CONSECUTIVE_ABSENCE_COUNT) {
+          var setKey = dates[d]; // date of the 3rd AU = this set's key
+          var already = existingKeys[name] && existingKeys[name][setKey];
+          if (!already) {
+            addOffense(setKey, name, "3 consecutive unexcused absences " + CONSEC_AU_OFFENSE_TAG, CONSECUTIVE_ABSENCE_PENALTY);
+            if (!existingKeys[name]) existingKeys[name] = {};
+            existingKeys[name][setKey] = true;
+            added++;
+          }
+          run = 0; // reset — non-overlapping sets of three
+        }
+      } else {
+        run = 0;
+      }
+    }
+  }
+  return { added: added };
+}
+ 
+/** Public wrapper — admins can run a manual sweep; also called by the daily trigger. */
+function runConsecutiveAuSweep() {
+  var r = syncConsecutiveAuOffenses_(getSpreadsheet_());
+  return { success: true, added: r.added };
+}
+ 
+ 
+// =======================================================
+//  PHASE 4 — SESSIONS TAB + GROUP DASHBOARD (admin-level)
+// =======================================================
+ 
+/**
+ * Resolves a date-range filter keyword or custom range into {start, end} (yyyy-MM-dd).
+ * mode: "week" | "month" | "all" | "custom". For custom, pass customStart/customEnd.
+ */
+function resolveDateRange_(mode, customStart, customEnd) {
+  var tz = Session.getScriptTimeZone();
+  var now = new Date();
+  var todayS = Utilities.formatDate(now, tz, "yyyy-MM-dd");
+  if (mode === "custom" && customStart && customEnd) {
+    return { start: customStart, end: customEnd };
+  }
+  if (mode === "week") {
+    var d = new Date(now.getTime() - 7 * 86400000);
+    return { start: Utilities.formatDate(d, tz, "yyyy-MM-dd"), end: todayS };
+  }
+  if (mode === "month") {
+    var m = new Date(now.getTime() - 31 * 86400000);
+    return { start: Utilities.formatDate(m, tz, "yyyy-MM-dd"), end: todayS };
+  }
+  return { start: "0000-01-01", end: "9999-12-31" }; // all
+}
+ 
+/**
+ * Returns a list of recorded SESSIONS in a date range, each with summary stats.
+ * A session is a (date + sessionKey) pair — sessionKey is the sorted group list
+ * recorded together. Each entry carries attendance counts and an apology count.
+ *
+ * @param {Object} filters — { range:"week"|"month"|"all"|"custom", start, end,
+ *                             section:"All"|group, type:"all"|"practice"|"meeting" }
+ */
+function getSessionsList(filters) {
+  filters = filters || {};
+  var ss = getSpreadsheet_();
+  var range = resolveDateRange_(filters.range, filters.start, filters.end);
+  var section = filters.section || "All";
+  var typeFilter = filters.type || "all";
+ 
+  var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (!attSheet) return [];
+  var data = attSheet.getDataRange().getValues();
+ 
+  // Group rows by (date + session)
+  var sessions = {}; // key -> { date, sessionKey, groups{}, counts{}, recorders{} }
+  for (var i = 1; i < data.length; i++) {
+    var ds = formatSheetDate_(data[i][0]);
+    if (ds < range.start || ds > range.end) continue;
+    var g = data[i][2].toString();
+    var st = data[i][4].toString();
+    var rb = data[i][5].toString();
+    var sess = (data[i][7] && data[i][7].toString().trim()) ? data[i][7].toString().trim() : g;
+    if (section !== "All") {
+      // session must include the chosen section
+      if (sess.split(",").map(function(x){return x.trim();}).indexOf(section) === -1) continue;
+    }
+    var key = ds + "||" + sess;
+    if (!sessions[key]) sessions[key] = { date: ds, sessionKey: sess, groups: {}, counts: {}, recorders: {}, total: 0 };
+    sessions[key].groups[g] = true;
+    sessions[key].counts[st] = (sessions[key].counts[st] || 0) + 1;
+    sessions[key].total++;
+    if (rb) sessions[key].recorders[rb] = true;
+  }
+ 
+  // Determine which sessions were meetings (match against the Meetings sheet)
+  var meetingDates = {}; // "date||groupsSorted" -> title
+  var mSheet = ss.getSheetByName(MEETINGS_SHEET);
+  if (mSheet) {
+    var md = mSheet.getDataRange().getValues();
+    for (var m = 1; m < md.length; m++) {
+      var mdate = formatSheetDate_(md[m][0]);
+      var mgroups = md[m][2].toString().split(",").map(function(x){return x.trim();}).filter(Boolean).sort().join(",");
+      meetingDates[mdate + "||" + mgroups] = md[m][3].toString();
+    }
+  }
+ 
+  var out = [];
+  for (var k in sessions) {
+    var s = sessions[k];
+    var groupsArr = Object.keys(s.groups);
+    var sortedKey = s.sessionKey.split(",").map(function(x){return x.trim();}).filter(Boolean).sort().join(",");
+    var meetingTitle = meetingDates[s.date + "||" + sortedKey];
+    var isMeeting = !!meetingTitle;
+    if (typeFilter === "practice" && isMeeting) continue;
+    if (typeFilter === "meeting" && !isMeeting) continue;
+ 
+    var attended = (s.counts["Present"]||0) + (s.counts["Late Excused"]||0) + (s.counts["Late Unexcused"]||0);
+    out.push({
+      date: s.date,
+      sessionKey: s.sessionKey,
+      groups: groupsArr,
+      type: isMeeting ? "Meeting" : "Practice",
+      title: isMeeting ? meetingTitle : "Practice",
+      total: s.total,
+      attended: attended,
+      attendanceRate: s.total > 0 ? Math.round((attended / s.total) * 100) : 0,
+      counts: s.counts,
+      recordedBy: Object.keys(s.recorders),
+      apologyCount: countApologiesForSession_(ss, s.date, groupsArr)
+    });
+  }
+  out.sort(function(a, b) { return (b.date + b.sessionKey).localeCompare(a.date + a.sessionKey); });
+  return out;
+}
+ 
+/** Counts apologies submitted for a given date whose groups overlap the session. */
+function countApologiesForSession_(ss, dateStr, groups) {
+  var sheet = ss.getSheetByName(APOLOGIES_SHEET);
+  if (!sheet) return 0;
+  var data = sheet.getDataRange().getValues();
+  var count = 0;
+  for (var i = 1; i < data.length; i++) {
+    if (isRequestType_(data[i][3])) continue; // requests aren't apologies
+    var rowDate = formatSheetDate_(data[i][0]);
+    if (rowDate !== dateStr) continue;
+    var status = data[i][8] ? data[i][8].toString() : "";
+    if (status === "Rejected" || status === "Revoked") continue;
+    var ag = data[i][11] ? data[i][11].toString().split(",").map(function(x){return x.trim();}).filter(Boolean) : [];
+    if (ag.length === 0) { count++; continue; } // legacy / general apology
+    if (ag.some(function(g){ return groups.indexOf(g) !== -1; })) count++;
+  }
+  return count;
+}
+ 
+/**
+ * GROUP DASHBOARD — aggregate stats for a section (or all) over a date range.
+ * Returns attendance rate + trend, near-3-AU early warnings, probation summary,
+ * and offense stats. Admin-level (section picker handled client-side for now).
+ *
+ * @param {Object} opts — { section:"All"|group, range:"week"|"month"|"all"|"custom", start, end }
+ */
+function getGroupDashboard(opts) {
+  opts = opts || {};
+  var ss = getSpreadsheet_();
+  var section = opts.section || "All";
+  var range = resolveDateRange_(opts.range, opts.start, opts.end);
+ 
+  var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  var allMembers = readAllMembers_(ss);
+ 
+  // --- Attendance aggregate + per-date trend ---
+  var statusCounts = {}, trend = {}, totalRecords = 0;
+  if (attSheet) {
+    var data = attSheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      var ds = formatSheetDate_(data[i][0]);
+      if (ds < range.start || ds > range.end) continue;
+      var g = data[i][2].toString();
+      if (section !== "All" && g !== section) continue;
+      var st = data[i][4].toString();
+      statusCounts[st] = (statusCounts[st] || 0) + 1;
+      totalRecords++;
+      if (!trend[ds]) trend[ds] = { attended: 0, total: 0 };
+      trend[ds].total++;
+      if (st === "Present" || st === "Late Excused" || st === "Late Unexcused") trend[ds].attended++;
+    }
+  }
+  var attendedTotal = (statusCounts["Present"]||0) + (statusCounts["Late Excused"]||0) + (statusCounts["Late Unexcused"]||0);
+  var overallRate = totalRecords > 0 ? Math.round((attendedTotal / totalRecords) * 100) : 0;
+  var trendArr = Object.keys(trend).sort().map(function(d) {
+    return { date: d, rate: trend[d].total > 0 ? Math.round((trend[d].attended / trend[d].total) * 100) : 0 };
+  });
+ 
+  // --- Near 3-consecutive-AU early warning ---
+  var nearAU = getConsecutiveAuWarnings_(ss, section, 2); // flag at 2+ consecutive AU
+ 
+  // --- Probation summary (members on probation in this section) ---
+  var probAll = getProbationDashboard();
+  var probInSection = probAll.filter(function(p) {
+    return section === "All" || (p.groups || []).indexOf(section) !== -1;
+  });
+  var probFallingBehind = probInSection.filter(function(p) { return !p.onTrack; });
+ 
+  return {
+    section: section,
+    range: range,
+    overallRate: overallRate,
+    statusCounts: statusCounts,
+    totalRecords: totalRecords,
+    trend: trendArr,
+    nearAU: nearAU,
+    probationCount: probInSection.length,
+    probationFallingBehind: probFallingBehind,
+    probationOnTrack: probInSection.length - probFallingBehind.length
+  };
+}
+ 
+/**
+ * Finds members with N+ consecutive Absent-Unexcused in their most recent sessions
+ * (within the chosen section). Early warning before the 3-AU offense fires.
+ * Returns [{ name, groups, consecutiveAU, lastSessions:[statuses] }]
+ */
+function getConsecutiveAuWarnings_(ss, section, threshold) {
+  threshold = threshold || 2;
+  var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (!attSheet) return [];
+  var data = attSheet.getDataRange().getValues();
+ 
+  // Build per-member ordered status history (best-status-wins per date for the section)
+  var byMember = {}; // name -> { date -> status }
+  for (var i = 1; i < data.length; i++) {
+    var ds = formatSheetDate_(data[i][0]);
+    var n = data[i][1].toString();
+    var g = data[i][2].toString();
+    if (section !== "All" && g !== section) continue;
+    var st = data[i][4].toString();
+    if (!byMember[n]) byMember[n] = {};
+    // best status wins if recorded in multiple groups same date
+    var prev = byMember[n][ds];
+    byMember[n][ds] = bestStatus_(prev, st);
+  }
+ 
+  var out = [];
+  for (var name in byMember) {
+    var dates = Object.keys(byMember[name]).sort(); // chronological
+    // capture the last up-to-5 sessions for the segmented display
+    var lastStatuses = [];
+    for (var d = dates.length - 1; d >= 0 && lastStatuses.length < 5; d--) {
+      lastStatuses.unshift({ date: dates[d], status: byMember[name][dates[d]] });
+    }
+    // count consecutive AU at the END (most recent run)
+    var run = 0;
+    for (var r = dates.length - 1; r >= 0; r--) {
+      if (byMember[name][dates[r]] === "Absent Unexcused") run++;
+      else break;
+    }
+    if (run >= threshold) {
+      out.push({ name: name, consecutiveAU: run, lastSessions: lastStatuses });
+    }
+  }
+  // attach groups
+  var members = readAllMembers_(ss), mmap = {};
+  members.forEach(function(m){ mmap[m.name] = m.groups; });
+  out.forEach(function(o){ o.groups = mmap[o.name] || []; });
+  out.sort(function(a,b){ return b.consecutiveAU - a.consecutiveAU; });
+  return out;
+}
+ 
+/** Returns the "better" of two attendance statuses (P > LE > LU > AE > AU). */
+function bestStatus_(a, b) {
+  var rank = { "Present":5, "Late Excused":4, "Late Unexcused":3, "Absent Excused":2, "Absent Unexcused":1 };
+  if (!a) return b;
+  if (!b) return a;
+  return (rank[a] || 0) >= (rank[b] || 0) ? a : b;
+}
+ 
+/**
+ * Full detail of one session (date + sessionKey) for the Sessions-tab detail/edit view.
+ * Returns the member records (editable, with rowIndex), counts, apologies, and meta.
+ */
+function getSessionDetail(dateStr, sessionKey) {
+  var ss = getSpreadsheet_();
+  var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (!attSheet) return { records: [], counts: {} };
+  var data = attSheet.getDataRange().getValues();
+  var records = [], counts = {}, recorders = {};
+  var keyGroups = sessionKey.split(",").map(function(x){return x.trim();}).filter(Boolean);
+ 
+  for (var i = 1; i < data.length; i++) {
+    var ds = formatSheetDate_(data[i][0]);
+    if (ds !== dateStr) continue;
+    var g = data[i][2].toString();
+    var sess = (data[i][7] && data[i][7].toString().trim()) ? data[i][7].toString().trim() : g;
+    if (sess !== sessionKey) continue;
+    var st = data[i][4].toString();
+    records.push({
+      name: data[i][1].toString(), group: g, role: data[i][3].toString(),
+      status: st, recordedBy: data[i][5].toString(), rowIndex: i + 1
+    });
+    counts[st] = (counts[st] || 0) + 1;
+    if (data[i][5]) recorders[data[i][5].toString()] = true;
+  }
+  records.sort(function(a,b){ return a.name.localeCompare(b.name); });
+ 
+  // Determine whether this session is a Meeting (match the Meetings sheet), so the
+  // detail header can show a title + type badge instead of just the date.
+  var isMeeting = false, title = "Practice";
+  var mSheet = ss.getSheetByName(MEETINGS_SHEET);
+  if (mSheet) {
+    var sortedKey = keyGroups.slice().sort().join(",");
+    var md = mSheet.getDataRange().getValues();
+    for (var m = 1; m < md.length; m++) {
+      var mdate = formatSheetDate_(md[m][0]);
+      var mgroups = md[m][2].toString().split(",").map(function(x){return x.trim();}).filter(Boolean).sort().join(",");
+      if (mdate === dateStr && mgroups === sortedKey) {
+        isMeeting = true; title = md[m][3].toString() || "Meeting"; break;
+      }
+    }
+  }
+ 
+  var attended = (counts["Present"]||0)+(counts["Late Excused"]||0)+(counts["Late Unexcused"]||0);
+  return {
+    date: dateStr, sessionKey: sessionKey, groups: keyGroups,
+    type: isMeeting ? "Meeting" : "Practice", title: title,
+    records: records, counts: counts, total: records.length,
+    attended: attended,
+    attendanceRate: records.length > 0 ? Math.round((attended/records.length)*100) : 0,
+    recordedBy: Object.keys(recorders),
+    apologyCount: countApologiesForSession_(ss, dateStr, keyGroups)
+  };
+}
+ 
+/** Export one session as CSV. */
+function exportSessionCSV(dateStr, sessionKey) {
+  var detail = getSessionDetail(dateStr, sessionKey);
+  var ss = getSpreadsheet_(), all = readAllMembers_(ss), mm = {};
+  all.forEach(function(m){ mm[m.name] = m; });
+  var rows = [["Date","Name","Adm. No.","Group","Role","Status","Points"]];
+  detail.records.forEach(function(r){
+    var m = mm[r.name] || {};
+    rows.push([dateStr, r.name, m.admNo||"", r.group, r.role, r.status,
+               POINTS_MAP[r.status]!==undefined?POINTS_MAP[r.status]:0]);
+  });
+  return arrayToCSV_(rows);
+}
+ 
+/** Export the sessions list (summary rows) as CSV for a filter range. */
+function exportSessionsListCSV(filters) {
+  var list = getSessionsList(filters);
+  var rows = [["Date","Type","Title","Groups","Total","Attended","Rate","Apologies","Recorded By"]];
+  list.forEach(function(s){
+    rows.push([s.date, s.type, s.title, s.groups.join(" / "), s.total, s.attended,
+               s.attendanceRate + "%", s.apologyCount, s.recordedBy.join(", ")]);
+  });
+  return arrayToCSV_(rows);
 }
  
 // -------------------------------------------------------
@@ -2143,12 +2587,13 @@ var BIRTHDAY_TEMPLATES = [
     group:"\uD83C\uDF82 Happy birthday, {full}! Wishing you joy today and all year. \uD83C\uDF89" }
 ];
  
-/** One-time: schedule the daily 6 AM birthday check. Run from the editor. */
+/** One-time: schedule the daily 6 AM tasks (AU sweep + birthday check). Run from the editor. */
 function createBirthdayTrigger_() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
-    if (t.getHandlerFunction() === "dailyBirthdayReminder_") ScriptApp.deleteTrigger(t);
+    var h = t.getHandlerFunction();
+    if (h === "dailyBirthdayReminder_" || h === "dailyTasks_") ScriptApp.deleteTrigger(t);
   });
-  ScriptApp.newTrigger("dailyBirthdayReminder_").timeBased().everyDays(1).atHour(6).create();
+  ScriptApp.newTrigger("dailyTasks_").timeBased().everyDays(1).atHour(6).create();
 }
  
 /** PUBLIC wrapper — run THIS from the editor to set up the birthday trigger. */
@@ -2333,6 +2778,15 @@ function sendBirthdayCard_(mem) {
 function buildGroupMessage_(mem) { return bdFill_(bdPick_(mem).group, mem); }
  
 /** Daily trigger: day-before prep nudge + day-of. Auto-sends member cards if enabled. */
+/**
+ * Daily scheduled entry point (6 AM). Runs the consecutive-AU offense sweep, then
+ * the birthday reminders. Kept as one trigger so we don't add a second time-based job.
+ */
+function dailyTasks_() {
+  try { syncConsecutiveAuOffenses_(getSpreadsheet_()); } catch (e) { Logger.log("AU sweep: " + e); }
+  try { dailyBirthdayReminder_(); } catch (e) { Logger.log("Birthday: " + e); }
+}
+ 
 function dailyBirthdayReminder_() {
   var win      = getUpcomingBirthdays_(1);
   var today    = win.filter(function (m) { return m.daysAway === 0; });
@@ -3502,14 +3956,19 @@ function getMyApologies() {
   var result = [];
   for (var i = 1; i < data.length; i++) {
     if (data[i][1].toString() !== member.name) continue;
+    var rType = data[i][3].toString();
+    var isReq = isRequestType_(rType);
+    var col9 = data[i][9] ? data[i][9].toString() : "";
     result.push({
       date: formatSheetDate_(data[i][0]),
-      type: data[i][3].toString(),
+      type: rType,
+      isRequest: isReq,
       reason: data[i][4].toString(),
       submittedAt: data[i][5].toString(),
       onTime: data[i][7].toString() === "Yes",
       status: data[i][8].toString(),
-      endDate: data[i][9] ? formatSheetDate_(data[i][9]) : "",
+      endDate: (!isReq && col9) ? formatSheetDate_(data[i][9]) : "",
+      rawEndDate: col9,
       reviewNote: data[i][10] ? data[i][10].toString() : ""
     });
   }
@@ -3531,6 +3990,10 @@ function getApologiesForDate(dateStr, selectedGroups) {
   var result = {};
  
   for (var i = 1; i < data.length; i++) {
+    var rowType = data[i][3].toString();
+    // Skip administrative requests — they live in this sheet but are NOT apologies.
+    if (isRequestType_(rowType)) continue;
+ 
     var rowDate = formatSheetDate_(data[i][0]);
     var status = data[i][8].toString();
     var endDate = data[i][9] ? formatSheetDate_(data[i][9]) : "";
@@ -3568,17 +4031,24 @@ function getApologyQueue() {
   var data = sheet.getDataRange().getValues();
   var result = [];
   for (var i = 1; i < data.length; i++) {
+    var rType = data[i][3].toString();
+    var isReq = isRequestType_(rType);
+    var col9 = data[i][9] ? data[i][9].toString() : "";
     result.push({
       rowIndex: i + 1,
       date: formatSheetDate_(data[i][0]),
       name: data[i][1].toString(),
       email: data[i][2].toString(),
-      type: data[i][3].toString(),
+      type: rType,
+      isRequest: isReq,
       reason: data[i][4].toString(),
       submittedAt: data[i][5].toString(),
       onTime: data[i][7].toString() === "Yes",
       status: data[i][8].toString(),
-      endDate: data[i][9] ? formatSheetDate_(data[i][9]) : "",
+      // For requests, col 9 holds the payload (new name / target groups / JSON) — keep it raw.
+      // For apologies, it's a genuine long-term end date — parse it.
+      endDate: (!isReq && col9) ? formatSheetDate_(data[i][9]) : "",
+      rawEndDate: col9,
       reviewNote: data[i][10] ? data[i][10].toString() : ""
     });
   }
@@ -3723,6 +4193,10 @@ function markApologiesApplied_(ss, dateStr, records) {
   }
  
   for (var i = 1; i < data.length; i++) {
+    var apologyType = data[i][3].toString();
+    // Skip administrative requests — not apologies.
+    if (isRequestType_(apologyType)) continue;
+ 
     var status = data[i][8].toString();
     if (status !== "Pending" && status !== "Approved") continue;
  
@@ -3732,7 +4206,6 @@ function markApologiesApplied_(ss, dateStr, records) {
  
     var rowDate = formatSheetDate_(data[i][0]);
     var endDate = data[i][9] ? formatSheetDate_(data[i][9]) : "";
-    var apologyType = data[i][3].toString();
  
     // Check date match: single-day exact match, or long-term range
     var dateMatch = false;
