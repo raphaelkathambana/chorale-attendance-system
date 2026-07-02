@@ -536,6 +536,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--g
 .dash-hero-delta { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; }
 .dash-hero-delta .tag { font-family: var(--f-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.06em; padding: 3px 7px; border-radius: 4px; background: rgba(74,124,89,0.28); color: #A6D7B4; }
 .dash-hero-delta .tag.down { background: rgba(182,32,42,0.28); color: #E8A6AB; }
+.dash-hero-delta .tag.flat { background: rgba(243,233,206,0.14); color: var(--paper-200); }
 .dash-hero-sub { font-size: 11px; color: var(--ink-300); margin-top: 12px; }
 .dash-stat { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 16px; padding: 16px 18px; }
 .dash-stat-head { display: flex; align-items: center; gap: 8px; }
@@ -546,6 +547,30 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--g
 .trend-card { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 16px; padding: 18px 20px; margin-bottom: 20px; }
 .trend-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; gap: 10px; }
 .trend-svg { width: 100%; height: auto; display: block; }
+/* Trend hover tooltip (v2) — dark ink card near the hovered point */
+.trend-tip { min-width: 148px; background: var(--ink); border-radius: 10px; padding: 10px 13px; box-shadow: 0 10px 26px rgba(20,17,15,0.3); }
+.trend-tip .tip-date { font-family: var(--f-mono); font-size: 9px; font-weight: 600; letter-spacing: 0.12em; color: var(--ink-300); text-transform: uppercase; }
+.trend-tip .tip-rate { font-family: var(--f-display); font-size: 20px; color: var(--gold-300); line-height: 1.1; margin-top: 3px; }
+.trend-tip .tip-count { font-size: 11px; color: var(--paper-200); margin-top: 3px; }
+.trend-tip .tip-break { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.04em; color: var(--ink-300); margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(243,233,206,0.15); }
+.trend-tip .tip-p  { color: #A6D7B4; }
+.trend-tip .tip-l  { color: var(--gold-300); }
+.trend-tip .tip-ae { color: var(--paper-200); }
+.trend-tip .tip-au { color: #E8A6AB; }
+
+/* Apology analytics (v2) — dark ink card with header, matches the tally-strip design */
+.apol-strip { background: var(--ink); border-radius: 16px; padding: 14px 20px 16px; margin-bottom: 20px; }
+.apol-head { font-family: var(--f-mono); font-size: 10px; font-weight: 600; letter-spacing: 0.14em; color: var(--gold-300); margin-bottom: 12px; }
+.apol-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.apol-cell { display: flex; flex-direction: column; gap: 3px; }
+.apol-cell .num { font-family: var(--f-display); font-size: 24px; color: var(--paper); line-height: 1; }
+.apol-cell.lead .num { font-size: 30px; }
+.apol-cell .num.gold { color: var(--gold-300); }
+.apol-cell .num.ok { color: #A6D7B4; }
+.apol-cell .num.bad { color: #E8A6AB; }
+.apol-cell .num .sep { font-size: 15px; color: var(--ink-300); margin: 0 2px; }
+.apol-cell .lab { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-300); text-transform: uppercase; }
+.apol-div { width: 1px; height: 30px; background: rgba(243,233,206,0.18); }
 
 .dash-panels { display: grid; grid-template-columns: 1fr; gap: 18px; align-items: start; }
 .dash-panel { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 16px; overflow: hidden; }
@@ -1457,15 +1482,20 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
           <div class="dash-hero">
             <div class="dash-hero-eyebrow">CHOIR · ATTENDANCE RATE</div>
             <div class="dash-hero-num">86%</div>
-            <div class="dash-hero-delta"><span class="tag">▲ 4 PTS</span><span style="font-size:11px;color:var(--ink-300)">vs. last month</span></div>
-            <div class="dash-hero-sub">287 of 332 records present · 5 sessions in range</div>
+            <!-- Momentum · renderDashMomentum() fills this: ▲ improving / ▼ declining / ▬ flat -->
+            <div class="dash-hero-delta" id="dashMomentum"><span class="tag">▲ +6%</span><span style="font-size:11px;color:var(--ink-300)">second half vs first (80% → 86%)</span></div>
+            <div class="dash-hero-sub">287 of 332 records present · 12 sessions in range</div>
           </div>
-          <div class="dash-stat"><div class="dash-stat-head"><span class="dot" style="background:var(--present)"></span><span class="eyebrow" style="font-size:9.5px">Present</span></div><div class="dash-stat-num">254</div><div class="dash-stat-sub">76% OF RECORDS</div></div>
-          <div class="dash-stat"><div class="dash-stat-head"><span class="dot" style="background:var(--late-exc)"></span><span class="eyebrow" style="font-size:9.5px">Late</span></div><div class="dash-stat-num">33</div><div class="dash-stat-sub">10% OF RECORDS</div></div>
-          <div class="dash-stat"><div class="dash-stat-head"><span class="dot" style="background:var(--absent-unexc)"></span><span class="eyebrow" style="font-size:9.5px">Absent</span></div><div class="dash-stat-num">45</div><div class="dash-stat-sub">14% OF RECORDS</div></div>
+          <!-- Per-session AVERAGES (replace raw totals) · renderDashAverages() fills this -->
+          <div id="dashAverages" style="display:contents">
+            <div class="dash-stat"><div class="dash-stat-head"><span class="dot" style="background:var(--present)"></span><span class="eyebrow" style="font-size:9.5px">Present</span></div><div class="dash-stat-num">21</div><div class="dash-stat-sub">AVG / SESSION · 24 ATTENDED</div></div>
+            <div class="dash-stat"><div class="dash-stat-head"><span class="dot" style="background:var(--late-exc)"></span><span class="eyebrow" style="font-size:9.5px">Late</span></div><div class="dash-stat-num">3</div><div class="dash-stat-sub">AVG / SESSION</div></div>
+            <div class="dash-stat"><div class="dash-stat-head"><span class="dot" style="background:var(--absent-unexc)"></span><span class="eyebrow" style="font-size:9.5px">Absent</span></div><div class="dash-stat-num">4</div><div class="dash-stat-sub">2 AE · 2 AU · 14% OF RECORDS</div></div>
+          </div>
         </div>
 
-        <!-- Trend chart. drawTrend(data) replaces #dashTrend's <svg>. data = [{date,rate}]. -->
+        <!-- Trend chart. drawTrendChart(d.trend) replaces #dashTrend's <svg> and wires the hover tooltip.
+             trend points: [{date, rate, attended, total, present, late, ae, au}]. -->
         <div class="trend-card">
           <div class="trend-head"><div class="eyebrow">Attendance-rate trend</div><span style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-400);letter-spacing:.08em">% PRESENT + LATE · PER SESSION</span></div>
           <div id="dashTrend">
@@ -1484,6 +1514,22 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
               <circle cx="746" cy="42.8" r="4.5" fill="#B08538" stroke="#FBF7EE" stroke-width="2"></circle>
               <text x="746" y="30" text-anchor="middle" font-family="Georgia,serif" font-size="16" fill="#14110F">84%</text>
             </svg>
+          </div>
+        </div>
+
+        <!-- Apology analytics · renderDashApologies() fills this dark card -->
+        <div class="apol-strip" id="dashApologies">
+          <div class="apol-head">APOLOGIES · IN RANGE</div>
+          <div class="apol-row">
+            <div class="apol-cell lead"><span class="num gold">14</span><span class="lab">Total received</span></div>
+            <span class="apol-div"></span>
+            <div class="apol-cell"><span class="num">11<span class="sep">/</span>3</span><span class="lab">Absence · lateness</span></div>
+            <span class="apol-div"></span>
+            <div class="apol-cell"><span class="num">12<span class="sep">/</span>2</span><span class="lab">On time · late subm.</span></div>
+            <span class="apol-div"></span>
+            <div class="apol-cell"><span class="num ok">9</span><span class="lab">Approved</span></div>
+            <div class="apol-cell"><span class="num">3</span><span class="lab">Pending</span></div>
+            <div class="apol-cell"><span class="num bad">2</span><span class="lab">Rejected</span></div>
           </div>
         </div>
 
@@ -1519,11 +1565,23 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
               <div class="prob-mini bad"><div class="num">1</div><div class="lab">Behind</div></div>
             </div>
             <div style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-400);letter-spacing:.1em;margin-bottom:8px">FALLING BEHIND</div>
+            <!-- Segmented per-session bar — same design as the Probation tab (probSegBar) -->
             <div class="prob-fall-row">
               <div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--ink)">Susan Nyokabi</div>
-                <div class="prob-seg"><span class="fill"></span><span class="fill"></span><span class="fill"></span><span class="fill"></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+                <div class="prob-seg">
+                  <div style="flex:1;height:6px;box-sizing:border-box;border-radius:2px;background:var(--present)"></div>
+                  <div style="flex:1;height:6px;box-sizing:border-box;border-radius:2px;background:var(--present)"></div>
+                  <div style="flex:1;height:6px;box-sizing:border-box;border-radius:2px;background:var(--late-exc)"></div>
+                  <div style="flex:1;height:6px;box-sizing:border-box;border-radius:2px;background:var(--absent-unexc)"></div>
+                  <div style="flex:1;height:6px;box-sizing:border-box;border-radius:2px;background:var(--present)"></div>
+                  <div style="flex:1;height:6px;box-sizing:border-box;border-radius:2px;background:var(--absent-exc)"></div>
+                  <div style="flex:1;height:6px;box-sizing:border-box;border-radius:2px;background:transparent;border:1px solid var(--paper-300)"></div>
+                  <div style="flex:1;height:6px;box-sizing:border-box;border-radius:2px;background:transparent;border:1px solid var(--paper-300)"></div>
+                  <div style="flex:1;height:6px;box-sizing:border-box;border-radius:2px;background:transparent;border:1px solid var(--paper-300)"></div>
+                  <div style="flex:1;height:6px;box-sizing:border-box;border-radius:2px;background:transparent;border:1px solid var(--paper-300)"></div>
+                </div>
               </div>
-              <span style="font-family:var(--f-mono);font-size:12px;font-weight:600;color:var(--crimson-600)">40%</span>
+              <span style="font-family:var(--f-mono);font-size:12px;font-weight:600;color:var(--crimson-600)">67%</span>
             </div>
           </div>
         </div>

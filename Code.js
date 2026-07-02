@@ -67,6 +67,7 @@ function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
+
 // -------------------------------------------------------
 //  AUTH: User Role Detection
 // -------------------------------------------------------
@@ -1095,7 +1096,6 @@ function getGroupDashboard(opts) {
   var range = resolveDateRange_(opts.range, opts.start, opts.end);
  
   var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
-  var allMembers = readAllMembers_(ss);
  
   // --- Attendance aggregate + per-date trend ---
   var statusCounts = {}, trend = {}, totalRecords = 0;
@@ -1109,21 +1109,86 @@ function getGroupDashboard(opts) {
       var st = data[i][4].toString();
       statusCounts[st] = (statusCounts[st] || 0) + 1;
       totalRecords++;
-      if (!trend[ds]) trend[ds] = { attended: 0, total: 0 };
+      if (!trend[ds]) trend[ds] = { attended: 0, total: 0, present: 0, late: 0, ae: 0, au: 0 };
       trend[ds].total++;
       if (st === "Present" || st === "Late Excused" || st === "Late Unexcused") trend[ds].attended++;
+      if (st === "Present") trend[ds].present++;
+      else if (st === "Late Excused" || st === "Late Unexcused") trend[ds].late++;
+      else if (st === "Absent Excused") trend[ds].ae++;
+      else if (st === "Absent Unexcused") trend[ds].au++;
     }
   }
   var attendedTotal = (statusCounts["Present"]||0) + (statusCounts["Late Excused"]||0) + (statusCounts["Late Unexcused"]||0);
+  var absentTotal = (statusCounts["Absent Excused"]||0) + (statusCounts["Absent Unexcused"]||0);
   var overallRate = totalRecords > 0 ? Math.round((attendedTotal / totalRecords) * 100) : 0;
+  var absenteeismRate = totalRecords > 0 ? Math.round((absentTotal / totalRecords) * 100) : 0;
+  var auRate = totalRecords > 0 ? Math.round(((statusCounts["Absent Unexcused"]||0) / totalRecords) * 100) : 0;
+ 
+  // Trend points enriched for hover tooltips: rate + headcounts per session date
   var trendArr = Object.keys(trend).sort().map(function(d) {
-    return { date: d, rate: trend[d].total > 0 ? Math.round((trend[d].attended / trend[d].total) * 100) : 0 };
+    var t = trend[d];
+    return { date: d, rate: t.total > 0 ? Math.round((t.attended / t.total) * 100) : 0,
+             attended: t.attended, total: t.total,
+             present: t.present, late: t.late, ae: t.ae, au: t.au };
   });
  
-  // --- Near 3-consecutive-AU early warning ---
-  var nearAU = getConsecutiveAuWarnings_(ss, section, 2); // flag at 2+ consecutive AU
+  // --- Per-session AVERAGES (headcounts) — "on an average session, N attended" ---
+  var sessionsCount = trendArr.length; // one entry per recorded session date
+  function avg(x) { return sessionsCount > 0 ? Math.round((x / sessionsCount) * 10) / 10 : 0; }
+  var avgPerSession = {
+    total: avg(totalRecords),
+    attended: avg(attendedTotal),
+    present: avg(statusCounts["Present"]||0),
+    late: avg((statusCounts["Late Excused"]||0) + (statusCounts["Late Unexcused"]||0)),
+    absentExcused: avg(statusCounts["Absent Excused"]||0),
+    absentUnexcused: avg(statusCounts["Absent Unexcused"]||0)
+  };
  
-  // --- Probation summary (members on probation in this section) ---
+  // --- Momentum: is attendance improving or declining across the range? ---
+  // Compare avg rate of the first half of sessions vs the second half.
+  var momentum = { firstHalfRate: 0, secondHalfRate: 0, delta: 0, direction: "flat" };
+  if (trendArr.length >= 2) {
+    var mid = Math.floor(trendArr.length / 2);
+    var fh = trendArr.slice(0, mid), sh = trendArr.slice(mid);
+    var fAvg = Math.round(fh.reduce(function(s,t){return s+t.rate;},0) / fh.length);
+    var sAvg = Math.round(sh.reduce(function(s,t){return s+t.rate;},0) / sh.length);
+    momentum.firstHalfRate = fAvg;
+    momentum.secondHalfRate = sAvg;
+    momentum.delta = sAvg - fAvg;
+    momentum.direction = momentum.delta > 2 ? "improving" : (momentum.delta < -2 ? "declining" : "flat");
+  }
+ 
+  // --- Apology analytics for the range (real apologies only, never requests) ---
+  var apologyStats = { total: 0, absentType: 0, lateType: 0, onTime: 0, lateSubmission: 0,
+                       approved: 0, pending: 0, rejected: 0 };
+  var apSheet = ss.getSheetByName(APOLOGIES_SHEET);
+  if (apSheet) {
+    var ad = apSheet.getDataRange().getValues();
+    for (var a = 1; a < ad.length; a++) {
+      var aType = ad[a][3].toString();
+      if (isRequestType_(aType)) continue;
+      var aDate = formatSheetDate_(ad[a][0]);
+      if (aDate < range.start || aDate > range.end) continue;
+      // Section filter via Session Groups (col 12); empty groups = counts for any section
+      if (section !== "All") {
+        var ag = ad[a][11] ? ad[a][11].toString().split(",").map(function(x){return x.trim();}).filter(Boolean) : [];
+        if (ag.length > 0 && ag.indexOf(section) === -1) continue;
+      }
+      apologyStats.total++;
+      if (/late/i.test(aType)) apologyStats.lateType++; else apologyStats.absentType++;
+      if (ad[a][7].toString() === "Yes") apologyStats.onTime++; else apologyStats.lateSubmission++;
+      var aStatus = ad[a][8].toString();
+      if (aStatus === "Approved" || aStatus === "Applied") apologyStats.approved++;
+      else if (aStatus === "Pending") apologyStats.pending++;
+      else if (aStatus === "Rejected" || aStatus === "Revoked") apologyStats.rejected++;
+    }
+  }
+ 
+  // --- Near 3-consecutive-AU early warning (ACTIVE members only) ---
+  var nearAU = getConsecutiveAuWarnings_(ss, section, 2);
+ 
+  // --- Probation summary: CURRENT probation members in this section.
+  //     (Probation state history isn't stored, so this is as-of-now, not range-based.)
   var probAll = getProbationDashboard();
   var probInSection = probAll.filter(function(p) {
     return section === "All" || (p.groups || []).indexOf(section) !== -1;
@@ -1133,9 +1198,15 @@ function getGroupDashboard(opts) {
   return {
     section: section,
     range: range,
+    sessionsCount: sessionsCount,
     overallRate: overallRate,
+    absenteeismRate: absenteeismRate,
+    auRate: auRate,
     statusCounts: statusCounts,
     totalRecords: totalRecords,
+    avgPerSession: avgPerSession,
+    momentum: momentum,
+    apologyStats: apologyStats,
     trend: trendArr,
     nearAU: nearAU,
     probationCount: probInSection.length,
@@ -1187,9 +1258,11 @@ function getConsecutiveAuWarnings_(ss, section, threshold) {
       out.push({ name: name, consecutiveAU: run, lastSessions: lastStatuses });
     }
   }
-  // attach groups
-  var members = readAllMembers_(ss), mmap = {};
-  members.forEach(function(m){ mmap[m.name] = m.groups; });
+  // attach groups; keep ACTIVE members only (inactive members aren't "at risk" —
+  // they're already out, and they were bloating the panel)
+  var members = readAllMembers_(ss), mmap = {}, activeMap = {};
+  members.forEach(function(m){ mmap[m.name] = m.groups; activeMap[m.name] = !!m.active; });
+  out = out.filter(function(o){ return activeMap[o.name]; });
   out.forEach(function(o){ o.groups = mmap[o.name] || []; });
   out.sort(function(a,b){ return b.consecutiveAU - a.consecutiveAU; });
   return out;

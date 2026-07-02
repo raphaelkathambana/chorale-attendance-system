@@ -3447,25 +3447,20 @@ function dashStatCard_(label, n, total, color) {
 function renderGroupDashboard(d) {
   var sc = d.statusCounts || {};
   var present = sc["Present"] || 0,
-      late = (sc["Late Excused"] || 0) + (sc["Late Unexcused"] || 0),
-      absent = (sc["Absent Excused"] || 0) + (sc["Absent Unexcused"] || 0);
-  var total = d.totalRecords || (present + late + absent) || 1;
-  var delta = (d.trend && d.trend.length > 1) ? (d.trend[d.trend.length - 1].rate - d.trend[0].rate) : 0;
+      late = (sc["Late Excused"] || 0) + (sc["Late Unexcused"] || 0);
+  var total = d.totalRecords || 1;
   var sectionLabel = (d.section && d.section !== "All") ? d.section : "All sections";
-  var deltaTag = delta >= 0
-    ? '<span class="tag">\u25b2 ' + delta + ' PTS</span>'
-    : '<span class="tag down">\u25bc ' + Math.abs(delta) + ' PTS</span>';
+  var sessN = (d.sessionsCount != null) ? d.sessionsCount : (d.trend ? d.trend.length : 0);
 
-  // Hero + status distribution
+  // Hero (momentum tag filled by renderDashMomentum) + per-session averages
+  // (renderDashAverages fills #dashAverages — averages REPLACE the raw totals).
   var rateEl = document.getElementById("dashRate");
   if (rateEl) rateEl.innerHTML =
       '<div class="dash-hero"><div class="dash-hero-eyebrow">' + esc(sectionLabel.toUpperCase()) + ' \u00b7 ATTENDANCE RATE</div>'
     +   '<div class="dash-hero-num">' + d.overallRate + '%</div>'
-    +   '<div class="dash-hero-delta">' + deltaTag + '<span style="font-size:11px;color:var(--ink-300)">vs. start of range</span></div>'
-    +   '<div class="dash-hero-sub">' + (present + late) + ' of ' + total + ' records present \u00b7 ' + (d.trend ? d.trend.length : 0) + ' sessions in range</div></div>'
-    + dashStatCard_("Present", present, total, "var(--present)")
-    + dashStatCard_("Late", late, total, "var(--late-exc)")
-    + dashStatCard_("Absent", absent, total, "var(--absent-unexc)");
+    +   '<div class="dash-hero-delta" id="dashMomentum"></div>'
+    +   '<div class="dash-hero-sub">' + (present + late) + ' of ' + total + ' records present \u00b7 ' + sessN + ' sessions in range</div></div>'
+    + '<div id="dashAverages" style="display:contents"></div>';
 
   // Trend chart (SVG) — data: d.trend = [{date, rate}]
   drawTrendChart(d.trend);
@@ -3500,15 +3495,20 @@ function renderGroupDashboard(d) {
     if (fb.length) {
       list = '<div style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-400);letter-spacing:.1em;margin-bottom:8px">FALLING BEHIND</div>';
       fb.forEach(function (p) {
-        var att = p.attended || 0, max = p.maxSessions || 10, seg = "";
-        for (var i = 0; i < max; i++) seg += '<span' + (i < att ? ' class="fill"' : '') + '></span>';
+        // Segmented per-session bar (same design as the Probation tab) — probSegBar
+        // falls back to plain fill when sessionSequence is absent.
         list += '<div class="prob-fall-row"><div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--ink)">' + esc(p.name) + '</div>'
-             +    '<div class="prob-seg">' + seg + '</div></div>'
+             +    '<div class="prob-seg">' + probSegBar(p, 6) + '</div></div>'
              +    '<span style="font-family:var(--f-mono);font-size:12px;font-weight:600;color:var(--crimson-600)">' + p.rate + '%</span></div>';
       });
     }
     prob.innerHTML = '<div class="eyebrow" style="margin-bottom:14px">Probation \u00b7 in this section</div>' + minis + list;
   }
+
+  // v2 panels — averages strip, momentum indicator, apology analytics
+  renderDashAverages(d);
+  renderDashMomentum(d);
+  renderDashApologies(d);
 }
 
 // green=Present, yellow=Late(both), grey=Absent Excused, red=Absent Unexcused → my CSS modifiers
@@ -3520,11 +3520,67 @@ function statusDotClass_(status) {
   return "abs-exc";
 }
 
-// SVG area+line chart into #dashTrend (matches the static-demo trend).
+// ---------- v2: averages · momentum · apology analytics ----------
+// Headcounts on an AVERAGE session — these replace the raw totals in the top stat cards.
+// Backend sends 1-decimal averages; we round for display (whole people are easier to read).
+function renderDashAverages(d) {
+  var el = document.getElementById("dashAverages");
+  if (!el) return;
+  var a = d.avgPerSession || {};
+  var rnd = function (v) { return Math.round(v || 0); };
+  var absent = rnd((a.absentExcused || 0) + (a.absentUnexcused || 0));
+  el.innerHTML =
+      '<div class="dash-stat"><div class="dash-stat-head"><span class="dot" style="background:var(--present)"></span><span class="eyebrow" style="font-size:9.5px">Present</span></div>'
+    +   '<div class="dash-stat-num">' + rnd(a.present) + '</div><div class="dash-stat-sub">AVG / SESSION \u00b7 ' + rnd(a.attended) + ' ATTENDED</div></div>'
+    + '<div class="dash-stat"><div class="dash-stat-head"><span class="dot" style="background:var(--late-exc)"></span><span class="eyebrow" style="font-size:9.5px">Late</span></div>'
+    +   '<div class="dash-stat-num">' + rnd(a.late) + '</div><div class="dash-stat-sub">AVG / SESSION</div></div>'
+    + '<div class="dash-stat"><div class="dash-stat-head"><span class="dot" style="background:var(--absent-unexc)"></span><span class="eyebrow" style="font-size:9.5px">Absent</span></div>'
+    +   '<div class="dash-stat-num">' + absent + '</div><div class="dash-stat-sub">' + rnd(a.absentExcused) + ' AE \u00b7 ' + rnd(a.absentUnexcused) + ' AU'
+    +     (d.absenteeismRate != null ? ' \u00b7 ' + d.absenteeismRate + '% OF RECORDS' : '') + '</div></div>';
+}
+
+// "\u25b2 +6% improving / \u25bc declining / \u25ac flat" — second half of the range vs the first.
+function renderDashMomentum(d) {
+  var el = document.getElementById("dashMomentum");
+  if (!el || !d.momentum) return;
+  var m = d.momentum;
+  var arrow = m.direction === "improving" ? "\u25b2" : (m.direction === "declining" ? "\u25bc" : "\u25ac");
+  var cls = m.direction === "declining" ? " down" : (m.direction === "flat" ? " flat" : "");
+  el.innerHTML = '<span class="tag' + cls + '">' + arrow + ' ' + (m.delta > 0 ? "+" : "") + m.delta + '%</span>'
+    + '<span style="font-size:11px;color:var(--ink-300)">second half vs first (' + m.firstHalfRate + '% \u2192 ' + m.secondHalfRate + '%)</span>';
+}
+
+// Apology analytics for the range — dark card with a header (matches the tally-strip design).
+function renderDashApologies(d) {
+  var el = document.getElementById("dashApologies");
+  if (!el || !d.apologyStats) return;
+  var s = d.apologyStats;
+  el.innerHTML =
+      '<div class="apol-head">APOLOGIES \u00b7 IN RANGE</div>'
+    + '<div class="apol-row">'
+    +   '<div class="apol-cell lead"><span class="num gold">' + s.total + '</span><span class="lab">Total received</span></div>'
+    +   '<span class="apol-div"></span>'
+    +   '<div class="apol-cell"><span class="num">' + s.absentType + '<span class="sep">/</span>' + s.lateType + '</span><span class="lab">Absence \u00b7 lateness</span></div>'
+    +   '<span class="apol-div"></span>'
+    +   '<div class="apol-cell"><span class="num">' + s.onTime + '<span class="sep">/</span>' + s.lateSubmission + '</span><span class="lab">On time \u00b7 late subm.</span></div>'
+    +   '<span class="apol-div"></span>'
+    +   '<div class="apol-cell"><span class="num ok">' + s.approved + '</span><span class="lab">Approved</span></div>'
+    +   '<div class="apol-cell"><span class="num">' + s.pending + '</span><span class="lab">Pending</span></div>'
+    +   '<div class="apol-cell"><span class="num bad">' + s.rejected + '</span><span class="lab">Rejected</span></div>'
+    + '</div>';
+}
+
+// SVG area+line chart into #dashTrend (v2: hover any point for that session's full tally).
+function trendXLabel_(ds) {
+  var p = String(ds).split("-");
+  if (p.length === 3) { var dp = sessDateParts_(ds); return dp.day + " " + dp.mon; }
+  return String(ds).toUpperCase();
+}
 function drawTrendChart(trend) {
   var host = document.getElementById("dashTrend");
   if (!host) return;
   if (!trend || !trend.length) { host.innerHTML = '<div class="empty-pane">No data in range.</div>'; return; }
+  host.style.position = "relative";
   var W = 760, H = 220, padL = 34, padR = 14, padT = 14, padB = 26, n = trend.length;
   var iw = W - padL - padR, ih = H - padT - padB;
   function x(i) { return padL + (n === 1 ? iw / 2 : i / (n - 1) * iw); }
@@ -3539,8 +3595,12 @@ function drawTrendChart(trend) {
     var lastp = i === n - 1;
     return '<circle cx="' + x(i) + '" cy="' + y(t.rate) + '" r="' + (lastp ? 4.5 : 2.8) + '" fill="' + (lastp ? '#B08538' : '#FBF7EE') + '" stroke="#B08538" stroke-width="2"></circle>';
   }).join("");
+  // invisible, larger hover targets carrying the point index (v2 tooltip)
+  var hits = trend.map(function (t, i) {
+    return '<circle cx="' + x(i) + '" cy="' + y(t.rate) + '" r="11" fill="transparent" style="cursor:pointer" data-i="' + i + '" class="trend-hit"></circle>';
+  }).join("");
   var xlabels = trend.map(function (t, i) {
-    return (i % 2 === 0 || i === n - 1) ? '<text x="' + x(i) + '" y="' + (H - 8) + '" text-anchor="middle" font-family="monospace" font-size="8.5" fill="#8C8478">' + esc(String(t.date).toUpperCase()) + '</text>' : '';
+    return (i % 2 === 0 || i === n - 1) ? '<text x="' + x(i) + '" y="' + (H - 8) + '" text-anchor="middle" font-family="monospace" font-size="8.5" fill="#8C8478">' + esc(trendXLabel_(t.date)) + '</text>' : '';
   }).join("");
   var last = trend[n - 1];
   host.innerHTML = '<svg class="trend-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">'
@@ -3548,9 +3608,44 @@ function drawTrendChart(trend) {
     + grid
     + '<path d="' + area + '" fill="url(#trendFillLive)"></path>'
     + '<polyline points="' + line + '" fill="none" stroke="#B08538" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>'
-    + dots + xlabels
+    + dots + hits + xlabels
     + '<text x="' + x(n - 1) + '" y="' + (y(last.rate) - 12) + '" text-anchor="middle" font-family="Georgia,serif" font-size="16" fill="#14110F">' + last.rate + '%</text>'
-    + '</svg>';
+    + '</svg>'
+    + '<div id="trendTip" class="trend-tip" style="display:none;position:absolute;pointer-events:none;z-index:5;"></div>';
+
+  var tip = document.getElementById("trendTip");
+  var hitEls = host.querySelectorAll(".trend-hit");
+  function fmtDate(ds) {
+    try { var p = String(ds).split("-"); if (p.length === 3) return new Date(p[0], p[1] - 1, p[2]).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }); return ds; }
+    catch (e) { return ds; }
+  }
+  for (var h = 0; h < hitEls.length; h++) {
+    hitEls[h].addEventListener("mouseenter", function (ev) {
+      var t = trend[parseInt(this.getAttribute("data-i"), 10)];
+      tip.innerHTML =
+        '<div class="tip-date">' + fmtDate(t.date) + '</div>' +
+        '<div class="tip-rate">' + t.rate + '% attendance</div>' +
+        '<div class="tip-count">' + (t.attended || 0) + ' of ' + (t.total || 0) + ' attended</div>' +
+        '<div class="tip-break">' +
+          '<span class="tip-p">' + (t.present || 0) + ' P</span> \u00b7 ' +
+          '<span class="tip-l">' + (t.late || 0) + ' L</span> \u00b7 ' +
+          '<span class="tip-ae">' + (t.ae || 0) + ' AE</span> \u00b7 ' +
+          '<span class="tip-au">' + (t.au || 0) + ' AU</span>' +
+        '</div>';
+      tip.style.display = "block";
+      // position near the hovered point; flip to the LEFT of the pointer for
+      // right-edge points so the box never covers what's plotted at the edge
+      var rect = host.getBoundingClientRect();
+      var cx = ev.clientX - rect.left, cy = ev.clientY - rect.top;
+      var tw = tip.offsetWidth || 150;
+      var left = cx + 12;
+      if (left + tw > rect.width - 4) left = cx - 12 - tw;
+      left = Math.max(left, 4);
+      var top = Math.max(cy - 70, 4);
+      tip.style.left = left + "px"; tip.style.top = top + "px";
+    });
+    hitEls[h].addEventListener("mouseleave", function () { tip.style.display = "none"; });
+  }
 }
 
 // ---------- shared helpers (esc + showToast already exist in Scripts) ----------
