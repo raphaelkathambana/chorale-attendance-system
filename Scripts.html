@@ -1592,10 +1592,237 @@ function renderMemberDetail() {
 
   // Actions
   h +=   '<div style="display:flex;gap:8px">'
-    +      '<button class="btn btn-secondary" style="flex:1;padding:9px 14px;font-size:12.5px">Edit profile</button>'
+    +      '<button class="btn btn-secondary" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="showEditProfile(\'' + esc(m.name).replace(/'/g, "\\'") + '\')">Edit profile</button>'
     +      '<button class="btn btn-crimson"   style="flex:1;padding:9px 14px;font-size:12.5px" onclick="prefillOffense(\'' + esc(m.name).replace(/'/g, "\\'") + '\')">Record offense</button>'
     +    '</div>'
     + '</div>';
+  c.innerHTML = h;
+}
+
+// ─── ADMIN EDIT PROFILE ───────────────────────────────────────────────────
+
+function showEditProfile(name) {
+  selectedMemberName = name;
+  var isDesktop = window.matchMedia && window.matchMedia('(min-width: 1024px)').matches;
+  if (!isDesktop) {
+    var pane = document.getElementById('membersRosterPane');
+    if (pane) pane.classList.add('detail-open');
+    window.scrollTo(0, 0);
+  }
+  var c = document.getElementById('memberDetailPane');
+  if (c) c.innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading profile\u2026</div></div>';
+  google.script.run
+    .withSuccessHandler(renderEditProfile)
+    .withFailureHandler(function(e) { showToast(e.message, 'error'); renderMemberDetail(); })
+    .getMemberForEdit(name);
+}
+
+function closeEditProfile() { renderMemberDetail(); }
+
+function epCheckNameChange() {
+  var orig = document.getElementById('epOriginalName');
+  var cur = document.getElementById('epName');
+  var warn = document.getElementById('epNameWarning');
+  if (!orig || !cur || !warn) return;
+  warn.style.display = cur.value.trim() !== orig.value.trim() ? 'block' : 'none';
+}
+
+function epUpdateRoleSlots() {
+  ['Choir','Band','Orchestra'].forEach(function(g) {
+    var cb = document.getElementById('epGroup_' + g);
+    var slot = document.getElementById('epRoleSlot_' + g);
+    if (cb && slot) slot.style.display = cb.checked ? 'block' : 'none';
+  });
+}
+
+function toggleEditProfileDetails() {
+  var s = document.getElementById('epDetailSection');
+  var b = document.getElementById('epDetailToggle');
+  if (!s || !b) return;
+  var open = s.style.display !== 'none';
+  s.style.display = open ? 'none' : 'block';
+  b.innerHTML = (open ? '\u25b8 Show detailed info' : '\u25be Hide detailed info');
+}
+
+function submitEditProfile() {
+  var orig = document.getElementById('epOriginalName');
+  if (!orig) return;
+  var nameVal = (document.getElementById('epName') || {}).value || '';
+  if (!nameVal.trim()) { showToast('Name is required.', 'error'); return; }
+  var groups = [];
+  ['Choir','Band','Orchestra'].forEach(function(g) {
+    var cb = document.getElementById('epGroup_' + g);
+    if (cb && cb.checked) groups.push(g);
+  });
+  if (groups.length === 0) { showToast('At least one group is required.', 'error'); return; }
+  var payload = {
+    originalName: orig.value,
+    name:   nameVal.trim(),
+    email:  (document.getElementById('epEmail') || {}).value || '',
+    phone:  (document.getElementById('epPhone') || {}).value || '',
+    admNo:  (document.getElementById('epAdmNo') || {}).value || '',
+    groups: groups,
+    choirPart:      (document.getElementById('epRole_Choir') || {}).value || '',
+    bandRole:       (document.getElementById('epRole_Band') || {}).value || '',
+    orchestraRole:  (document.getElementById('epRole_Orchestra') || {}).value || ''
+  };
+  // Include details if the detail section was opened (or always)
+  var ds = document.getElementById('epDetailSection');
+  payload.details = {
+    courseFaculty:    (document.getElementById('epFaculty') || {}).value || '',
+    courseName:       (document.getElementById('epCourse') || {}).value || '',
+    nationality:      (document.getElementById('epNationality') || {}).value || '',
+    residence:        (document.getElementById('epResidence') || {}).value || '',
+    dateOfBirth:      (document.getElementById('epDob') || {}).value || '',
+    gender:           (document.getElementById('epGender') || {}).value || '',
+    yearOfStudy:      (document.getElementById('epYear') || {}).value || '',
+    passportNumber:   (document.getElementById('epPassport') || {}).value || '',
+    nationalIdNumber: (document.getElementById('epNatId') || {}).value || '',
+    nokName:          (document.getElementById('epNokName') || {}).value || '',
+    nokPhone:         (document.getElementById('epNokPhone') || {}).value || '',
+    nokRelationship:  (document.getElementById('epNokRel') || {}).value || '',
+    nokResidence:     (document.getElementById('epNokRes') || {}).value || ''
+  };
+  var btn = document.getElementById('btnSaveProfile');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving\u2026'; }
+  google.script.run
+    .withSuccessHandler(function(r) {
+      showToast(r.name + ' updated.' + (r.renamed ? ' Name changed.' : ''), 'success');
+      selectedMemberName = r.name;
+      // Refresh member list then show the updated profile
+      google.script.run.withSuccessHandler(function(list) {
+        memberListData = list; renderMemberList(); renderMemberDetail();
+      }).withFailureHandler(function() { renderMemberDetail(); }).getMemberList();
+    })
+    .withFailureHandler(function(e) {
+      showToast('Error: ' + e.message, 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Save changes'; }
+    })
+    .adminUpdateMember(payload);
+}
+
+function renderEditProfile(m) {
+  var c = document.getElementById('memberDetailPane');
+  if (!c) return;
+  var d = m.details || {};
+  var initial = (m.name || '\u00b7').trim().charAt(0).toUpperCase();
+  var groups = m.groups || [];
+  function ghas(g) { return groups.indexOf(g) !== -1; }
+  var choirPart = m.choirPart || (m.roles && m.roles['Choir']) || '';
+  var bandRole = m.bandRole || (m.roles && m.roles['Band']) || '';
+  var orchRole = m.orchestraRole || (m.roles && m.roles['Orchestra']) || '';
+
+  var backBtn = '<button class="back-btn member-detail-back" onclick="closeEditProfile()">'
+    + '<span style="font-family:var(--f-display);font-size:14px">\u2190</span> Back</button>';
+
+  var h = backBtn
+    + '<div class="card" style="padding:22px 24px">'
+    + '<input type="hidden" id="epOriginalName" value="' + esc(m.name) + '">'
+
+    // Header
+    + '<div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">'
+    +   memberAvatar(m.profilePhoto, initial, { size: 56, font: 24, bg: 'var(--paper-200)' })
+    +   '<div style="flex:1;min-width:0">'
+    +     '<div class="eyebrow">Editing member</div>'
+    +     '<span class="gold-rule" style="margin:6px 0 0;width:20px"></span>'
+    +     '<div class="display" style="font-size:20px;line-height:1.1;margin-top:6px">' + esc(m.name) + '</div>'
+    +   '</div>'
+    + '</div>'
+
+    // ── TIER 1: Name
+    + '<div class="form-group">'
+    +   '<label class="form-label">Full name</label>'
+    +   '<input type="text" id="epName" value="' + esc(m.name || '') + '" oninput="epCheckNameChange()">'
+    +   '<div id="epNameWarning" style="display:none;margin-top:6px;padding:8px 12px;border-radius:8px;background:var(--gold-100);border:1px solid var(--gold)">'
+    +     '<span style="font-family:var(--f-mono);font-size:9px;font-weight:700;letter-spacing:.1em;color:var(--gold-700)">NAME CHANGE</span>'
+    +     '<div style="font-size:11.5px;color:var(--ink-700);margin-top:4px">This updates the member\u2019s identity across all records, offenses, and history.</div>'
+    +   '</div>'
+    + '</div>'
+
+    // ── Email
+    + '<div class="form-group">'
+    +   '<label class="form-label">Email</label>'
+    +   '<input type="email" id="epEmail" value="' + esc(m.email || '') + '">'
+    + '</div>'
+
+    // ── Phone + Adm No
+    + '<div class="form-row">'
+    +   '<div class="form-group"><label class="form-label">Phone</label><input type="text" id="epPhone" value="' + esc(m.phone || '') + '"></div>'
+    +   '<div class="form-group"><label class="form-label">Adm. no.</label><input type="text" id="epAdmNo" value="' + esc(m.admNo || '') + '"></div>'
+    + '</div>'
+
+    // ── Groups & roles
+    + '<div class="form-group">'
+    +   '<label class="form-label">Groups & roles</label>'
+    +   '<div class="checkbox-row" style="margin-bottom:12px">'
+    +     '<label class="checkbox-label"><input type="checkbox" id="epGroup_Choir" value="Choir"' + (ghas('Choir') ? ' checked' : '') + ' onchange="epUpdateRoleSlots()"> Choir</label>'
+    +     '<label class="checkbox-label"><input type="checkbox" id="epGroup_Band" value="Band"' + (ghas('Band') ? ' checked' : '') + ' onchange="epUpdateRoleSlots()"> Band</label>'
+    +     '<label class="checkbox-label"><input type="checkbox" id="epGroup_Orchestra" value="Orchestra"' + (ghas('Orchestra') ? ' checked' : '') + ' onchange="epUpdateRoleSlots()"> Orchestra</label>'
+    +   '</div>'
+    +   '<div id="epRoleSlot_Choir" style="' + (ghas('Choir') ? '' : 'display:none;') + 'margin-bottom:10px">'
+    +     '<label class="form-label">Choir part</label>'
+    +     '<select id="epRole_Choir">' + obSelectOpts(cfgList('choirParts', ['Soprano','Alto','Tenor','Bass']), choirPart, 'Select part\u2026') + '</select>'
+    +   '</div>'
+    +   '<div id="epRoleSlot_Band" style="' + (ghas('Band') ? '' : 'display:none;') + 'margin-bottom:10px">'
+    +     '<label class="form-label">Band role</label>'
+    +     '<select id="epRole_Band">' + obSelectOpts(cfgList('bandRoles', ['Vocalist','Guitar','Bass Guitar','Keyboard','Drums']), bandRole, 'Select role\u2026') + '</select>'
+    +   '</div>'
+    +   '<div id="epRoleSlot_Orchestra" style="' + (ghas('Orchestra') ? '' : 'display:none;') + 'margin-bottom:10px">'
+    +     '<label class="form-label">Orchestra role</label>'
+    +     '<select id="epRole_Orchestra">' + obSelectOpts(cfgList('orchestraRoles', ['Violin','Viola','Cello','Double Bass','Flute']), orchRole, 'Select role\u2026') + '</select>'
+    +   '</div>'
+    + '</div>';
+
+  // ═══ TIER 2 TOGGLE ═══
+  h += '<button type="button" id="epDetailToggle" onclick="toggleEditProfileDetails()" class="ep-toggle">'
+    + '\u25b8 Show detailed info</button>';
+
+  // ═══ TIER 2: Extended details ═══
+  h += '<div id="epDetailSection" style="display:none">';
+
+  h += '<div class="eyebrow" style="margin:14px 0 8px">Academic</div>'
+    + '<div class="form-row">'
+    +   '<div class="form-group"><label class="form-label">Faculty</label>'
+    +     '<select id="epFaculty">' + obSelectOpts(cfgList('faculties', ['SCES','SIMS','SBS','SHSS','SLS','STH','SI','Other']), d.courseFaculty || '', 'Select\u2026') + '</select></div>'
+    +   '<div class="form-group"><label class="form-label">Course</label><input type="text" id="epCourse" value="' + esc(d.courseName || '') + '" placeholder="e.g. BSc. Informatics"></div>'
+    + '</div>'
+    + '<div class="form-row">'
+    +   '<div class="form-group"><label class="form-label">Year of study</label>'
+    +     '<select id="epYear">' + obSelectOpts(['1st','2nd','3rd','4th','5th','6th'], d.yearOfStudy || '', 'Select\u2026') + '</select></div>'
+    +   '<div class="form-group"><label class="form-label">Gender</label>'
+    +     '<select id="epGender">' + obSelectOpts(['Male','Female'], d.gender || '', 'Select\u2026') + '</select></div>'
+    + '</div>';
+
+  h += '<div class="eyebrow" style="margin:14px 0 8px">Personal</div>'
+    + '<div class="form-row">'
+    +   '<div class="form-group"><label class="form-label">Nationality</label><input type="text" id="epNationality" value="' + esc(d.nationality || '') + '"></div>'
+    +   '<div class="form-group"><label class="form-label">Residence</label><input type="text" id="epResidence" value="' + esc(d.residence || '') + '"></div>'
+    + '</div>'
+    + '<div class="form-group"><label class="form-label">Date of birth</label><input type="date" id="epDob" value="' + esc(d.dateOfBirth || '') + '"></div>'
+    + '<div class="form-row">'
+    +   '<div class="form-group"><label class="form-label">Passport no.</label><input type="text" id="epPassport" value="' + esc(d.passportNumber || '') + '"></div>'
+    +   '<div class="form-group"><label class="form-label">National ID</label><input type="text" id="epNatId" value="' + esc(d.nationalIdNumber || '') + '"></div>'
+    + '</div>';
+
+  h += '<div class="eyebrow" style="margin:14px 0 8px">Next of kin</div>'
+    + '<div class="form-row">'
+    +   '<div class="form-group"><label class="form-label">Name</label><input type="text" id="epNokName" value="' + esc(d.nokName || '') + '"></div>'
+    +   '<div class="form-group"><label class="form-label">Relationship</label><input type="text" id="epNokRel" value="' + esc(d.nokRelationship || '') + '"></div>'
+    + '</div>'
+    + '<div class="form-row">'
+    +   '<div class="form-group"><label class="form-label">Phone</label><input type="text" id="epNokPhone" value="' + esc(d.nokPhone || '') + '"></div>'
+    +   '<div class="form-group"><label class="form-label">Residence</label><input type="text" id="epNokRes" value="' + esc(d.nokResidence || '') + '"></div>'
+    + '</div>';
+
+  h += '</div>'; // close epDetailSection
+
+  // ── Actions
+  h += '<div style="display:flex;gap:8px;margin-top:18px">'
+    +    '<button class="btn btn-primary" id="btnSaveProfile" style="flex:1;padding:10px 16px;font-size:13px" onclick="submitEditProfile()">Save changes</button>'
+    +    '<button class="btn btn-secondary" style="padding:10px 16px;font-size:13px" onclick="closeEditProfile()">Cancel</button>'
+    + '</div>'
+    + '</div>'; // close card
+
   c.innerHTML = h;
 }
 
@@ -2889,6 +3116,7 @@ function switchTab(tab) {
   if (tab === "myatt"             && !myAttLoaded)     loadMyAttendance();
   if (tab === "scoreboard-member" && !memberSbLoaded)  loadMemberScoreboard();
   if (tab === "apology"           && !apologyLoaded)   loadApologyTab();
+  if (tab === "members"           && (!memberListData || memberListData.length === 0)) refreshMemberList();
   if (tab === "profile")          { profileMode = "view"; loadProfile(); }
 }
 

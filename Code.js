@@ -840,6 +840,13 @@ function ensureOffensesSheet_(ss) {
     sheet.setFrozenRows(1);
     return sheet;
   }
+  // Sheet exists but may be empty (no header row) — getLastColumn() would be 0.
+  if (sheet.getLastColumn() === 0 || sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, 6).setValues([["Date", "Name", "Description", "Recorded By", "Timestamp", "Points"]]);
+    sheet.getRange(1, 1, 1, 6).setFontWeight("bold");
+    sheet.setFrozenRows(1);
+    return sheet;
+  }
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
     .map(function(x){ return x.toString().trim().toLowerCase(); });
   if (headers.indexOf("points") === -1) {
@@ -1432,6 +1439,169 @@ function getMemberList() {
   return all.map(function(m){return{name:m.name,email:m.email,phone:m.phone,admNo:m.admNo,groups:m.groups,roles:m.roles,active:m.active,
     probation:m.probation,probationPassed:m.probationPassed,probationFailed:m.probationFailed,probationStart:m.probationStart,probationEnd:m.probationEnd,
     profilePhoto:driveAvatarDataUri_(m.profilePhotoRaw)};});
+}
+ 
+/**
+ * ADMIN — fetch a member's full editable data (Members + Member Details) for the
+ * admin Edit Profile form. Keyed by current name. Returns operational fields plus
+ * a `details` object with the extended Member Details fields.
+ */
+function getMemberForEdit(memberName) {
+  var ss = getSpreadsheet_();
+  var all = readAllMembers_(ss);
+  var member = null;
+  for (var i = 0; i < all.length; i++) {
+    if (all[i].name === memberName) { member = all[i]; break; }
+  }
+  if (!member) throw new Error("Member not found: " + memberName);
+ 
+  // Extended details from Member Details sheet
+  var details = {};
+  var detailSheet = ss.getSheetByName(MEMBER_DETAILS_SHEET);
+  if (detailSheet) {
+    var dmap = headerIndexMap_(detailSheet);
+    var dd = detailSheet.getDataRange().getValues();
+    for (var r = 1; r < dd.length; r++) {
+      var rEmail = dd[r][1].toString().trim().toLowerCase();
+      var rName = dd[r][0].toString().trim();
+      if ((rEmail && member.email && rEmail === member.email.toLowerCase()) || rName === memberName) {
+        var g = dmap["gender"], y = dmap["year of study"];
+        details = {
+          admissionNumber: dd[r][2].toString(),
+          courseFaculty: dd[r][3].toString(),
+          courseName: dd[r][4].toString(),
+          nationality: dd[r][5].toString(),
+          choirPart: dd[r][6].toString(),
+          instruments: dd[r][7].toString(),
+          nokName: dd[r][8].toString(),
+          nokPhone: dd[r][9].toString(),
+          nokRelationship: dd[r][10].toString(),
+          nokResidence: dd[r][11].toString(),
+          residence: dd[r][12].toString(),
+          dateOfBirth: formatDobForInput_(dd[r][13]),
+          phoneNumber: dd[r][14].toString(),
+          passportNumber: dd[r][15].toString(),
+          nationalIdNumber: dd[r][16].toString(),
+          gender: g != null ? dd[r][g].toString() : "",
+          yearOfStudy: y != null ? dd[r][y].toString() : "",
+          memberStatus: dmap["member status"] != null ? dd[r][dmap["member status"]].toString() : ""
+        };
+        break;
+      }
+    }
+  }
+ 
+  return {
+    name: member.name, email: member.email, phone: member.phone,
+    admNo: member.admNo, groups: member.groups, roles: member.roles,
+    choirPart: (member.roles && member.roles["Choir"]) || "",
+    bandRole: (member.roles && member.roles["Band"]) || "",
+    orchestraRole: (member.roles && member.roles["Orchestra"]) || "",
+    active: member.active,
+    profilePhoto: driveAvatarDataUri_(member.profilePhotoRaw),
+    details: details
+  };
+}
+ 
+/**
+ * ADMIN — save edits to a member's profile. Handles BOTH the Members sheet
+ * (operational) and the Member Details sheet (extended, behind the toggle).
+ * If the name changes, cascades the rename across all sheets (identity key).
+ *
+ * @param {Object} p — {
+ *   originalName (required — the row to edit),
+ *   name, email, phone, admNo, groups[], choirPart, bandRole, orchestraRole,  // operational
+ *   details: { courseFaculty, courseName, nationality, residence, dateOfBirth,
+ *              passportNumber, nationalIdNumber, nokName, nokPhone, nokRelationship,
+ *              nokResidence, gender, yearOfStudy }  // extended (optional block)
+ * }
+ */
+function adminUpdateMember(p) {
+  if (!p || !p.originalName) throw new Error("Missing member reference.");
+  var ss = getSpreadsheet_();
+  var membersSheet = ss.getSheetByName(MEMBERS_SHEET);
+  if (!membersSheet) throw new Error("Members sheet not found.");
+ 
+  var mData = membersSheet.getDataRange().getValues();
+  var h = mData[0].map(function(x){ return x.toString().trim().toLowerCase(); });
+  var col = function(name){ return h.indexOf(name); };
+  var nameIdx = col("name");
+ 
+  // Locate the member row by original name
+  var rowIdx = -1;
+  for (var i = 1; i < mData.length; i++) {
+    if (mData[i][nameIdx].toString().trim() === p.originalName.trim()) { rowIdx = i; break; }
+  }
+  if (rowIdx === -1) throw new Error("Member not found: " + p.originalName);
+  var sheetRow = rowIdx + 1;
+ 
+  // Helper: set a Members cell by header if the column exists and value provided
+  function setM(headerName, value) {
+    var c = col(headerName);
+    if (c !== -1 && value !== undefined && value !== null) {
+      membersSheet.getRange(sheetRow, c + 1).setValue(value);
+    }
+  }
+ 
+  // Operational fields (name handled separately via cascade)
+  if (p.email !== undefined)  setM("email", p.email);
+  if (p.phone !== undefined)  setM("phone", p.phone);
+  if (p.admNo !== undefined)  setM("adm. no.", p.admNo);
+  if (p.groups !== undefined) setM("groups", (p.groups || []).join(", "));
+  if (p.choirPart !== undefined)      setM("choir part", p.choirPart);
+  if (p.bandRole !== undefined)       setM("band role", p.bandRole);
+  if (p.orchestraRole !== undefined)  setM("orchestra role", p.orchestraRole);
+ 
+  // Extended details (Member Details sheet) — only if a details block was sent
+  if (p.details) {
+    var d = p.details;
+    var detailSheet = ensureMemberDetailsSheet_(ss);
+    var dmap = headerIndexMap_(detailSheet);
+    var dd = detailSheet.getDataRange().getValues();
+    var dRow = -1;
+    for (var r = 1; r < dd.length; r++) {
+      var rEmail = dd[r][1].toString().trim().toLowerCase();
+      var rName = dd[r][0].toString().trim();
+      if ((rEmail && p.email && rEmail === p.email.toLowerCase()) || rName === p.originalName.trim()) { dRow = r + 1; break; }
+    }
+    if (dRow === -1) {
+      // No details row yet — create a minimal one
+      detailSheet.appendRow([p.originalName, p.email || "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]);
+      dRow = detailSheet.getLastRow();
+      dmap = headerIndexMap_(detailSheet);
+    }
+    function setD(headerName, value) {
+      var c = dmap[headerName.toLowerCase()];
+      if (c != null && value !== undefined && value !== null) {
+        detailSheet.getRange(dRow, c + 1).setValue(value);
+      }
+    }
+    setD("Course Faculty", d.courseFaculty);
+    setD("Course Name", d.courseName);
+    setD("Nationality", d.nationality);
+    setD("Residence", d.residence);
+    setD("Date of Birth", d.dateOfBirth);
+    setD("Phone Number", d.phoneNumber !== undefined ? d.phoneNumber : p.phone);
+    setD("Passport Number", d.passportNumber);
+    setD("National ID Number", d.nationalIdNumber);
+    setD("Next of Kin Name", d.nokName);
+    setD("Next of Kin Phone", d.nokPhone);
+    setD("Next of Kin Relationship", d.nokRelationship);
+    setD("Next of Kin Residence", d.nokResidence);
+    setD("Gender", d.gender);
+    setD("Year of Study", d.yearOfStudy);
+    if (d.memberStatus !== undefined) setD("Member Status", d.memberStatus);
+  }
+ 
+  // Name change LAST — cascade across all sheets (identity key). Do this after the
+  // detail edits so the detail-row lookup above still matched the old name.
+  var renamed = null;
+  if (p.name !== undefined && p.name.trim() && p.name.trim() !== p.originalName.trim()) {
+    renamed = cascadeMemberRename_(ss, p.originalName.trim(), p.name.trim());
+  }
+ 
+  refreshAllRegisters_(ss);
+  return { success: true, name: (p.name || p.originalName).trim(), renamed: renamed };
 }
  
 function addMember(member) {
