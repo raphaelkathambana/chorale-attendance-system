@@ -482,6 +482,11 @@ function renderDateDetail() {
 
 function fiveBtn(ri, label, value, cur) {
   var cls = cur === value ? "act-" + label.toLowerCase() : "";
+  // Elevated reps: register is record-only — history statuses render read-only
+  // (batchUpdateAttendance would reject their edits server-side anyway).
+  if (!canEditHistory()) {
+    return '<button class="' + cls + '" disabled style="cursor:default;pointer-events:none">' + label + '</button>';
+  }
   return '<button class="' + cls + '" onclick="editStatus(' + ri + ",'" + value + "')\">" + label + '</button>';
 }
 
@@ -1592,7 +1597,7 @@ function renderMemberDetail() {
 
   // Actions
   h +=   '<div style="display:flex;gap:8px">'
-    +      '<button class="btn btn-secondary" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="showEditProfile(\'' + esc(m.name).replace(/'/g, "\\'") + '\')">Edit profile</button>'
+    +      (isFullAdmin() ? '<button class="btn btn-secondary" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="showEditProfile(\'' + esc(m.name).replace(/'/g, "\\'") + '\')">Edit profile</button>' : '')
     +      '<button class="btn btn-crimson"   style="flex:1;padding:9px 14px;font-size:12.5px" onclick="prefillOffense(\'' + esc(m.name).replace(/'/g, "\\'") + '\')">Record offense</button>'
     +    '</div>'
     + '</div>';
@@ -2480,7 +2485,7 @@ function openProfile() {
   switchTab("profile");
 }
 function closeProfile() {
-  switchTab(profileReturnTab || (userRole === "admin" ? "record" : "myatt"));
+  switchTab(profileReturnTab || (userAccess.isAdminLike ? "record" : "myatt"));
 }
 function setProfileMode(m) { profileMode = m; renderProfile(); }
 
@@ -2799,14 +2804,14 @@ function navBtnHtml(t, active) {
 }
 
 function renderTabNav() {
-  var tabs = userRole === "admin" ? adminTabs : memberTabs;
+  var tabs = activeTabs();
   var current = activeTab || (tabs[0] && tabs[0].id);
   var nav = document.getElementById("tabNav");
   var navHtml = "";
   moreTabIds = [];
 
   // Mobile: more than 5 tabs → primary set + a "More" overflow sheet.
-  if (userRole === "admin" && tabs.length > 5) {
+  if (userAccess.isAdminLike && tabs.length > 5) {
     var primary = tabs.filter(function (t) { return MOBILE_PRIMARY.indexOf(t.id) !== -1; })
                       .sort(function (a, b) { return MOBILE_PRIMARY.indexOf(a.id) - MOBILE_PRIMARY.indexOf(b.id); });
     tabs.forEach(function (t) { if (MOBILE_PRIMARY.indexOf(t.id) === -1) moreTabIds.push(t.id); });
@@ -2851,7 +2856,7 @@ function renderMoreSheet() {
     sheet.onclick = function (e) { if (e.target === sheet) closeMoreSheet(); };
     document.body.appendChild(sheet);
   }
-  var tabs = userRole === "admin" ? adminTabs : memberTabs;
+  var tabs = activeTabs();
   var rows = moreTabIds.map(function (id) {
     var t = tabs.filter(function (x) { return x.id === id; })[0];
     if (!t) return "";
@@ -2872,8 +2877,8 @@ function renderUser(name, email) {
   document.getElementById("sideAvatar").textContent = initial;
   document.getElementById("topAvatar").textContent  = initial;
   document.getElementById("sideName").textContent   = nameRow;
-  document.getElementById("sideRole").textContent   = userRole.toUpperCase();
-  document.getElementById("topbarSub").textContent  = userRole === "admin" ? "Attendance · admin" : "Attendance";
+  document.getElementById("sideRole").textContent   = roleBadgeText();
+  document.getElementById("topbarSub").textContent  = topbarSubText();
   loadConfigLists();  // warm the config cache for role / faculty dropdowns
   // Pull the profile photo once so the nav avatars match the My Profile page.
   if (!profileData) {
@@ -3019,6 +3024,66 @@ function statusColor(st) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 var userRole = "unknown", userName = "", userEmail = "", activeTab = "";
+// Scope object from getUserRole — role tiers: admin | sectionAdmin | elevated | member.
+// isAdminLike gates the admin workspace; allowedSections locks the section pickers.
+// UI gating only — Code.gs re-checks every call server-side.
+var userAccess = { role: "unknown", section: "", repGroup: "", allowedSections: [], isAdminLike: false };
+function isFullAdmin()    { return userRole === "admin"; }
+function canEditHistory() { return userRole === "admin" || userRole === "sectionAdmin"; }
+function sectionAllowed(g) { return isFullAdmin() || userAccess.allowedSections.indexOf(g) !== -1; }
+// Elevated reps have no Requests queue — their register is record-only.
+function activeTabs() {
+  if (!userAccess.isAdminLike) return memberTabs;
+  // Birthdays is full-admin only; elevated reps also lose Requests.
+  return adminTabs.filter(function (t) {
+    if (t.id === "birthdays") return isFullAdmin();
+    if (t.id === "requests")  return userRole !== "elevated";
+    return true;
+  });
+}
+function roleBadgeText() {
+  if (userRole === "sectionAdmin") return ("Section Admin \u00b7 " + userAccess.section).toUpperCase();
+  if (userRole === "elevated")     return (userAccess.repGroup + " Rep").toUpperCase();
+  return userRole.toUpperCase();
+}
+function topbarSubText() {
+  if (userRole === "admin")        return "Attendance \u00b7 admin";
+  if (userRole === "sectionAdmin") return "Attendance \u00b7 " + (userAccess.section || "section").toLowerCase() + " admin";
+  if (userRole === "elevated")     return "Attendance \u00b7 " + (userAccess.repGroup || "rep").toLowerCase() + " rep";
+  return "Attendance";
+}
+// Lock section pickers for scoped roles: pre-select their section, disable the rest.
+function applyRoleScopeUI() {
+  if (isFullAdmin()) return;
+  var allowed = userAccess.allowedSections;
+  [["grpChoir", "Choir"], ["grpBand", "Band"], ["grpOrchestra", "Orchestra"]].forEach(function (p) {
+    var el = document.getElementById(p[0]);
+    if (!el) return;
+    var ok = allowed.indexOf(p[1]) !== -1;
+    el.checked = ok;
+    el.disabled = !ok;
+    var lab = el.parentNode;
+    if (lab && !ok) { lab.style.opacity = "0.4"; lab.style.cursor = "default"; lab.title = "Your register covers " + allowed.join(", ") + " only"; }
+  });
+  lockSectionChips("sessSectionChips");
+  lockSectionChips("dashSectionChips");
+}
+function lockSectionChips(boxId) {
+  var box = document.getElementById(boxId);
+  if (!box) return;
+  var chips = box.querySelectorAll(".filter-chip");
+  for (var i = 0; i < chips.length; i++) {
+    var v = chips[i].getAttribute("data-section");
+    var ok = userAccess.allowedSections.indexOf(v) !== -1;
+    chips[i].classList.toggle("active", ok);
+    if (!ok) {
+      chips[i].disabled = true;
+      chips[i].style.opacity = "0.35";
+      chips[i].style.cursor = "default";
+      chips[i].title = "Locked to " + userAccess.allowedSections.join(", ");
+    }
+  }
+}
 // Apology is NOT a top-level tab — it is a sub-page reached from My attendance
 // (keeps "My attendance" active in the nav, like the Profile sub-page).
 var adminTabs  = [{ id: "record", label: "Record" }, { id: "sessions", label: "Sessions" }, { id: "members", label: "Members" }, { id: "probation", label: "Probation", short: "Prob." }, { id: "requests", label: "Requests", short: "Reqs" }, { id: "dashboard", label: "Group Dashboard", short: "Stats" }, { id: "communique", label: "Communiqué", short: "Send" }, { id: "birthdays", label: "Birthdays", short: "Bdays" }, { id: "myatt", label: "My attendance", short: "Mine" }];
@@ -3028,6 +3093,13 @@ google.script.run.withSuccessHandler(function (r) {
   userRole = r.role;
   userName = r.name;
   userEmail = r.email || "";
+  userAccess = {
+    role: r.role,
+    section: r.section || "",
+    repGroup: r.repGroup || "",
+    allowedSections: r.allowedSections || (r.role === "admin" ? ["Choir", "Band", "Orchestra"] : []),
+    isAdminLike: (r.isAdminLike !== undefined) ? !!r.isAdminLike : (r.role === "admin")
+  };
   // Globals read by emailDeniedAdmin() (§11). adminContactEmail comes from the
   // backend (getUserRole); deniedUserEmail is the signed-in user's address.
   window.deniedUserEmail = r.email || "";
@@ -3045,11 +3117,11 @@ google.script.run.withSuccessHandler(function (r) {
   renderUser(r.name, r.email);
   renderTabNav();
   renderBirthdayBanner();
-  var firstTab = (userRole === "admin" ? adminTabs : memberTabs)[0].id;
+  var firstTab = activeTabs()[0].id;
   activeTab = firstTab;
   document.getElementById("tab-" + activeTab).className = "tab-page active";
 
-  if (r.role === "admin") initAdmin();
+  if (userAccess.isAdminLike) { initAdmin(); applyRoleScopeUI(); }
   else initMember();
 }).withFailureHandler(function (e) {
   document.getElementById("authScreen").style.display = "none";
@@ -3395,7 +3467,7 @@ function paintSessionDetail() {
     +   '<div class="sess-tally-div"></div><div class="sess-tally-counts">' + cells + '</div>'
     +   '<div style="flex:1"></div><div style="text-align:right"><div class="sess-tally-rate-label">APOLOGIES</div><div class="num" style="font-family:var(--f-display);font-size:28px;color:var(--paper);margin-top:4px">' + (d.apologyCount || 0) + '</div></div>'
     + '</div>'
-    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="eyebrow">Register \u00b7 ' + total + ' members</div><span style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-400);letter-spacing:.1em">TAP A STATUS TO CORRECT</span></div>'
+    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="eyebrow">Register \u00b7 ' + total + ' members</div><span style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-400);letter-spacing:.1em">' + (canEditHistory() ? 'TAP A STATUS TO CORRECT' : 'READ-ONLY \u00b7 RECORD ACCESS') + '</span></div>'
     + reg;
   updateChangesBar();
 }
@@ -3733,9 +3805,10 @@ function onMeetingPicked() {
   document.getElementById("attendanceDate").value = m.date || "";
 
   var mg = m.groups || [];
-  document.getElementById("grpChoir").checked     = mg.indexOf("Choir") !== -1;
-  document.getElementById("grpBand").checked      = mg.indexOf("Band") !== -1;
-  document.getElementById("grpOrchestra").checked = mg.indexOf("Orchestra") !== -1;
+  // Scoped roles: never auto-check a section outside the caller's scope
+  document.getElementById("grpChoir").checked     = mg.indexOf("Choir") !== -1 && sectionAllowed("Choir");
+  document.getElementById("grpBand").checked      = mg.indexOf("Band") !== -1 && sectionAllowed("Band");
+  document.getElementById("grpOrchestra").checked = mg.indexOf("Orchestra") !== -1 && sectionAllowed("Orchestra");
 
   var timeEl = document.getElementById("sessionTime");
   if (timeEl) timeEl.value = m.time || "";
@@ -4091,7 +4164,7 @@ function loadDateDetail(ds) {
     .getAttendanceForDate(ds, viewGroup);
 }
 
-function editStatus(ri, ns) { viewEditedStatuses[ri] = ns; updateChangesBar(); if (sessDetailActive) paintSessionDetail(); else renderViewTab(); }
+function editStatus(ri, ns) { if (!canEditHistory()) return; viewEditedStatuses[ri] = ns; updateChangesBar(); if (sessDetailActive) paintSessionDetail(); else renderViewTab(); }
 function backToDateList() {
   viewCurrentDate = null; viewRecords = []; viewOriginalStatuses = {}; viewEditedStatuses = {}; viewSearchVal = "";
   hideChangesBar(); renderViewTab();

@@ -67,46 +67,318 @@ function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
-
 // -------------------------------------------------------
 //  AUTH: User Role Detection
 // -------------------------------------------------------
- 
+
 /**
  * Determines the logged-in user's role.
  * Checks Admins sheet first, then Members sheet.
  * Returns: { role: "admin"|"member"|"unknown", email, name, groups }
  */
-function getUserRole() {
+// -------------------------------------------------------
+//  SCHEMA GUARD
+//  Much of the code reads position-dependent columns (Apologies, Member Details,
+//  Attendance, Offenses, Meetings). Reordering/inserting columns there breaks
+//  things SILENTLY. This guard makes drift LOUD: validateSheetSchemas() compares
+//  each sheet's actual headers to the expected order and reports mismatches.
+//  Runs in the daily tasks with an email alert to admins on drift.
+//  Convention going forward: NEW columns are appended at the END and read by
+//  header (headerIndexMap_) — never inserted mid-sheet.
+// -------------------------------------------------------
+var SHEET_SCHEMAS = {
+  // order === true → column ORDER is load-bearing (positional reads exist).
+  // order === false → only PRESENCE matters (all reads are header-based).
+  "Attendance": { order: true, headers: ["Date","Name","Group","Role","Status","Recorded By","Timestamp","Session"] },
+  "Apologies": { order: true, headers: ["Date","Name","Email","Type","Reason","Submitted At","Session Time","On Time","Status","End Date","Review Note","Session Groups"] },
+  "Member Details": { order: true, headers: ["Name","Email","Admission Number","Course Faculty","Course Name","Nationality","Choir Part","Band/Orchestra Instruments","Next of Kin Name","Next of Kin Phone","Next of Kin Relationship","Next of Kin Residence","Residence","Date of Birth","Phone Number","Passport Number","National ID Number","Passport Photo URL","Onboarding Completed","Completed At","Member Status"] },
+  "Offenses": { order: true, headers: ["Date","Name","Description","Recorded By","Timestamp"] },
+  "Meetings": { order: true, headers: ["Date","Time","Groups","Title","Created By","Timestamp"] },
+  "Members": { order: false, headers: ["Name","Email","Phone","Groups","Choir Part","Band Role","Orchestra Role","Adm. No.","Status","Profile Photo"] },
+  "Admins": { order: false, headers: ["Email","Role","Section","Rep Group"] } // Email may sit anywhere, but the header MUST exist
+};
+
+/**
+ * Validates every schema-tracked sheet against SHEET_SCHEMAS.
+ * Returns { ok: bool, problems: [ "sheet: message", ... ] }.
+ * Run from the editor anytime; also runs daily with an admin email on drift.
+ */
+function validateSheetSchemas() {
   var ss = getSpreadsheet_();
-  var email = Session.getActiveUser().getEmail();
-  if (!email) return { role: "unknown", email: "", name: "", groups: [] };
- 
-  var emailLower = email.toLowerCase();
- 
-  // Check Admins sheet
-  var adminSheet = ss.getSheetByName(ADMINS_SHEET);
-  if (adminSheet) {
-    var adminData = adminSheet.getDataRange().getValues();
-    for (var i = 1; i < adminData.length; i++) {
-      var adminEmail = adminData[i][0].toString().trim().toLowerCase();
-      if (adminEmail === emailLower) {
-        // Admin — also check if they're in Members for name
-        var memberInfo = findMemberByEmail_(ss, emailLower);
-        return { role: "admin", email: email, name: memberInfo ? memberInfo.name : email, groups: memberInfo ? memberInfo.groups : [] };
+  var problems = [];
+  for (var sheetName in SHEET_SCHEMAS) {
+    var spec = SHEET_SCHEMAS[sheetName];
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) continue; // auto-created sheets may not exist yet — not drift
+    if (sheet.getLastRow() === 0 || sheet.getLastColumn() === 0) continue; // empty — initialized on first write
+    var actual = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+      .map(function(x){ return x.toString().trim(); });
+    var actualLower = actual.map(function(x){ return x.toLowerCase(); });
+
+    if (spec.order) {
+      // Every expected header must be at its exact position (extra appended columns are fine)
+      for (var i = 0; i < spec.headers.length; i++) {
+        var want = spec.headers[i];
+        var got = actual[i] !== undefined ? actual[i] : "(missing)";
+        if (got.toLowerCase() !== want.toLowerCase()) {
+          problems.push(sheetName + ": column " + (i + 1) + " should be \"" + want + "\" but is \"" + got + "\" — positional reads will hit the wrong data.");
+        }
+      }
+    } else {
+      // Presence-only: each expected header must exist somewhere
+      for (var j = 0; j < spec.headers.length; j++) {
+        if (actualLower.indexOf(spec.headers[j].toLowerCase()) === -1) {
+          problems.push(sheetName + ": missing column \"" + spec.headers[j] + "\".");
+        }
       }
     }
   }
- 
-  // Check Members sheet
-  var memberInfo = findMemberByEmail_(ss, emailLower);
-  if (memberInfo && memberInfo.active) {
-    return { role: "member", email: email, name: memberInfo.name, groups: memberInfo.groups };
-  }
- 
-  return { role: "unknown", email: email, name: "", groups: [], adminContact: ADMIN_CONTACT_EMAIL };
+  var result = { ok: problems.length === 0, problems: problems };
+  Logger.log(result.ok ? "All sheet schemas OK." : ("SCHEMA DRIFT:\n" + problems.join("\n")));
+  return result;
 }
- 
+
+/** Daily drift check — emails admins if a schema problem is detected. */
+function dailySchemaCheck_() {
+  var r = validateSheetSchemas();
+  if (r.ok) return;
+  try {
+    var admins = getAdminEmails_(getSpreadsheet_());
+    if (!admins.length) return;
+    MailApp.sendEmail(admins.join(","),
+      "\u26A0\uFE0F Chorale system \u2014 sheet column drift detected",
+      "The attendance system detected column changes that can silently corrupt data:\n\n" +
+      r.problems.join("\n") +
+      "\n\nPlease restore the expected column order (or contact the system admin) before recording attendance or approving requests.",
+      { name: EMAIL_FROM_NAME });
+  } catch(e) { Logger.log("Schema alert failed: " + e); }
+}
+
+// -------------------------------------------------------
+//  ROLES & ACCESS (Part D)
+//  Tiers: admin (all sections, full) > sectionAdmin (one section, full within it)
+//         > elevated (one rep-group within a section) > member (own data).
+//  Storage: Admins sheet columns — Email | Role | Section | Rep Group.
+//  A row with a blank Role = full "Admin" (backward compatible with the old
+//  email-only sheet). Rep-groups: in Choir the rep-group IS the choir part
+//  (Tenor rep ↔ Tenors); in Band/Orchestra it's an instrument FAMILY
+//  (Strings rep ↔ Violin/Cello/Viola...), mapped in the Config sheet via the
+//  "Instrument" and "Instrument Family" columns.
+// -------------------------------------------------------
+var ROLE_LEVELS = { admin: 3, sectionAdmin: 2, elevated: 1, member: 0, unknown: -1 };
+
+/** Ensures the Admins sheet has the Role/Section/Rep Group columns (migration). */
+function ensureAdminsSheetColumns_(ss) {
+  var sheet = ss.getSheetByName(ADMINS_SHEET);
+  if (!sheet) return null;
+  if (sheet.getLastColumn() === 0 || sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, 4).setValues([["Email", "Role", "Section", "Rep Group"]]);
+    sheet.getRange(1, 1, 1, 4).setFontWeight("bold");
+    return sheet;
+  }
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+    .map(function(x){ return x.toString().trim().toLowerCase(); });
+  ["Role", "Section", "Rep Group"].forEach(function(h) {
+    if (headers.indexOf(h.toLowerCase()) === -1) {
+      var col = sheet.getLastColumn() + 1;
+      sheet.getRange(1, col).setValue(h).setFontWeight("bold");
+      headers.push(h.toLowerCase());
+    }
+  });
+  return sheet;
+}
+
+/**
+ * Reads the instrument → family mapping from the Config sheet ("Instrument" and
+ * "Instrument Family" columns). Returns { instrumentLower: family }.
+ * Families: Brass, Strings, Winds, Voice, Percussion, Woodwind (extensible).
+ */
+function getInstrumentFamilyMap_(ss) {
+  var map = {};
+  var sheet = ss.getSheetByName(CONFIG_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return map;
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0].map(function(x){ return x.toString().trim().toLowerCase(); });
+  var iIdx = headers.indexOf("instrument");
+  var fIdx = headers.indexOf("instrument family");
+  if (iIdx === -1 || fIdx === -1) return map;
+  for (var r = 1; r < data.length; r++) {
+    var inst = data[r][iIdx].toString().trim();
+    var fam = data[r][fIdx].toString().trim();
+    if (inst && fam) map[inst.toLowerCase()] = fam;
+  }
+  return map;
+}
+
+/**
+ * Resolves the caller's access record once: role tier + scope.
+ * Returns { role, level, email, name, groups, section, repGroup, allowedSections }.
+ */
+function getAccess_(ss) {
+  ss = ss || getSpreadsheet_();
+  var email = Session.getActiveUser().getEmail();
+  if (!email) return { role: "unknown", level: -1, email: "", name: "", groups: [], section: "", repGroup: "", allowedSections: [] };
+  var emailLower = email.toLowerCase();
+  var memberInfo = findMemberByEmail_(ss, emailLower);
+
+  var adminSheet = ss.getSheetByName(ADMINS_SHEET);
+  if (adminSheet && adminSheet.getLastRow() > 0 && adminSheet.getLastColumn() > 0) {
+    var data = adminSheet.getDataRange().getValues();
+    var headers = data[0].map(function(x){ return x.toString().trim().toLowerCase(); });
+    var rIdx = headers.indexOf("role"), sIdx = headers.indexOf("section"), gIdx = headers.indexOf("rep group");
+    // Email column by HEADER (fall back to column 1 for legacy sheets with no header)
+    var eIdx = headers.indexOf("email");
+    if (eIdx === -1) eIdx = 0;
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][eIdx].toString().trim().toLowerCase() !== emailLower) continue;
+      var roleRaw = (rIdx !== -1 ? data[i][rIdx].toString().trim() : "");
+      var section = (sIdx !== -1 ? data[i][sIdx].toString().trim() : "");
+      var repGroup = (gIdx !== -1 ? data[i][gIdx].toString().trim() : "");
+      var role;
+      var rl = roleRaw.toLowerCase().replace(/[^a-z]/g, "");
+      if (rl === "" || rl === "admin") role = "admin";            // blank = full admin (legacy rows)
+      else if (rl === "sectionadmin") role = "sectionAdmin";
+      else if (rl === "elevated" || rl === "elevatedmember") role = "elevated";
+      else role = "member";                                        // unrecognized → LOWEST tier, never admin
+      // Scoped roles need their scope; without it they can't be safely applied
+      if (role === "sectionAdmin" && !section) role = "member";
+      if (role === "elevated" && (!section || !repGroup)) role = "member";
+      return {
+        role: role, level: ROLE_LEVELS[role],
+        email: email, name: memberInfo ? memberInfo.name : email,
+        groups: memberInfo ? memberInfo.groups : [],
+        section: (role === "admin") ? "" : section,
+        repGroup: (role === "elevated") ? repGroup : "",
+        allowedSections: (role === "admin") ? GROUPS.slice() : [section]
+      };
+    }
+  }
+
+  if (memberInfo && memberInfo.active) {
+    return { role: "member", level: 0, email: email, name: memberInfo.name,
+             groups: memberInfo.groups, section: "", repGroup: "", allowedSections: [] };
+  }
+  return { role: "unknown", level: -1, email: email, name: "", groups: [], section: "", repGroup: "", allowedSections: [] };
+}
+
+/** Throws unless the caller has at least section-scoped admin power over `section`. */
+function requireSectionPower_(section) {
+  var a = getAccess_();
+  if (a.level >= ROLE_LEVELS.admin) return a;
+  if (a.level >= ROLE_LEVELS.elevated && section && a.section === section) return a;
+  if (a.level >= ROLE_LEVELS.elevated && !section) return a; // unscoped call by scoped role — caller must filter
+  throw new Error("You don't have permission for this action" + (section ? " in " + section : "") + ".");
+}
+
+/** Throws unless the caller is a full admin. */
+function requireFullAdmin_() {
+  var a = getAccess_();
+  if (a.level >= ROLE_LEVELS.admin) return a;
+  throw new Error("This action requires full admin access.");
+}
+
+/** Throws unless caller is admin or sectionAdmin (of the given section if provided). */
+function requireManagement_(section) {
+  var a = getAccess_();
+  if (a.level >= ROLE_LEVELS.admin) return a;
+  if (a.role === "sectionAdmin" && (!section || a.section === section)) return a;
+  throw new Error("This action requires admin or section-admin access.");
+}
+
+/**
+ * Returns a member-filter predicate for the caller's scope.
+ * admin → everyone; sectionAdmin → members of their section;
+ * elevated → members of their section whose role falls in their rep-group
+ * (Choir: choir part === repGroup; Band/Orchestra: instrument's family === repGroup).
+ */
+function scopeMemberPredicate_(access, ss) {
+  if (access.level >= ROLE_LEVELS.admin) return function(){ return true; };
+  var section = access.section;
+  if (access.role === "sectionAdmin") {
+    return function(m){ return (m.groups || []).indexOf(section) !== -1; };
+  }
+  if (access.role === "elevated") {
+    var famMap = getInstrumentFamilyMap_(ss || getSpreadsheet_());
+    var rep = access.repGroup;
+    return function(m) {
+      if ((m.groups || []).indexOf(section) === -1) return false;
+      var role = (m.roles && m.roles[section]) ? m.roles[section].toString().trim() : "";
+      if (!role) return false;
+      if (section === "Choir") return role.toLowerCase() === rep.toLowerCase();
+      var fam = famMap[role.toLowerCase()] || "";
+      return fam.toLowerCase() === rep.toLowerCase();
+    };
+  }
+  return function(){ return false; };
+}
+
+/** Diagnostic — lists Band/Orchestra instruments with no family mapping. Run in editor. */
+function listUnmappedInstruments() {
+  var ss = getSpreadsheet_();
+  var famMap = getInstrumentFamilyMap_(ss);
+  var members = readAllMembers_(ss);
+  var missing = {};
+  members.forEach(function(m) {
+    ["Band", "Orchestra"].forEach(function(sec) {
+      var role = (m.roles && m.roles[sec]) ? m.roles[sec].toString().trim() : "";
+      if (role && !famMap[role.toLowerCase()]) missing[role] = true;
+    });
+  });
+  var list = Object.keys(missing).sort();
+  Logger.log(list.length ? "Unmapped instruments:\n" + list.join("\n") : "All instruments mapped.");
+  return list;
+}
+
+
+/**
+ * DIAGNOSTIC — run from the editor (or call from the client) to see exactly what
+ * the backend resolves for the current user. Use this to tell apart a backend
+ * role problem from a UI gating problem.
+ */
+function whoAmI() {
+  var a = getAccess_(getSpreadsheet_());
+  var out = {
+    email: a.email, resolvedRole: a.role, level: a.level,
+    section: a.section, repGroup: a.repGroup,
+    allowedSections: a.allowedSections,
+    isAdminLike: a.level >= ROLE_LEVELS.elevated,
+    whatClientGets: getUserRole()
+  };
+  Logger.log(JSON.stringify(out, null, 2));
+  return out;
+}
+
+/** DIAGNOSTIC — dumps the Admins sheet as the backend parses it. */
+function debugAdminsSheet() {
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(ADMINS_SHEET);
+  if (!sheet) { Logger.log("No Admins sheet."); return; }
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0].map(function(x){ return x.toString().trim(); });
+  Logger.log("Headers: " + JSON.stringify(headers));
+  var h = headers.map(function(x){ return x.toLowerCase(); });
+  Logger.log("Resolved column indexes -> email:" + h.indexOf("email") +
+             " role:" + h.indexOf("role") + " section:" + h.indexOf("section") +
+             " rep group:" + h.indexOf("rep group"));
+  for (var i = 1; i < data.length; i++) Logger.log("Row " + (i+1) + ": " + JSON.stringify(data[i]));
+  return { headers: headers, rows: data.length - 1 };
+}
+
+function getUserRole() {
+  var ss = getSpreadsheet_();
+  var a = getAccess_(ss);
+  if (a.role === "unknown" && a.email) {
+    return { role: "unknown", email: a.email, name: "", groups: [], adminContact: ADMIN_CONTACT_EMAIL };
+  }
+  // Backward compatible: role "admin" | "member" as before, PLUS the new tiers
+  // "sectionAdmin" | "elevated" and scope fields the client can use to gate UI.
+  return {
+    role: a.role, email: a.email, name: a.name, groups: a.groups,
+    section: a.section, repGroup: a.repGroup, allowedSections: a.allowedSections,
+    isAdminLike: a.level >= ROLE_LEVELS.elevated
+  };
+}
+
 /**
  * Finds a member by email in the Members sheet.
  */
@@ -119,7 +391,7 @@ function findMemberByEmail_(ss, emailLower) {
   }
   return null;
 }
- 
+
 /**
  * Returns personal attendance data for the logged-in user.
  * Used by the "My Attendance" tab for members.
@@ -128,14 +400,14 @@ function getMyAttendance() {
   var ss = getSpreadsheet_();
   var email = Session.getActiveUser().getEmail();
   if (!email) throw new Error("Could not detect your email.");
- 
+
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) throw new Error("No member found for " + email);
- 
+
   var attData = readAllAttendance_(ss);
   var history = getMemberHistory(member.name);
   var scoreboard = getScoreboard("All");
- 
+
   // Find this member's scoreboard position
   var myScore = null;
   var myRank = 0;
@@ -146,14 +418,14 @@ function getMyAttendance() {
       break;
     }
   }
- 
+
   // Probation status
   var probation = null;
   if (member.probation) {
     probation = calculateProbationStats_(member, attData);
     probation.groups = member.groups.filter(function(g) { return GROUPS.indexOf(g) !== -1; });
   }
- 
+
   // Check onboarding status
   var onboardingDone = true;
   var detailSheet = ss.getSheetByName(MEMBER_DETAILS_SHEET);
@@ -175,7 +447,7 @@ function getMyAttendance() {
   } else {
     onboardingDone = false;
   }
- 
+
   return {
     name: member.name,
     email: member.email,
@@ -194,7 +466,7 @@ function getMyAttendance() {
     totalMembers: scoreboard.length
   };
 }
- 
+
 // -------------------------------------------------------
 //  SHARED: Read Members
 // -------------------------------------------------------
@@ -244,7 +516,7 @@ function readAllMembers_(ss) {
   }
   return members;
 }
- 
+
 // -------------------------------------------------------
 //  READ MEMBERS (for form)
 // -------------------------------------------------------
@@ -254,8 +526,16 @@ function readAllMembers_(ss) {
  */
 function getMembers(selectedGroups) {
   var ss = getSpreadsheet_(); var all = readAllMembers_(ss); var result = [];
+  // Scope: sectionAdmin/elevated only see (and record) members within their scope
+  var access = getAccess_(ss);
+  if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
+  var inScope = scopeMemberPredicate_(access, ss);
+  if (access.level < ROLE_LEVELS.admin) {
+    selectedGroups = selectedGroups.filter(function(g){ return access.allowedSections.indexOf(g) !== -1; });
+  }
   for (var i = 0; i < all.length; i++) {
     var m = all[i]; if (!m.active) continue;
+    if (!inScope(m)) continue;
     // Member's groups that overlap with the selection
     var rg = m.groups.filter(function(g) { return selectedGroups.indexOf(g) !== -1; });
     if (rg.length === 0) continue;
@@ -264,18 +544,18 @@ function getMembers(selectedGroups) {
   }
   return result;
 }
- 
+
 /**
  * Builds the session string from selected groups (sorted, comma-joined).
  */
 function buildSessionKey_(selectedGroups) {
   return selectedGroups.slice().sort().join(",");
 }
- 
+
 // -------------------------------------------------------
 //  ATTENDANCE CRUD
 // -------------------------------------------------------
- 
+
 /**
  * Checks if attendance already exists for a date + session combination.
  * @param {string} dateStr
@@ -299,7 +579,7 @@ function checkExistingAttendance(dateStr, selectedGroups) {
   var fl = Object.keys(foundGroups);
   return { exists: fl.length > 0, groups: fl };
 }
- 
+
 /**
  * Saves attendance. Session value is built from selectedGroups.
  * @param {string} dateStr
@@ -308,13 +588,21 @@ function checkExistingAttendance(dateStr, selectedGroups) {
  * @param {boolean} overwrite
  */
 function saveAttendance(dateStr, selectedGroups, records, overwrite) {
-  var ss = getSpreadsheet_(); var sheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  var ss = getSpreadsheet_();
+  // Scope: recording requires elevated+; scoped roles may only record their sections
+  var access = getAccess_(ss);
+  if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
+  if (access.level < ROLE_LEVELS.admin) {
+    var badGroup = (selectedGroups || []).filter(function(g){ return access.allowedSections.indexOf(g) === -1; });
+    if (badGroup.length) throw new Error("You can only record attendance for " + access.allowedSections.join(", ") + ".");
+  }
+  var sheet = ss.getSheetByName(ATTENDANCE_SHEET);
   if (!sheet) { sheet = ss.insertSheet(ATTENDANCE_SHEET); sheet.appendRow(["Date","Name","Group","Role","Status","Recorded By","Timestamp","Session"]); sheet.getRange(1,1,1,8).setFontWeight("bold"); sheet.setFrozenRows(1); }
   var lastCol = sheet.getLastColumn();
   if (lastCol < 8) { sheet.getRange(1, 8).setValue("Session").setFontWeight("bold"); }
- 
+
   var sessionKey = buildSessionKey_(selectedGroups);
- 
+
   if (overwrite) {
     var data = sheet.getDataRange().getValues();
     for (var i = data.length-1; i >= 1; i--) {
@@ -327,7 +615,7 @@ function saveAttendance(dateStr, selectedGroups, records, overwrite) {
       }
     }
   }
- 
+
   var user = Session.getActiveUser().getEmail()||"Unknown", now = new Date(), rows = [], sm = {};
   for (var j = 0; j < records.length; j++) {
     var rec = records[j];
@@ -345,7 +633,7 @@ function saveAttendance(dateStr, selectedGroups, records, overwrite) {
   try { syncConsecutiveAuOffenses_(ss); } catch(e) {}
   return { success: true, summary: sm, date: dateStr, selectedGroups: selectedGroups, totalRows: rows.length, probationEvals: probEvals };
 }
- 
+
 // -------------------------------------------------------
 //  VIEW / EDIT ATTENDANCE
 // -------------------------------------------------------
@@ -355,7 +643,7 @@ function getAttendanceDates(group) {
   for (var i = 1; i < data.length; i++) { var ds = formatSheetDate_(data[i][0]), g = data[i][2].toString(); if (group!=="All"&&g!==group) continue; if(!dgm[ds])dgm[ds]={}; dgm[ds][g]=true; }
   var r = []; for (var d in dgm) r.push({date:d,groups:Object.keys(dgm[d])}); r.sort(function(a,b){return b.date.localeCompare(a.date);}); return r;
 }
- 
+
 function getAttendanceForDate(dateStr, group) {
   var ss = getSpreadsheet_(); var sheet = ss.getSheetByName(ATTENDANCE_SHEET); if (!sheet) return {records:[],summary:{}};
   var data = sheet.getDataRange().getValues(); var records = [], summary = {};
@@ -369,12 +657,12 @@ function getAttendanceForDate(dateStr, group) {
   }
   return {records:records,summary:summary};
 }
- 
+
 function getAllMemberNames() {
   var ss=getSpreadsheet_(),all=readAllMembers_(ss),names=[];
   for(var i=0;i<all.length;i++) names.push(all[i].name); names.sort(); return names;
 }
- 
+
 function getMemberHistory(memberName) {
   var ss=getSpreadsheet_(),sheet=ss.getSheetByName(ATTENDANCE_SHEET);
   // Look up the member's profile photo and basic info
@@ -394,21 +682,28 @@ function getMemberHistory(memberName) {
   for(var g in stats){ var s=stats[g]; var att=(s["Present"]||0)+(s["Late Excused"]||0)+(s["Late Unexcused"]||0); s.attendanceRate=s.total>0?Math.round((att/s.total)*100):0; }
   return {records:records,stats:stats,profilePhoto:profilePhoto,groups:memberGroups,name:memberName};
 }
- 
+
 function batchUpdateAttendance(updates) {
   var ss=getSpreadsheet_(),sheet=ss.getSheetByName(ATTENDANCE_SHEET); if(!sheet)throw new Error("Attendance sheet not found.");
+  // Scope: editing history requires admin or sectionAdmin; sectionAdmin only their section's rows
+  var access = requireManagement_();
   var user=Session.getActiveUser().getEmail()||"Unknown",now=new Date(),changed=0;
-  for(var i=0;i<updates.length;i++){var row=updates[i].rowIndex;if(row<2||row>sheet.getLastRow())continue;sheet.getRange(row,5).setValue(updates[i].newStatus);sheet.getRange(row,6).setValue(user);sheet.getRange(row,7).setValue(now);changed++;}
+  for(var i=0;i<updates.length;i++){var row=updates[i].rowIndex;if(row<2||row>sheet.getLastRow())continue;
+    if(access.level < ROLE_LEVELS.admin){
+      var rowGroup = sheet.getRange(row,3).getValue().toString();
+      if(access.allowedSections.indexOf(rowGroup) === -1) continue; // silently skip out-of-scope rows
+    }
+    sheet.getRange(row,5).setValue(updates[i].newStatus);sheet.getRange(row,6).setValue(user);sheet.getRange(row,7).setValue(now);changed++;}
   if(changed>0)refreshAllRegisters_(ss);
   try { syncConsecutiveAuOffenses_(ss); } catch(e) {}
   return{success:true,changed:changed};
 }
- 
+
 // -------------------------------------------------------
 //  PROBATION
 // -------------------------------------------------------
 var PROBATION_SESSIONS = 10; // Number of sessions for probation evaluation
- 
+
 function getProbationReport(group) {
   var ss=getSpreadsheet_(),all=readAllMembers_(ss),prob=[];
   for(var i=0;i<all.length;i++){var m=all[i];if(!m.probation||!m.active||!m.probationStart)continue;
@@ -417,13 +712,17 @@ function getProbationReport(group) {
   if(prob.length===0)return[];var att=readAllAttendance_(ss);
   return prob.map(function(m){return calculateProbationStats_(m,att);});
 }
- 
+
 function getProbationDashboard() {
-  var ss=getSpreadsheet_(),all=readAllMembers_(ss),prob=all.filter(function(m){return m.probation&&m.active&&m.probationStart;});
+  var ss=getSpreadsheet_(),all=readAllMembers_(ss);
+  var access = getAccess_(ss);
+  if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
+  var inScope = scopeMemberPredicate_(access, ss);
+  var prob=all.filter(function(m){return m.probation&&m.active&&m.probationStart&&inScope(m);});
   if(prob.length===0)return[];var att=readAllAttendance_(ss);
   return prob.map(function(m){var s=calculateProbationStats_(m,att);s.groups=m.groups.filter(function(g){return GROUPS.indexOf(g)!==-1;});s.profilePhoto=driveAvatarDataUri_(m.profilePhotoRaw);return s;});
 }
- 
+
 /**
  * Calculates probation stats for a member.
  * Counts sessions where the member was personally recorded (per-group-per-day).
@@ -434,7 +733,7 @@ function calculateProbationStats_(member, attData) {
   var start = member.probationStart;
   var mgs = member.groups.filter(function(g) { return GROUPS.indexOf(g) !== -1; });
   var ATTENDED_STATUSES = ["Present", "Late Excused", "Late Unexcused"];
- 
+
   // Get this member's records since probation start
   var memberRecs = [];
   for (var i = 0; i < attData.length; i++) {
@@ -442,7 +741,7 @@ function calculateProbationStats_(member, attData) {
     if (r.name !== member.name || r.date < start || mgs.indexOf(r.group) === -1) continue;
     memberRecs.push(r);
   }
- 
+
   // Group by (date + session) → each unique pair is one session
   // For joint ("All") sessions, multiple group records collapse into one session
   // For separate sessions, each group is its own session
@@ -460,15 +759,15 @@ function calculateProbationStats_(member, attData) {
       if (newAttended && !existAttended) sessionMap[key].status = rec.status;
     }
   }
- 
+
   // Sort sessions by date
   var sessionKeys = Object.keys(sessionMap).sort(function(a, b) {
     return sessionMap[a].date.localeCompare(sessionMap[b].date);
   });
- 
+
   var totalSessions = sessionKeys.length;
   var sessionsToCount = Math.min(totalSessions, PROBATION_SESSIONS);
- 
+
   // Count attended in the first PROBATION_SESSIONS sessions
   var attended = 0;
   var lastSessionDate = "";
@@ -477,10 +776,10 @@ function calculateProbationStats_(member, attData) {
     if (ATTENDED_STATUSES.indexOf(sess.status) !== -1) attended++;
     lastSessionDate = sess.date;
   }
- 
+
   var rate = sessionsToCount > 0 ? Math.round((attended / sessionsToCount) * 100) : 0;
   var required = Math.ceil(PROBATION_SESSIONS * PROBATION_THRESHOLD);
- 
+
   // Per-session status sequence (for the segmented probation bar). One entry per
   // counted session in chronological order, plus empty slots up to PROBATION_SESSIONS
   // so the bar shows the full probation period filling up.
@@ -490,7 +789,7 @@ function calculateProbationStats_(member, attData) {
     sessionSequence.push({ date: sq.date, status: sq.status });
   }
   var pendingSlots = Math.max(0, PROBATION_SESSIONS - sessionSequence.length);
- 
+
   return {
     name: member.name,
     probationStart: start,
@@ -509,7 +808,7 @@ function calculateProbationStats_(member, attData) {
     pendingSlots: pendingSlots
   };
 }
- 
+
 /**
  * Auto-evaluates probation members after attendance is saved.
  * If a member has reached PROBATION_SESSIONS, sets Passed/Failed and updates sheet.
@@ -520,7 +819,7 @@ function evaluateProbation_(ss) {
   var attData = readAllAttendance_(ss);
   var sheet = ss.getSheetByName(MEMBERS_SHEET);
   if (!sheet) return [];
- 
+
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
     .map(function(x) { return x.toString().trim().toLowerCase(); });
   var probIdx = headers.indexOf("probation");
@@ -528,29 +827,29 @@ function evaluateProbation_(ss) {
   var statusIdx = headers.indexOf("status");
   var penaltyIdx = headers.indexOf("probation penalty");
   var ackedIdx = headers.indexOf("probation acknowledged");
- 
+
   if (probIdx === -1) return [];
- 
+
   // Auto-add missing columns
   var lastCol = sheet.getLastColumn();
   if (probEndIdx === -1) { lastCol++; sheet.getRange(1, lastCol).setValue("Probation End").setFontWeight("bold"); probEndIdx = lastCol - 1; }
   if (penaltyIdx === -1) { lastCol++; sheet.getRange(1, lastCol).setValue("Probation Penalty").setFontWeight("bold"); penaltyIdx = lastCol - 1; }
   if (ackedIdx === -1) { lastCol++; sheet.getRange(1, lastCol).setValue("Probation Acknowledged").setFontWeight("bold"); ackedIdx = lastCol - 1; }
- 
+
   var required = Math.ceil(PROBATION_SESSIONS * PROBATION_THRESHOLD);
   var minRequired = Math.ceil(PROBATION_SESSIONS * PROBATION_CONDITIONAL);
   var results = [];
- 
+
   for (var i = 0; i < allMembers.length; i++) {
     var m = allMembers[i];
     if (!m.probation || !m.active || !m.probationStart) continue;
- 
+
     var stats = calculateProbationStats_(m, attData);
     if (!stats.complete) continue;
- 
+
     var row = m.rowIndex;
     var outcome, penalty = 0;
- 
+
     if (stats.attended >= required) {
       // Clean pass: ≥80%
       outcome = "passed_clean";
@@ -572,17 +871,17 @@ function evaluateProbation_(ss) {
       sheet.getRange(row, penaltyIdx + 1).setValue(0);
       if (statusIdx !== -1) sheet.getRange(row, statusIdx + 1).setValue("Inactive");
     }
- 
+
     // Reset acknowledged flag for new outcome
     sheet.getRange(row, ackedIdx + 1).setValue("");
- 
+
     // Send email notification
     try {
       sendProbationEmail_(m, stats, outcome, penalty);
     } catch(e) {
       // Don't fail the whole evaluation if email fails
     }
- 
+
     results.push({
       name: m.name,
       email: m.email,
@@ -594,21 +893,21 @@ function evaluateProbation_(ss) {
       penalty: penalty
     });
   }
- 
+
   return results;
 }
- 
+
 /**
  * Sends probation outcome email.
  */
 function sendProbationEmail_(member, stats, outcome, penalty) {
   if (!member.email) return;
- 
+
   var subject;
   var required = Math.ceil(PROBATION_SESSIONS * PROBATION_THRESHOLD);
   var webAppUrl = APP_URL || ScriptApp.getService().getUrl();
   var firstName = member.name.split(/\s+/)[0] || member.name;
- 
+
   var templateName, tokens = {
     firstName: firstName,
     attendanceRate: stats.rate,
@@ -616,7 +915,7 @@ function sendProbationEmail_(member, stats, outcome, penalty) {
     totalSessions: stats.maxSessions,
     appUrl: webAppUrl
   };
- 
+
   if (outcome === "passed_clean") {
     subject = "Congratulations — You've Passed Probation!";
     templateName = "probation-pass";
@@ -628,14 +927,14 @@ function sendProbationEmail_(member, stats, outcome, penalty) {
     subject = "Probation Outcome — Strathmore Chorale";
     templateName = "probation-failed";
   }
- 
+
   var bodyHtml;
   try {
     bodyHtml = renderEmailTemplate_(templateName, tokens);
   } catch(e) {
     bodyHtml = "<p>Your probation has been evaluated. Please check the Chorale attendance system for details.</p>";
   }
- 
+
   MailApp.sendEmail({
     to: member.email,
     cc: EMAIL_CC,
@@ -644,7 +943,7 @@ function sendProbationEmail_(member, stats, outcome, penalty) {
     name: EMAIL_FROM_NAME
   });
 }
- 
+
 /**
  * Manual probation evaluation — callable from the UI.
  */
@@ -654,7 +953,7 @@ function evaluateProbationManual() {
   if (results.length === 0) return { evaluated: 0, results: [], message: "No probation members have reached " + PROBATION_SESSIONS + " sessions yet." };
   return { evaluated: results.length, results: results, message: results.length + " member(s) evaluated." };
 }
- 
+
 function readAllAttendance_(ss) {
   var sheet=ss.getSheetByName(ATTENDANCE_SHEET);if(!sheet)return[];var data=sheet.getDataRange().getValues(),records=[];
   for(var i=1;i<data.length;i++){
@@ -663,11 +962,11 @@ function readAllAttendance_(ss) {
   }
   return records;
 }
- 
+
 // -------------------------------------------------------
 //  SCOREBOARD
 // -------------------------------------------------------
- 
+
 /**
  * Calculates scoreboard for all active members.
  * Points: attendance points + consecutive absence penalties + offense penalties.
@@ -678,27 +977,27 @@ function getScoreboard(group) {
   var allMembers = readAllMembers_(ss);
   var attData = readAllAttendance_(ss);
   var offenses = readOffenses_(ss);
- 
+
   var STATUS_PRIORITY = ["Present", "Late Excused", "Late Unexcused", "Absent Excused", "Absent Unexcused"];
- 
+
   var results = [];
- 
+
   for (var i = 0; i < allMembers.length; i++) {
     var m = allMembers[i];
     if (!m.active) continue;
     // Exclude active probation members
     if (m.probation) continue;
- 
+
     var mgs = group === "All" ? m.groups.filter(function(g){return GROUPS.indexOf(g)!==-1;}) : m.groups.indexOf(group)!==-1 ? [group] : [];
     if (mgs.length === 0) continue;
- 
+
     // Determine scoring start date
     // For passed probation members, only count from probation end date
     var scoreStartDate = "";
     if (m.probationPassed && m.probationEnd) {
       scoreStartDate = m.probationEnd;
     }
- 
+
     // Get this member's attendance records for relevant groups
     var memberAtt = [];
     for (var j = 0; j < attData.length; j++) {
@@ -707,7 +1006,7 @@ function getScoreboard(group) {
       if (scoreStartDate && r.date < scoreStartDate) continue;
       memberAtt.push(r);
     }
- 
+
     // Group by (date + session), pick BEST status per session
     // Joint ("All"): multiple group records per session → best status wins, scored once
     // Separate: each group is its own session → scored independently
@@ -726,10 +1025,10 @@ function getScoreboard(group) {
         if (newIdx < existIdx) sessionMap[sessKey] = rec.status;
       }
     }
- 
+
     var sessKeys = Object.keys(sessionMap).sort();
     var dayStatuses = sessKeys.map(function(k) { return { key: k, status: sessionMap[k] }; });
- 
+
     // Calculate attendance points
     var attPoints = 0;
     var statusCounts = {};
@@ -739,12 +1038,12 @@ function getScoreboard(group) {
       if (pts !== undefined) attPoints += pts;
       statusCounts[st] = (statusCounts[st] || 0) + 1;
     }
- 
+
     // Consecutive-AU penalty is no longer deducted inline here — it is now recorded
     // as an OFFENSE (see syncConsecutiveAuOffenses_) and flows in via offensePts below.
     // Kept as 0 for backward compatibility with export/display columns.
     var consecPenalty = 0;
- 
+
     // Offense penalty — each offense carries its own points (consecutive-AU offenses
     // score at CONSECUTIVE_ABSENCE_PENALTY; manual offenses at OFFENSE_PENALTY).
     var memberOffenses = offenses.filter(function(o) { return o.name === m.name; });
@@ -752,12 +1051,12 @@ function getScoreboard(group) {
     for (var oi = 0; oi < memberOffenses.length; oi++) {
       offensePts += (memberOffenses[oi].points !== undefined ? memberOffenses[oi].points : OFFENSE_PENALTY);
     }
- 
+
     // Probation penalty (for conditional pass members)
     var probPenalty = m.probationPenalty || 0;
- 
+
     var totalPoints = attPoints + consecPenalty + offensePts + probPenalty;
- 
+
     results.push({
       name: m.name,
       groups: mgs,
@@ -772,12 +1071,12 @@ function getScoreboard(group) {
       profilePhoto: driveAvatarDataUri_(m.profilePhotoRaw)
     });
   }
- 
+
   results.sort(function(a, b) {
     if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
     return a.name.localeCompare(b.name);
   });
- 
+
   // Add both ranking modes
   for (var ri = 0; ri < results.length; ri++) {
     // Dense: 1,2,2,3 (no gaps, next distinct score gets next number)
@@ -797,14 +1096,14 @@ function getScoreboard(group) {
       results[ri].compRank = ri + 1;
     }
   }
- 
+
   return results;
 }
- 
+
 // -------------------------------------------------------
 //  OFFENSES
 // -------------------------------------------------------
- 
+
 function readOffenses_(ss) {
   var sheet = ss.getSheetByName(OFFENSES_SHEET);
   if (!sheet) return [];
@@ -830,7 +1129,7 @@ function readOffenses_(ss) {
   }
   return offenses;
 }
- 
+
 /** Ensures the Offenses sheet exists and has a Points column; returns the sheet. */
 function ensureOffensesSheet_(ss) {
   var sheet = ss.getSheetByName(OFFENSES_SHEET);
@@ -856,7 +1155,7 @@ function ensureOffensesSheet_(ss) {
   }
   return sheet;
 }
- 
+
 /**
  * Adds an offense to the Offenses sheet. Optional points override (defaults to flat penalty).
  */
@@ -873,7 +1172,7 @@ function addOffense(dateStr, memberName, description, points) {
   if (dmap["points"] != null) sheet.getRange(newRow, dmap["points"] + 1).setValue(pts);
   return { success: true };
 }
- 
+
 /**
  * Returns offenses for display.
  */
@@ -881,12 +1180,12 @@ function getOffenseList() {
   var ss = getSpreadsheet_();
   return readOffenses_(ss);
 }
- 
+
 // -------------------------------------------------------
 //  CONSECUTIVE-AU → OFFENSE (Part C.1)
 // -------------------------------------------------------
 var CONSEC_AU_OFFENSE_TAG = "[auto:3AU]"; // marker in the description for idempotency
- 
+
 /**
  * Detects completed, non-overlapping sets of 3 consecutive Absent-Unexcused sessions
  * per member and records each as an OFFENSE (points = CONSECUTIVE_ABSENCE_PENALTY).
@@ -902,7 +1201,7 @@ function syncConsecutiveAuOffenses_(ss) {
   var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
   if (!attSheet) return { added: 0 };
   var data = attSheet.getDataRange().getValues();
- 
+
   // Build per-member chronological best-status-per-date (across all their groups)
   var byMember = {};
   for (var i = 1; i < data.length; i++) {
@@ -912,7 +1211,7 @@ function syncConsecutiveAuOffenses_(ss) {
     if (!byMember[n]) byMember[n] = {};
     byMember[n][ds] = bestStatus_(byMember[n][ds], st);
   }
- 
+
   // Existing auto-offense keys per member (to avoid double-logging)
   var existing = readOffenses_(ss);
   var existingKeys = {}; // name -> { "date": true }
@@ -922,7 +1221,7 @@ function syncConsecutiveAuOffenses_(ss) {
       existingKeys[o.name][o.date] = true; // set-key (3rd-AU date) stored as offense date
     }
   });
- 
+
   var added = 0;
   for (var name in byMember) {
     var dates = Object.keys(byMember[name]).sort(); // chronological
@@ -948,18 +1247,18 @@ function syncConsecutiveAuOffenses_(ss) {
   }
   return { added: added };
 }
- 
+
 /** Public wrapper — admins can run a manual sweep; also called by the daily trigger. */
 function runConsecutiveAuSweep() {
   var r = syncConsecutiveAuOffenses_(getSpreadsheet_());
   return { success: true, added: r.added };
 }
- 
- 
+
+
 // =======================================================
 //  PHASE 4 — SESSIONS TAB + GROUP DASHBOARD (admin-level)
 // =======================================================
- 
+
 /**
  * Resolves a date-range filter keyword or custom range into {start, end} (yyyy-MM-dd).
  * mode: "week" | "month" | "all" | "custom". For custom, pass customStart/customEnd.
@@ -981,7 +1280,7 @@ function resolveDateRange_(mode, customStart, customEnd) {
   }
   return { start: "0000-01-01", end: "9999-12-31" }; // all
 }
- 
+
 /**
  * Returns a list of recorded SESSIONS in a date range, each with summary stats.
  * A session is a (date + sessionKey) pair — sessionKey is the sorted group list
@@ -993,14 +1292,17 @@ function resolveDateRange_(mode, customStart, customEnd) {
 function getSessionsList(filters) {
   filters = filters || {};
   var ss = getSpreadsheet_();
+  var access = getAccess_(ss);
+  if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
+  if (access.level < ROLE_LEVELS.admin) filters.section = access.section; // forced scope
   var range = resolveDateRange_(filters.range, filters.start, filters.end);
   var section = filters.section || "All";
   var typeFilter = filters.type || "all";
- 
+
   var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
   if (!attSheet) return [];
   var data = attSheet.getDataRange().getValues();
- 
+
   // Group rows by (date + session)
   var sessions = {}; // key -> { date, sessionKey, groups{}, counts{}, recorders{} }
   for (var i = 1; i < data.length; i++) {
@@ -1021,7 +1323,7 @@ function getSessionsList(filters) {
     sessions[key].total++;
     if (rb) sessions[key].recorders[rb] = true;
   }
- 
+
   // Determine which sessions were meetings (match against the Meetings sheet)
   var meetingDates = {}; // "date||groupsSorted" -> title
   var mSheet = ss.getSheetByName(MEETINGS_SHEET);
@@ -1033,7 +1335,7 @@ function getSessionsList(filters) {
       meetingDates[mdate + "||" + mgroups] = md[m][3].toString();
     }
   }
- 
+
   var out = [];
   for (var k in sessions) {
     var s = sessions[k];
@@ -1043,7 +1345,7 @@ function getSessionsList(filters) {
     var isMeeting = !!meetingTitle;
     if (typeFilter === "practice" && isMeeting) continue;
     if (typeFilter === "meeting" && !isMeeting) continue;
- 
+
     var attended = (s.counts["Present"]||0) + (s.counts["Late Excused"]||0) + (s.counts["Late Unexcused"]||0);
     out.push({
       date: s.date,
@@ -1062,7 +1364,7 @@ function getSessionsList(filters) {
   out.sort(function(a, b) { return (b.date + b.sessionKey).localeCompare(a.date + a.sessionKey); });
   return out;
 }
- 
+
 /** Counts apologies submitted for a given date whose groups overlap the session. */
 function countApologiesForSession_(ss, dateStr, groups) {
   var sheet = ss.getSheetByName(APOLOGIES_SHEET);
@@ -1072,16 +1374,21 @@ function countApologiesForSession_(ss, dateStr, groups) {
   for (var i = 1; i < data.length; i++) {
     if (isRequestType_(data[i][3])) continue; // requests aren't apologies
     var rowDate = formatSheetDate_(data[i][0]);
-    if (rowDate !== dateStr) continue;
     var status = data[i][8] ? data[i][8].toString() : "";
     if (status === "Rejected" || status === "Revoked") continue;
+    // Single-day: exact date match. Long-term (approved, real end date): session
+    // date falls inside the range.
+    var endDate = data[i][9] ? formatSheetDate_(data[i][9]) : "";
+    var dateMatch = (rowDate === dateStr) ||
+                    (endDate && status === "Approved" && dateStr >= rowDate && dateStr <= endDate);
+    if (!dateMatch) continue;
     var ag = data[i][11] ? data[i][11].toString().split(",").map(function(x){return x.trim();}).filter(Boolean) : [];
-    if (ag.length === 0) { count++; continue; } // legacy / general apology
+    if (ag.length === 0) { count++; continue; } // legacy / general / long-term apology
     if (ag.some(function(g){ return groups.indexOf(g) !== -1; })) count++;
   }
   return count;
 }
- 
+
 /**
  * GROUP DASHBOARD — aggregate stats for a section (or all) over a date range.
  * Returns attendance rate + trend, near-3-AU early warnings, probation summary,
@@ -1092,11 +1399,14 @@ function countApologiesForSession_(ss, dateStr, groups) {
 function getGroupDashboard(opts) {
   opts = opts || {};
   var ss = getSpreadsheet_();
+  var access = getAccess_(ss);
+  if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
   var section = opts.section || "All";
+  if (access.level < ROLE_LEVELS.admin) section = access.section; // forced scope
   var range = resolveDateRange_(opts.range, opts.start, opts.end);
- 
+
   var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
- 
+
   // --- Attendance aggregate + per-date trend ---
   var statusCounts = {}, trend = {}, totalRecords = 0;
   if (attSheet) {
@@ -1123,7 +1433,7 @@ function getGroupDashboard(opts) {
   var overallRate = totalRecords > 0 ? Math.round((attendedTotal / totalRecords) * 100) : 0;
   var absenteeismRate = totalRecords > 0 ? Math.round((absentTotal / totalRecords) * 100) : 0;
   var auRate = totalRecords > 0 ? Math.round(((statusCounts["Absent Unexcused"]||0) / totalRecords) * 100) : 0;
- 
+
   // Trend points enriched for hover tooltips: rate + headcounts per session date
   var trendArr = Object.keys(trend).sort().map(function(d) {
     var t = trend[d];
@@ -1131,7 +1441,7 @@ function getGroupDashboard(opts) {
              attended: t.attended, total: t.total,
              present: t.present, late: t.late, ae: t.ae, au: t.au };
   });
- 
+
   // --- Per-session AVERAGES (headcounts) — "on an average session, N attended" ---
   var sessionsCount = trendArr.length; // one entry per recorded session date
   function avg(x) { return sessionsCount > 0 ? Math.round((x / sessionsCount) * 10) / 10 : 0; }
@@ -1143,7 +1453,7 @@ function getGroupDashboard(opts) {
     absentExcused: avg(statusCounts["Absent Excused"]||0),
     absentUnexcused: avg(statusCounts["Absent Unexcused"]||0)
   };
- 
+
   // --- Momentum: is attendance improving or declining across the range? ---
   // Compare avg rate of the first half of sessions vs the second half.
   var momentum = { firstHalfRate: 0, secondHalfRate: 0, delta: 0, direction: "flat" };
@@ -1157,7 +1467,7 @@ function getGroupDashboard(opts) {
     momentum.delta = sAvg - fAvg;
     momentum.direction = momentum.delta > 2 ? "improving" : (momentum.delta < -2 ? "declining" : "flat");
   }
- 
+
   // --- Apology analytics for the range (real apologies only, never requests) ---
   var apologyStats = { total: 0, absentType: 0, lateType: 0, onTime: 0, lateSubmission: 0,
                        approved: 0, pending: 0, rejected: 0 };
@@ -1183,10 +1493,10 @@ function getGroupDashboard(opts) {
       else if (aStatus === "Rejected" || aStatus === "Revoked") apologyStats.rejected++;
     }
   }
- 
+
   // --- Near 3-consecutive-AU early warning (ACTIVE members only) ---
   var nearAU = getConsecutiveAuWarnings_(ss, section, 2);
- 
+
   // --- Probation summary: CURRENT probation members in this section.
   //     (Probation state history isn't stored, so this is as-of-now, not range-based.)
   var probAll = getProbationDashboard();
@@ -1194,7 +1504,7 @@ function getGroupDashboard(opts) {
     return section === "All" || (p.groups || []).indexOf(section) !== -1;
   });
   var probFallingBehind = probInSection.filter(function(p) { return !p.onTrack; });
- 
+
   return {
     section: section,
     range: range,
@@ -1214,7 +1524,7 @@ function getGroupDashboard(opts) {
     probationOnTrack: probInSection.length - probFallingBehind.length
   };
 }
- 
+
 /**
  * Finds members with N+ consecutive Absent-Unexcused in their most recent sessions
  * (within the chosen section). Early warning before the 3-AU offense fires.
@@ -1225,7 +1535,7 @@ function getConsecutiveAuWarnings_(ss, section, threshold) {
   var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
   if (!attSheet) return [];
   var data = attSheet.getDataRange().getValues();
- 
+
   // Build per-member ordered status history (best-status-wins per date for the section)
   var byMember = {}; // name -> { date -> status }
   for (var i = 1; i < data.length; i++) {
@@ -1239,7 +1549,7 @@ function getConsecutiveAuWarnings_(ss, section, threshold) {
     var prev = byMember[n][ds];
     byMember[n][ds] = bestStatus_(prev, st);
   }
- 
+
   var out = [];
   for (var name in byMember) {
     var dates = Object.keys(byMember[name]).sort(); // chronological
@@ -1267,7 +1577,7 @@ function getConsecutiveAuWarnings_(ss, section, threshold) {
   out.sort(function(a,b){ return b.consecutiveAU - a.consecutiveAU; });
   return out;
 }
- 
+
 /** Returns the "better" of two attendance statuses (P > LE > LU > AE > AU). */
 function bestStatus_(a, b) {
   var rank = { "Present":5, "Late Excused":4, "Late Unexcused":3, "Absent Excused":2, "Absent Unexcused":1 };
@@ -1275,7 +1585,7 @@ function bestStatus_(a, b) {
   if (!b) return a;
   return (rank[a] || 0) >= (rank[b] || 0) ? a : b;
 }
- 
+
 /**
  * Full detail of one session (date + sessionKey) for the Sessions-tab detail/edit view.
  * Returns the member records (editable, with rowIndex), counts, apologies, and meta.
@@ -1287,7 +1597,7 @@ function getSessionDetail(dateStr, sessionKey) {
   var data = attSheet.getDataRange().getValues();
   var records = [], counts = {}, recorders = {};
   var keyGroups = sessionKey.split(",").map(function(x){return x.trim();}).filter(Boolean);
- 
+
   for (var i = 1; i < data.length; i++) {
     var ds = formatSheetDate_(data[i][0]);
     if (ds !== dateStr) continue;
@@ -1303,7 +1613,7 @@ function getSessionDetail(dateStr, sessionKey) {
     if (data[i][5]) recorders[data[i][5].toString()] = true;
   }
   records.sort(function(a,b){ return a.name.localeCompare(b.name); });
- 
+
   // Determine whether this session is a Meeting (match the Meetings sheet), so the
   // detail header can show a title + type badge instead of just the date.
   var isMeeting = false, title = "Practice";
@@ -1319,7 +1629,7 @@ function getSessionDetail(dateStr, sessionKey) {
       }
     }
   }
- 
+
   var attended = (counts["Present"]||0)+(counts["Late Excused"]||0)+(counts["Late Unexcused"]||0);
   return {
     date: dateStr, sessionKey: sessionKey, groups: keyGroups,
@@ -1331,7 +1641,7 @@ function getSessionDetail(dateStr, sessionKey) {
     apologyCount: countApologiesForSession_(ss, dateStr, keyGroups)
   };
 }
- 
+
 /** Export one session as CSV. */
 function exportSessionCSV(dateStr, sessionKey) {
   var detail = getSessionDetail(dateStr, sessionKey);
@@ -1345,7 +1655,7 @@ function exportSessionCSV(dateStr, sessionKey) {
   });
   return arrayToCSV_(rows);
 }
- 
+
 /** Export the sessions list (summary rows) as CSV for a filter range. */
 function exportSessionsListCSV(filters) {
   var list = getSessionsList(filters);
@@ -1356,7 +1666,7 @@ function exportSessionsListCSV(filters) {
   });
   return arrayToCSV_(rows);
 }
- 
+
 // -------------------------------------------------------
 //  EXPORT
 // -------------------------------------------------------
@@ -1364,7 +1674,7 @@ function exportDateCSV(dateStr, group) { return arrayToCSV_(buildExportRows_(dat
 function exportDatePDF(dateStr, group) { return buildPrintHTML_("Attendance Report — " + dateStr, buildExportRows_(dateStr, dateStr, group), group); }
 function exportDateRangeCSV(s, e, group) { return arrayToCSV_(buildExportRows_(s, e, group)); }
 function exportDateRangePDF(s, e, group) { return buildPrintHTML_("Attendance Report — " + s + " to " + e, buildExportRows_(s, e, group), group); }
- 
+
 function buildExportRows_(startDate, endDate, group) {
   var ss=getSpreadsheet_(),all=readAllMembers_(ss),mm={};
   for(var i=0;i<all.length;i++) mm[all[i].name]=all[i];
@@ -1379,7 +1689,7 @@ function buildExportRows_(startDate, endDate, group) {
   }
   return rows;
 }
- 
+
 function exportProbationCSV() {
   var d=getProbationDashboard(),rows=[["Name","Groups","Probation Start","Attended","Total","Rate","On Track"]];
   for(var i=0;i<d.length;i++) rows.push([d[i].name,(d[i].groups||[]).join(", "),d[i].probationStart,d[i].attended,d[i].totalSessions,d[i].rate+"%",d[i].onTrack?"Yes":"No"]);
@@ -1390,7 +1700,7 @@ function exportProbationPDF() {
   for(var i=0;i<d.length;i++) rows.push([d[i].name,(d[i].groups||[]).join(", "),d[i].probationStart,d[i].attended,d[i].totalSessions,d[i].rate+"%",d[i].onTrack?"Yes":"No"]);
   return buildPrintHTML_("Probation Report",rows,"All");
 }
- 
+
 function exportScoreboardCSV(group) {
   var sb=getScoreboard(group),rows=[["Rank","Name","Groups","Total Points","Attendance Pts","Consec. Penalty","Offenses","Offense Pts","Days"]];
   for(var i=0;i<sb.length;i++){var s=sb[i];rows.push([i+1,s.name,s.groups.join(", "),s.totalPoints,s.attPoints,s.consecPenalty,s.offenseCount,s.offensePts,s.totalDays]);}
@@ -1401,7 +1711,7 @@ function exportScoreboardPDF(group) {
   for(var i=0;i<sb.length;i++){var s=sb[i];rows.push([i+1,s.name,s.groups.join(", "),s.totalPoints,s.attPoints,s.consecPenalty,s.offenseCount,s.offensePts,s.totalDays]);}
   return buildPrintHTML_("Scoreboard" + (group!=="All"?" — "+group:""),rows,group);
 }
- 
+
 function buildPrintHTML_(title, rows, group) {
   var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+title+'</title>';
   html += '<style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:24px;color:#1e293b}';
@@ -1422,11 +1732,11 @@ function buildPrintHTML_(title, rows, group) {
   }else html+='<p>No records found.</p>';
   html+='</body></html>';return html;
 }
- 
+
 function arrayToCSV_(rows) {
   return rows.map(function(row){return row.map(function(cell){var s=cell.toString();return(s.indexOf(",")!==-1||s.indexOf('"')!==-1||s.indexOf("\n")!==-1)?'"'+s.replace(/"/g,'""')+'"':s;}).join(",");}).join("\n");
 }
- 
+
 // -------------------------------------------------------
 //  MEMBER MANAGEMENT
 // -------------------------------------------------------
@@ -1439,17 +1749,17 @@ function acknowledgeProbation() {
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) throw new Error("No member found.");
- 
+
   var sheet = ss.getSheetByName(MEMBERS_SHEET);
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
     .map(function(x) { return x.toString().trim().toLowerCase(); });
   var ackedIdx = headers.indexOf("probation acknowledged");
   if (ackedIdx === -1) return { success: false };
- 
+
   sheet.getRange(member.rowIndex, ackedIdx + 1).setValue("Yes");
   return { success: true };
 }
- 
+
 /**
  * Failed member requests to restart probation.
  */
@@ -1460,14 +1770,14 @@ function requestProbationRestart(reason) {
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) throw new Error("No member found.");
   if (!member.probationFailed) throw new Error("You are not in a failed probation state.");
- 
+
   // Store restart request in Apologies sheet as a special type
   var sheet = ensureApologiesSheet_(ss);
   var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
   sheet.appendRow([todayStr_(), member.name, email, "Restart Probation", reason, now, "", "N/A", "Pending", "", ""]);
   return { success: true };
 }
- 
+
 /**
  * Admin approves a probation restart request.
  * Resets the member's probation to active with today as start date.
@@ -1480,18 +1790,18 @@ function approveProbationRestart(memberName) {
     if (allMembers[i].name === memberName) { member = allMembers[i]; break; }
   }
   if (!member) throw new Error("Member not found.");
- 
+
   var sheet = ss.getSheetByName(MEMBERS_SHEET);
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
     .map(function(x) { return x.toString().trim().toLowerCase(); });
- 
+
   var probIdx = headers.indexOf("probation");
   var probStartIdx = headers.indexOf("probation start");
   var probEndIdx = headers.indexOf("probation end");
   var penaltyIdx = headers.indexOf("probation penalty");
   var ackedIdx = headers.indexOf("probation acknowledged");
   var statusIdx = headers.indexOf("status");
- 
+
   var row = member.rowIndex;
   if (probIdx !== -1) sheet.getRange(row, probIdx + 1).setValue("Yes");
   if (probStartIdx !== -1) sheet.getRange(row, probStartIdx + 1).setValue(todayStr_());
@@ -1499,27 +1809,33 @@ function approveProbationRestart(memberName) {
   if (penaltyIdx !== -1) sheet.getRange(row, penaltyIdx + 1).setValue("");
   if (ackedIdx !== -1) sheet.getRange(row, ackedIdx + 1).setValue("");
   if (statusIdx !== -1) sheet.getRange(row, statusIdx + 1).setValue("Active");
- 
+
   return { success: true, name: memberName };
 }
- 
+
 // -------------------------------------------------------
 //  MEMBER MANAGEMENT
 // -------------------------------------------------------
 function getMemberList() {
   var ss=getSpreadsheet_(),all=readAllMembers_(ss);
+  // Scope: members tab shows only the caller's scope (section / rep-group)
+  var access = getAccess_(ss);
+  if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
+  var inScope = scopeMemberPredicate_(access, ss);
+  all = all.filter(inScope);
   all.sort(function(a,b){return a.name.localeCompare(b.name);});
   return all.map(function(m){return{name:m.name,email:m.email,phone:m.phone,admNo:m.admNo,groups:m.groups,roles:m.roles,active:m.active,
     probation:m.probation,probationPassed:m.probationPassed,probationFailed:m.probationFailed,probationStart:m.probationStart,probationEnd:m.probationEnd,
     profilePhoto:driveAvatarDataUri_(m.profilePhotoRaw)};});
 }
- 
+
 /**
  * ADMIN — fetch a member's full editable data (Members + Member Details) for the
  * admin Edit Profile form. Keyed by current name. Returns operational fields plus
  * a `details` object with the extended Member Details fields.
  */
 function getMemberForEdit(memberName) {
+  requireFullAdmin_();
   var ss = getSpreadsheet_();
   var all = readAllMembers_(ss);
   var member = null;
@@ -1527,7 +1843,7 @@ function getMemberForEdit(memberName) {
     if (all[i].name === memberName) { member = all[i]; break; }
   }
   if (!member) throw new Error("Member not found: " + memberName);
- 
+
   // Extended details from Member Details sheet
   var details = {};
   var detailSheet = ss.getSheetByName(MEMBER_DETAILS_SHEET);
@@ -1563,7 +1879,7 @@ function getMemberForEdit(memberName) {
       }
     }
   }
- 
+
   return {
     name: member.name, email: member.email, phone: member.phone,
     admNo: member.admNo, groups: member.groups, roles: member.roles,
@@ -1575,7 +1891,7 @@ function getMemberForEdit(memberName) {
     details: details
   };
 }
- 
+
 /**
  * ADMIN — save edits to a member's profile. Handles BOTH the Members sheet
  * (operational) and the Member Details sheet (extended, behind the toggle).
@@ -1590,16 +1906,17 @@ function getMemberForEdit(memberName) {
  * }
  */
 function adminUpdateMember(p) {
+  requireFullAdmin_();
   if (!p || !p.originalName) throw new Error("Missing member reference.");
   var ss = getSpreadsheet_();
   var membersSheet = ss.getSheetByName(MEMBERS_SHEET);
   if (!membersSheet) throw new Error("Members sheet not found.");
- 
+
   var mData = membersSheet.getDataRange().getValues();
   var h = mData[0].map(function(x){ return x.toString().trim().toLowerCase(); });
   var col = function(name){ return h.indexOf(name); };
   var nameIdx = col("name");
- 
+
   // Locate the member row by original name
   var rowIdx = -1;
   for (var i = 1; i < mData.length; i++) {
@@ -1607,7 +1924,7 @@ function adminUpdateMember(p) {
   }
   if (rowIdx === -1) throw new Error("Member not found: " + p.originalName);
   var sheetRow = rowIdx + 1;
- 
+
   // Helper: set a Members cell by header if the column exists and value provided
   function setM(headerName, value) {
     var c = col(headerName);
@@ -1615,7 +1932,7 @@ function adminUpdateMember(p) {
       membersSheet.getRange(sheetRow, c + 1).setValue(value);
     }
   }
- 
+
   // Operational fields (name handled separately via cascade)
   if (p.email !== undefined)  setM("email", p.email);
   if (p.phone !== undefined)  setM("phone", p.phone);
@@ -1624,7 +1941,7 @@ function adminUpdateMember(p) {
   if (p.choirPart !== undefined)      setM("choir part", p.choirPart);
   if (p.bandRole !== undefined)       setM("band role", p.bandRole);
   if (p.orchestraRole !== undefined)  setM("orchestra role", p.orchestraRole);
- 
+
   // Extended details (Member Details sheet) — only if a details block was sent
   if (p.details) {
     var d = p.details;
@@ -1665,18 +1982,18 @@ function adminUpdateMember(p) {
     setD("Year of Study", d.yearOfStudy);
     if (d.memberStatus !== undefined) setD("Member Status", d.memberStatus);
   }
- 
+
   // Name change LAST — cascade across all sheets (identity key). Do this after the
   // detail edits so the detail-row lookup above still matched the old name.
   var renamed = null;
   if (p.name !== undefined && p.name.trim() && p.name.trim() !== p.originalName.trim()) {
     renamed = cascadeMemberRename_(ss, p.originalName.trim(), p.name.trim());
   }
- 
+
   refreshAllRegisters_(ss);
   return { success: true, name: (p.name || p.originalName).trim(), renamed: renamed };
 }
- 
+
 function addMember(member) {
   var ss=getSpreadsheet_(),sheet=ss.getSheetByName(MEMBERS_SHEET);if(!sheet)throw new Error("Sheet '"+MEMBERS_SHEET+"' not found.");
   var data=sheet.getDataRange().getValues(),h=data[0].map(function(x){return x.toString().trim().toLowerCase();});
@@ -1702,15 +2019,15 @@ function addMember(member) {
   sheet.appendRow(row);
   return{success:true,name:member.name.trim()};
 }
- 
+
 function todayStr_(){return Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"yyyy-MM-dd");}
- 
+
 // -------------------------------------------------------
 //  ONBOARDING (Phase 1 - New Member Pipeline)
 // -------------------------------------------------------
- 
+
 var COURSE_FACULTIES = ["SCES", "SIMS", "SBS", "SHSS", "SLS", "STH", "SI", "Other"];
- 
+
 /**
  * Ensures the Member Details sheet exists with proper headers.
  */
@@ -1744,7 +2061,7 @@ function ensureMemberDetailsSheet_(ss) {
   ensureCol("Year of Study");
   return sheet;
 }
- 
+
 /**
  * Returns a map of header-name (lowercase) -> column index (0-based) for a sheet.
  * Lets us read/write by column name instead of fragile numeric positions.
@@ -1757,7 +2074,7 @@ function headerIndexMap_(sheet) {
   }
   return map;
 }
- 
+
 /**
  * Sends a welcome email to a new member with onboarding instructions.
  * Called after addMember when the invite checkbox is checked.
@@ -1767,9 +2084,9 @@ function headerIndexMap_(sheet) {
  */
 function sendWelcomeEmail(name, email, groups) {
   if (!email) throw new Error("No email provided for " + name);
- 
+
   var webAppUrl = APP_URL || ScriptApp.getService().getUrl();
- 
+
   try {
     var htmlBody = renderEmailTemplate_("welcome-invite", {
       memberName: name,
@@ -1778,7 +2095,7 @@ function sendWelcomeEmail(name, email, groups) {
       probationSessions: PROBATION_SESSIONS,
       threshold: Math.round(PROBATION_THRESHOLD * 100)
     });
- 
+
     MailApp.sendEmail({
       to: email,
       cc: EMAIL_CC,
@@ -1786,13 +2103,13 @@ function sendWelcomeEmail(name, email, groups) {
       htmlBody: htmlBody,
       name: EMAIL_FROM_NAME
     });
- 
+
     return { success: true };
   } catch(e) {
     throw new Error("Failed to send welcome email: " + e.message);
   }
 }
- 
+
 /**
  * Returns the onboarding status for the logged-in member.
  */
@@ -1800,14 +2117,14 @@ function getOnboardingStatus() {
   var ss = getSpreadsheet_();
   var email = Session.getActiveUser().getEmail();
   if (!email) return { completed: true }; // Fail safe
- 
+
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) return { completed: true };
- 
+
   // Check if onboarding exists in Member Details
   var sheet = ss.getSheetByName(MEMBER_DETAILS_SHEET);
   if (!sheet) return { completed: false, name: member.name, email: member.email, groups: member.groups };
- 
+
   var data = sheet.getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
     var rEmail = data[i][1].toString().trim().toLowerCase();
@@ -1819,10 +2136,10 @@ function getOnboardingStatus() {
       return { completed: completed, name: member.name, email: member.email, groups: member.groups };
     }
   }
- 
+
   return { completed: false, name: member.name, email: member.email, groups: member.groups };
 }
- 
+
 /**
  * Returns previously-saved onboarding data for the logged-in member, for pre-filling
  * a resumed onboarding form. Empty fields come back as "" so the UI can flag them.
@@ -1834,7 +2151,7 @@ function getOnboardingData() {
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) throw new Error("No member found.");
- 
+
   var empty = {
     name: member.name, email: member.email, groups: member.groups,
     admissionNumber: member.admNo || "", courseFaculty: "", courseName: "",
@@ -1847,11 +2164,11 @@ function getOnboardingData() {
     gender: "", yearOfStudy: "",
     photoUrl: "", photoDataUri: "", hasExistingRow: false
   };
- 
+
   var sheet = ss.getSheetByName(MEMBER_DETAILS_SHEET);
   if (!sheet) return empty;
   var dmap = headerIndexMap_(sheet);
- 
+
   var data = sheet.getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
     var rowEmail = data[i][1].toString().trim().toLowerCase();
@@ -1878,7 +2195,7 @@ function getOnboardingData() {
         if (member.groups.indexOf("Band") !== -1) bandRole = instruments;
         else if (member.groups.indexOf("Orchestra") !== -1) orchRole = instruments;
       }
- 
+
       var genderIdx = dmap["gender"];
       var yearIdx = dmap["year of study"];
       var photoUrl = r[17].toString();
@@ -1905,10 +2222,10 @@ function getOnboardingData() {
       };
     }
   }
- 
+
   return empty;
 }
- 
+
 /**
  * Formats a DOB cell value (Date object or string) into YYYY-MM-DD
  * so an <input type="date"> can pre-fill it.
@@ -1935,7 +2252,7 @@ function formatDobForInput_(v) {
   if (!isNaN(p)) return Utilities.formatDate(p, Session.getScriptTimeZone(), "yyyy-MM-dd");
   return "";
 }
- 
+
 /**
  * Reads dropdown lists from the Config sheet — the single source of truth.
  * Config sheet layout (column per list, header in row 1):
@@ -1953,19 +2270,19 @@ function getConfigLists() {
     orchestraRoles: ["Violin", "Viola", "Cello", "Double Bass", "Flute"],
     faculties: ["SCES", "SIMS", "SBS", "SHSS", "SLS", "STH", "SI", "Other"]
   };
- 
+
   var sheet = ss.getSheetByName(CONFIG_SHEET);
   if (!sheet) return defaults;
- 
+
   var data = sheet.getDataRange().getValues();
   if (data.length < 2) return defaults;
- 
+
   var headers = data[0].map(function(x) { return x.toString().trim().toLowerCase(); });
   var ci = headers.indexOf("choir parts");
   var bi = headers.indexOf("band roles");
   var oi = headers.indexOf("orchestra roles");
   var fi = headers.indexOf("faculties");
- 
+
   function colValues(idx) {
     if (idx === -1) return null;
     var vals = [];
@@ -1975,7 +2292,7 @@ function getConfigLists() {
     }
     return vals.length > 0 ? vals : null;
   }
- 
+
   return {
     choirParts: colValues(ci) || defaults.choirParts,
     bandRoles: colValues(bi) || defaults.bandRoles,
@@ -1983,14 +2300,14 @@ function getConfigLists() {
     faculties: colValues(fi) || defaults.faculties
   };
 }
- 
+
 /**
  * Returns course faculties list (kept for backwards compatibility).
  */
 function getCourseFaculties() {
   return getConfigLists().faculties;
 }
- 
+
 /**
  * Member submits their onboarding details.
  * Saves to Member Details sheet and updates relevant fields in Members sheet.
@@ -2001,7 +2318,7 @@ function submitOnboarding(data) {
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) throw new Error("No member found for " + email);
- 
+
   var d = {
     nationality: data.nationality || "",
     residence: data.residence || "",
@@ -2022,10 +2339,10 @@ function submitOnboarding(data) {
     bandRole: data.bandRole || "",
     orchestraRole: data.orchestraRole || ""
   };
- 
+
   var detailSheet = ensureMemberDetailsSheet_(ss);
   var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
- 
+
   // Pull existing values from Members sheet (admin-entered) to store in details
   var membersSheet = ss.getSheetByName(MEMBERS_SHEET);
   var mHeaders = membersSheet.getRange(1, 1, 1, membersSheet.getLastColumn()).getValues()[0]
@@ -2034,14 +2351,14 @@ function submitOnboarding(data) {
   var existingChoir = member.roles && member.roles["Choir"] ? member.roles["Choir"] : "";
   var existingBand = member.roles && member.roles["Band"] ? member.roles["Band"] : "";
   var existingOrch = member.roles && member.roles["Orchestra"] ? member.roles["Orchestra"] : "";
- 
+
   // Use member-provided value if given, else fall back to admin-entered
   var finalAdm = d.admissionNumber || existingAdm;
   var finalChoir = d.choirPart || existingChoir;
   var finalBand = d.bandRole || existingBand;
   var finalOrch = d.orchestraRole || existingOrch;
   var instrumentsCombined = [finalBand, finalOrch].filter(Boolean).join(" / ");
- 
+
   // Check if row already exists for this member
   var detailData = detailSheet.getDataRange().getValues();
   var existingRow = -1;
@@ -2057,10 +2374,10 @@ function submitOnboarding(data) {
       break;
     }
   }
- 
+
   // Preserve existing photo if no new one was uploaded
   var finalPhotoUrl = d.photoUrl || existingPhotoUrl;
- 
+
   // If updating an existing row, preserve any previously-saved value when the
   // incoming field is blank (so a partial re-submit doesn't wipe saved data).
   var prev = existingRow > 0 ? detailData[existingRow - 1] : null;
@@ -2068,7 +2385,7 @@ function submitOnboarding(data) {
     if (incoming !== "" && incoming != null) return incoming;
     return prev ? prev[prevIdx].toString() : "";
   }
- 
+
   // Preserve any existing Member Status value (don't blank it on re-submit)
   var existingStatus = "Active";
   if (existingRow > 0) {
@@ -2080,7 +2397,7 @@ function submitOnboarding(data) {
       if (sv) existingStatus = sv;
     }
   }
- 
+
   var row = [
     member.name, email,
     keep(finalAdm, 2), keep(data.courseFaculty || "", 3), keep(data.courseName || "", 4),
@@ -2090,7 +2407,7 @@ function submitOnboarding(data) {
     keep(d.passportNumber, 15), keep(d.nationalIdNumber, 16),
     finalPhotoUrl, "Yes", now
   ];
- 
+
   if (existingRow > 0) {
     // Update only the first 20 columns (preserve Member Status / Gender / Year by header below)
     detailSheet.getRange(existingRow, 1, 1, 20).setValues([row]);
@@ -2098,7 +2415,7 @@ function submitOnboarding(data) {
     detailSheet.appendRow(row);
     existingRow = detailSheet.getLastRow();
   }
- 
+
   // Write Gender and Year of Study by header name (position-independent).
   // Preserve existing value when the incoming field is blank.
   var dmap = headerIndexMap_(detailSheet);
@@ -2111,7 +2428,7 @@ function submitOnboarding(data) {
   }
   writeByHeader("Gender", d.gender, prev);
   writeByHeader("Year of Study", d.yearOfStudy, prev);
- 
+
   // Update Members sheet operational fields
   if (membersSheet) {
     var mRow = member.rowIndex;
@@ -2120,14 +2437,14 @@ function submitOnboarding(data) {
     var cpIdx = mHeaders.indexOf("choir part");
     var brIdx = mHeaders.indexOf("band role");
     var orIdx = mHeaders.indexOf("orchestra role");
- 
+
     if (phoneIdx !== -1 && d.phoneNumber) membersSheet.getRange(mRow, phoneIdx + 1).setValue(d.phoneNumber);
     if (admIdx !== -1 && finalAdm) membersSheet.getRange(mRow, admIdx + 1).setValue(finalAdm);
     if (cpIdx !== -1 && finalChoir) membersSheet.getRange(mRow, cpIdx + 1).setValue(finalChoir);
     if (brIdx !== -1 && finalBand) membersSheet.getRange(mRow, brIdx + 1).setValue(finalBand);
     if (orIdx !== -1 && finalOrch) membersSheet.getRange(mRow, orIdx + 1).setValue(finalOrch);
   }
- 
+
   // Send notification to admin
   try {
     d.groups = member.groups.join(", ");
@@ -2137,10 +2454,10 @@ function submitOnboarding(data) {
     d.courseName = data.courseName || "";
     sendOnboardingNotification_(member.name, email, d);
   } catch(e) {}
- 
+
   return { success: true, name: member.name };
 }
- 
+
 /**
  * Uploads a passport photo to Google Drive.
  * @param {string} base64Data — base64-encoded file content
@@ -2154,23 +2471,23 @@ function uploadPassportPhoto(base64Data, fileName, mimeType) {
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) throw new Error("No member found.");
- 
+
   var folder;
   try {
     folder = DriveApp.getFolderById(PHOTO_FOLDER_ID);
   } catch(e) {
     throw new Error("Photo folder not found. Contact admin to set up the PHOTO_FOLDER_ID.");
   }
- 
+
   // Decode base64
   var decoded = Utilities.base64Decode(base64Data);
   var ext = (fileName && fileName.indexOf(".") !== -1) ? fileName.split(".").pop() : "jpg";
   var blob = Utilities.newBlob(decoded, mimeType || "image/jpeg", "Passport_" + member.name.replace(/[^a-zA-Z0-9]/g, "_") + "." + ext);
- 
+
   // Check for existing file and remove
   var existing = folder.getFilesByName(blob.getName());
   while (existing.hasNext()) { existing.next().setTrashed(true); }
- 
+
   // Save new file
   var file = folder.createFile(blob);
   try {
@@ -2181,10 +2498,10 @@ function uploadPassportPhoto(base64Data, fileName, mimeType) {
   var fileId = file.getId();
   // Use direct-content URL so the image renders in <img> tags
   var url = "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w400";
- 
+
   return { success: true, url: url };
 }
- 
+
 /**
  * Sends admin notification that a member completed onboarding.
  */
@@ -2192,7 +2509,7 @@ function sendOnboardingNotification_(name, email, data) {
   var subject = "Onboarding Complete — " + name;
   var sectionRole = [data.choirPart, data.instruments].filter(Boolean).join(" · ");
   var webAppUrl = APP_URL || ScriptApp.getService().getUrl();
- 
+
   var html = renderEmailTemplate_("onboarding-complete", {
     memberName: name,
     groups: (data.groups || ""),
@@ -2216,7 +2533,7 @@ function sendOnboardingNotification_(name, email, data) {
     photoUrl: data.photoUrl || "",
     appUrl: webAppUrl
   }, { signatureKey: null });
- 
+
   MailApp.sendEmail({
     to: EMAIL_CC,
     subject: subject,
@@ -2224,18 +2541,18 @@ function sendOnboardingNotification_(name, email, data) {
     name: EMAIL_FROM_NAME
   });
 }
- 
+
 // -------------------------------------------------------
 //  COMMUNICATION (Phase 3)
 // -------------------------------------------------------
- 
+
 /**
  * Returns admin emails from the Admins sheet.
  */
 // -------------------------------------------------------
 //  EMAIL LAYOUT & SIGNATURES
 // -------------------------------------------------------
- 
+
 /**
  * Wraps email body content in the shared letterhead layout and appends a signature.
  * Every outgoing email should pass through this for a consistent look.
@@ -2264,7 +2581,7 @@ function renderEmailTemplate_(templateName, tokens, opts) {
   } catch(e) {
     throw new Error("Email template not found: " + templateName);
   }
- 
+
   // Extract META (title / subtitle)
   var metaTitle = "", metaSubtitle = "";
   var metaMatch = raw.match(/<!--META([\s\S]*?)-->/);
@@ -2274,15 +2591,15 @@ function renderEmailTemplate_(templateName, tokens, opts) {
     if (tm) metaTitle = tm[1].trim();
     if (sm) metaSubtitle = sm[1].trim();
   }
- 
+
   // Extract BODY block
   var bodyMatch = raw.match(/<!--BODY-->([\s\S]*?)<!--\/BODY-->/);
   var body = bodyMatch ? bodyMatch[1] : raw;
- 
+
   // Extract SIG block (optional — template may define its own)
   var sigMatch = raw.match(/<!--SIG-->([\s\S]*?)<!--\/SIG-->/);
   var templateSig = sigMatch ? sigMatch[1] : "";
- 
+
   // Fill tokens in body, sig, and meta strings
   function fill(str) {
     if (!str) return str;
@@ -2296,13 +2613,13 @@ function renderEmailTemplate_(templateName, tokens, opts) {
   templateSig = fill(templateSig);
   metaTitle = fill(opts.title || metaTitle);
   metaSubtitle = fill(opts.subtitle || metaSubtitle);
- 
+
   // Standalone templates (e.g. birthday card) render the body as-is, no letterhead
   if (opts.standalone) return body;
- 
+
   // Signature: a sheet signature key overrides the template's own SIG block
   var sigHtml = opts.signatureKey ? getSignatureHtml_(opts.signatureKey) : templateSig;
- 
+
   // Render through EmailLayout
   try {
     var layout = HtmlService.createTemplateFromFile("EmailLayout");
@@ -2315,15 +2632,15 @@ function renderEmailTemplate_(templateName, tokens, opts) {
     return body + sigHtml;
   }
 }
- 
+
 function buildEmail_(bodyHtml, opts) {
   opts = opts || {};
   var headerTitle = opts.headerTitle || "Strathmore Chorale";
   var headerSubtitle = opts.headerSubtitle || "";
   var signatureKey = opts.signatureKey || "general";
- 
+
   var sigHtml = getSignatureHtml_(signatureKey);
- 
+
   try {
     var template = HtmlService.createTemplateFromFile("EmailLayout");
     template.headerTitle = headerTitle;
@@ -2336,7 +2653,7 @@ function buildEmail_(bodyHtml, opts) {
     return bodyHtml + sigHtml;
   }
 }
- 
+
 /**
  * Returns the HTML signature for a given key from the Signatures sheet.
  * Falls back to the Gmail signature file (EmailSignature.html) for "general",
@@ -2350,7 +2667,7 @@ function buildEmail_(bodyHtml, opts) {
 function getSignatureHtml_(key) {
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(SIGNATURES_SHEET);
- 
+
   if (sheet) {
     var data = sheet.getDataRange().getValues();
     var headers = data[0].map(function(x){ return x.toString().trim().toLowerCase(); });
@@ -2366,17 +2683,17 @@ function getSignatureHtml_(key) {
       }
     }
   }
- 
+
   // Fallback for "general" — use the full Gmail signature file if present
   if (key === "general") {
     try {
       return HtmlService.createHtmlOutputFromFile("EmailSignature").getContent();
     } catch(e) {}
   }
- 
+
   return buildTextSignature_("Strathmore Chorale", "", "", "");
 }
- 
+
 /** Builds a simple HTML signature block from fields. */
 function buildTextSignature_(name, title, email, phone) {
   var h = '<div style="margin-top:8px;font-family:-apple-system,sans-serif;font-size:0.85rem;color:#64748b;line-height:1.5;">';
@@ -2387,7 +2704,7 @@ function buildTextSignature_(name, title, email, phone) {
   h += '</div>';
   return h;
 }
- 
+
 /**
  * Returns the list of available signature keys (for the admin to choose from).
  */
@@ -2408,11 +2725,11 @@ function getSignatureOptions() {
   }
   return options;
 }
- 
+
 // -------------------------------------------------------
 //  COMMUNIQUÉ (admin message sender)
 // -------------------------------------------------------
- 
+
 /**
  * Returns recipient options for the communiqué composer:
  * groups available, plus the full member roster for individual selection.
@@ -2432,7 +2749,7 @@ function getCommuniqueRecipientOptions() {
     signatures: getSignatureOptions()
   };
 }
- 
+
 /**
  * Sends a communiqué to selected recipients using the letterhead layout.
  * @param {Object} payload — {
@@ -2446,10 +2763,10 @@ function sendCommunique(payload) {
   var ss = getSpreadsheet_();
   if (!payload.subject || !payload.subject.trim()) throw new Error("Subject is required.");
   if (!payload.body || !payload.body.trim()) throw new Error("Message body is required.");
- 
+
   var recipients = [];
   var rtype = payload.recipientType || "all";
- 
+
   if (rtype === "admins") {
     recipients = getAdminEmails_(ss);
   } else {
@@ -2458,7 +2775,7 @@ function sendCommunique(payload) {
       var m = all[i];
       if (!m.active || !m.email) continue;
       if (m.probation && m.probationFailed) continue; // skip failed members
- 
+
       if (rtype === "all") {
         recipients.push(m.email);
       } else if (rtype === "groups") {
@@ -2469,7 +2786,7 @@ function sendCommunique(payload) {
       }
     }
   }
- 
+
   // Dedupe
   var seen = {}, unique = [];
   for (var r = 0; r < recipients.length; r++) {
@@ -2477,26 +2794,26 @@ function sendCommunique(payload) {
     if (!seen[e]) { seen[e] = true; unique.push(recipients[r]); }
   }
   recipients = unique;
- 
+
   if (recipients.length === 0) throw new Error("No recipients matched your selection.");
- 
+
   // Convert the plain-text body into HTML paragraphs
   var bodyHtml = communiqueBodyToHtml_(payload.body);
- 
+
   var html = buildEmail_(bodyHtml, {
     headerTitle: payload.subject,
     signatureKey: payload.signatureKey || "general"
   });
- 
+
   var ccAdmins = "";
   if (payload.ccAdmins) {
     var admins = getAdminEmails_(ss);
     if (admins.length > 0) ccAdmins = admins.join(",");
   }
- 
+
   return sendBulkBcc_(recipients, payload.subject, html, { cc: ccAdmins });
 }
- 
+
 /**
  * Converts plain text (with line breaks) into safe HTML paragraphs.
  * Double newline = new paragraph; single newline = <br>.
@@ -2513,23 +2830,27 @@ function communiqueBodyToHtml_(text) {
   }
   return html;
 }
- 
+
 // -------------------------------------------------------
 //  COMMUNICATION (Phase 3)
 // -------------------------------------------------------
- 
+
 function getAdminEmails_(ss) {
   var sheet = ss.getSheetByName(ADMINS_SHEET);
   if (!sheet) return [];
+  if (sheet.getLastRow() < 2 || sheet.getLastColumn() === 0) return [];
   var data = sheet.getDataRange().getValues();
+  // Email column by HEADER (fall back to column 1), so reordering can't break alerts
+  var headers = data[0].map(function(x){ return x.toString().trim().toLowerCase(); });
+  var eIdx = headers.indexOf("email"); if (eIdx === -1) eIdx = 0;
   var emails = [];
   for (var i = 1; i < data.length; i++) {
-    var e = data[i][0].toString().trim();
+    var e = data[i][eIdx].toString().trim();
     if (e) emails.push(e);
   }
   return emails;
 }
- 
+
 /**
  * Sends one HTML email to many recipients via BCC, in batches to stay under the
  * per-message recipient cap, and checks the daily quota up front so we never
@@ -2546,7 +2867,7 @@ function sendBulkBcc_(recipients, subject, htmlBody, opts) {
   var batchSize = opts.batchSize || 50;   // well under the per-message cap
   var fromName = opts.fromName || EMAIL_FROM_NAME;
   var toHeader = opts.toHeader || (EMAIL_FROM_NAME + " <" + (getAdminEmails_(getSpreadsheet_())[0] || EMAIL_CC) + ">");
- 
+
   // Dedupe
   var seen = {}, unique = [];
   for (var r = 0; r < recipients.length; r++) {
@@ -2555,14 +2876,14 @@ function sendBulkBcc_(recipients, subject, htmlBody, opts) {
   }
   recipients = unique;
   if (recipients.length === 0) throw new Error("No recipients.");
- 
+
   // Up-front quota check — refuse rather than half-send
   var remaining = MailApp.getRemainingDailyQuota();
   if (recipients.length > remaining) {
     throw new Error("Not enough email quota today: need " + recipients.length +
       ", but only " + remaining + " sends remain. Try again tomorrow or send to fewer people.");
   }
- 
+
   // Send in batches
   var batches = 0;
   for (var i = 0; i < recipients.length; i += batchSize) {
@@ -2578,10 +2899,10 @@ function sendBulkBcc_(recipients, subject, htmlBody, opts) {
     MailApp.sendEmail(mail);
     batches++;
   }
- 
+
   return { success: true, count: recipients.length, batches: batches };
 }
- 
+
 /**
  * Sends a practice reminder to all active members in the given groups.
  * @param {string} dateStr — session date
@@ -2592,7 +2913,7 @@ function sendBulkBcc_(recipients, subject, htmlBody, opts) {
 function sendPracticeReminder(dateStr, groups, time, customNote, signatureKey) {
   var ss = getSpreadsheet_();
   var allMembers = readAllMembers_(ss);
- 
+
   // Collect recipients: active members in any of the target groups
   var recipients = [];
   for (var i = 0; i < allMembers.length; i++) {
@@ -2602,18 +2923,18 @@ function sendPracticeReminder(dateStr, groups, time, customNote, signatureKey) {
     var inGroup = m.groups.some(function(g) { return groups.indexOf(g) !== -1; });
     if (inGroup) recipients.push(m.email);
   }
- 
+
   if (recipients.length === 0) return { success: false, count: 0, message: "No recipients found." };
- 
+
   // Format date nicely
   var dParts = dateStr.split("-");
   var dObj = new Date(parseInt(dParts[0]), parseInt(dParts[1]) - 1, parseInt(dParts[2]));
   var dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
   var monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
   var niceDate = dayNames[dObj.getDay()] + ", " + dObj.getDate() + " " + monthNames[dObj.getMonth()] + " " + dObj.getFullYear();
- 
+
   var webAppUrl = APP_URL || ScriptApp.getService().getUrl();
- 
+
   // Build the optional note block (full table) only when there's a note
   var noteBlock = "";
   if (customNote) {
@@ -2623,7 +2944,7 @@ function sendPracticeReminder(dateStr, groups, time, customNote, signatureKey) {
       '<p style="margin:0;font-size:13px;line-height:1.6;color:#2A2522;">' + customNote + '</p>' +
       '</td></tr></table>';
   }
- 
+
   // The reminder is a BCC blast, so greet generically rather than per-person.
   var html = renderEmailTemplate_("rehearsal-reminder", {
     firstName: "Chorister",
@@ -2633,10 +2954,10 @@ function sendPracticeReminder(dateStr, groups, time, customNote, signatureKey) {
     noteBlock: noteBlock,
     appUrl: webAppUrl
   }, { signatureKey: (signatureKey && signatureKey !== "general") ? signatureKey : null, subtitle: niceDate });
- 
+
   return sendBulkBcc_(recipients, "Rehearsal Reminder — " + niceDate, html, {});
 }
- 
+
 /**
  * Emails the attendance summary for a session to all admins.
  * @param {string} dateStr
@@ -2648,19 +2969,19 @@ function emailAttendanceSummary(dateStr, group) {
   if (!result.records || result.records.length === 0) {
     return { success: false, message: "No attendance records for this date." };
   }
- 
+
   var adminEmails = getAdminEmails_(ss);
   if (adminEmails.length === 0) return { success: false, message: "No admin emails found." };
- 
+
   // Format date
   var dParts = dateStr.split("-");
   var dObj = new Date(parseInt(dParts[0]), parseInt(dParts[1]) - 1, parseInt(dParts[2]));
   var dayNames = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
   var niceDate = dayNames[dObj.getDay()] + ", " + dateStr;
- 
+
   var subject = "Attendance Summary — " + niceDate;
   var body = "";
- 
+
   // Summary counts per group
   for (var g in result.summary) {
     body += '<h3 style="margin:16px 0 8px;font-size:15px;font-family:Georgia,serif;">' + g + '</h3>';
@@ -2678,7 +2999,7 @@ function emailAttendanceSummary(dateStr, group) {
     body += '<tr style="border-top:1px solid #E8DEC6;"><td style="padding:6px 0;font-weight:600;">Total</td><td style="padding:6px 0;text-align:right;font-weight:700;">' + total + '</td></tr>';
     body += '</table>';
   }
- 
+
   // Absent unexcused list (the actionable one)
   var absentUnexcused = result.records.filter(function(r) { return r.status === "Absent Unexcused"; });
   if (absentUnexcused.length > 0) {
@@ -2692,23 +3013,23 @@ function emailAttendanceSummary(dateStr, group) {
     }
     body += '</ul>';
   }
- 
+
   var html = buildEmail_(body, {
     headerTitle: "Attendance Summary",
     headerSubtitle: niceDate,
     signatureKey: "general"
   });
- 
+
   MailApp.sendEmail({
     to: adminEmails.join(","),
     subject: subject,
     htmlBody: html,
     name: EMAIL_FROM_NAME
   });
- 
+
   return { success: true, count: adminEmails.length };
 }
- 
+
 /** Formats "HH:mm" to 12-hour "h:mm AM/PM". */
 function formatTime12_(t) {
   if (!t) return "";
@@ -2718,7 +3039,7 @@ function formatTime12_(t) {
   h = h % 12; if (h === 0) h = 12;
   return h + ":" + m + " " + ampm;
 }
- 
+
 // -------------------------------------------------------
 //  BIRTHDAYS (Phase 3 — Celebrations)
 // -------------------------------------------------------
@@ -2731,11 +3052,11 @@ function formatTime12_(t) {
 //      Only Active + Alumnus are celebrated. Memorial NEVER is.
 //   2. Run createBirthdayTrigger_() once from the editor (daily 6 AM check).
 //   3. (Poster, optional) create a Slides template, put its ID in BIRTHDAY_POSTER_TEMPLATE_ID.
- 
+
 var CELEBRATE_STATUSES = ["Active", "Alumnus"];   // never "Memorial"
 var LEAP_DAY_OBSERVED  = "FEB28";                  // "FEB28" or "MAR01"
 var AUTO_SEND_MEMBER_CARD_DEFAULT = true;          // default when no setting saved yet
- 
+
 /** Reads the auto-send setting (stored), falling back to the default. */
 function getAutoSendBirthdayCard_() {
   try {
@@ -2745,7 +3066,7 @@ function getAutoSendBirthdayCard_() {
   } catch(e) {}
   return AUTO_SEND_MEMBER_CARD_DEFAULT;
 }
- 
+
 /** Toggles/sets the auto-send setting from the dashboard. */
 function setAutoSendBirthdayCard(enabled) {
   try {
@@ -2753,14 +3074,14 @@ function setAutoSendBirthdayCard(enabled) {
   } catch(e) { throw new Error("Could not save setting."); }
   return { success: true, autoSend: !!enabled };
 }
- 
+
 // Who receives the daily birthday-coordinator digest.
 //   "first"  — only the first admin in the Admins sheet (default; single owner)
 //   "all"    — every admin in the Admins sheet
 //   or provide explicit emails in BIRTHDAY_COORDINATOR_EMAILS below (takes priority)
 var BIRTHDAY_COORDINATOR_MODE = "first";
 var BIRTHDAY_COORDINATOR_EMAILS = [];              // e.g. ["events@chorale.edu"] — overrides mode if non-empty
- 
+
 /** Resolves the list of birthday-digest recipients per the config above. */
 function getBirthdayCoordinators_() {
   if (BIRTHDAY_COORDINATOR_EMAILS && BIRTHDAY_COORDINATOR_EMAILS.length) {
@@ -2770,14 +3091,14 @@ function getBirthdayCoordinators_() {
   if (!admins.length) return [EMAIL_CC];
   return BIRTHDAY_COORDINATOR_MODE === "all" ? admins : [admins[0]];
 }
- 
+
 // Member Details column header names (match ensureMemberDetailsSheet_)
 var MD_NAME_COL   = "Name";
 var MD_EMAIL_COL  = "Email";
 var MD_DOB_COL    = "Date of Birth";
 var MD_PHOTO_COL  = "Passport Photo URL";
 var MD_STATUS_COL = "Member Status";
- 
+
 // 7 templates — {first} {full} {age} substituted. accent passed to UI at runtime.
 var BIRTHDAY_TEMPLATES = [
   { key:"classic", accent:"#185FA5",
@@ -2786,42 +3107,42 @@ var BIRTHDAY_TEMPLATES = [
     cardHeadline:"Happy Birthday, {first}!",
     cardBody:"The whole Strathmore Chorale family is celebrating you today. Thank you for the voice and spirit you bring to us \u2014 have a wonderful day.",
     group:"\uD83C\uDF82 Happy birthday, {full}! \uD83C\uDF89 The whole Chorale is celebrating you today \u2014 have a beautiful day." },
- 
+
   { key:"harmony", accent:"#0F6E56",
     bannerOther:"\uD83C\uDFB6 A high note for {first} today \u2014 happy birthday!",
     bannerSelf :"\uD83C\uDFB6 Happy birthday, {first}! May your year be full of high notes.",
     cardHeadline:"A little harmony for you, {first}",
     cardBody:"Happy birthday! May your year be full of high notes and good company. Thank you for the voice you bring to us.",
     group:"\uD83C\uDFB6 Happy birthday, {full}! May your year be full of high notes and good company. \uD83C\uDF89" },
- 
+
   { key:"heartfelt", accent:"#534AB7",
     bannerOther:"\uD83C\uDF88 Today is {first}\u2019s birthday!",
     bannerSelf :"\uD83C\uDF88 Happy birthday, {first}. We\u2019re grateful to share the music with you.",
     cardHeadline:"Happy Birthday, {first}",
     cardBody:"Grateful to share the music and the journey with you. Wishing you a day as warm as the community you\u2019re part of.",
     group:"\uD83C\uDF88 Happy birthday, {full}! Grateful to share the music and the journey with you. Have a beautiful day." },
- 
+
   { key:"playful", accent:"#D85A30",
     bannerOther:"\uD83E\uDD73 It\u2019s {first}\u2019s birthday!",
     bannerSelf :"\uD83E\uDD73 Happy birthday, {first}! Cake first, scales later.",
     cardHeadline:"Happy Birthday, {first}!",
     cardBody:"Time to hit all the right notes today \u2014 cake first, scales later. The Chorale is cheering you on.",
     group:"\uD83E\uDD73 Happy birthday, {full}! Cake first, scales later. The whole Chorale is cheering you on! \uD83C\uDF89" },
- 
+
   { key:"community", accent:"#993556",
     bannerOther:"\uD83C\uDF89 Today we celebrate {first}!",
     bannerSelf :"\uD83C\uDF89 Happy birthday, {first}! Thank you for the voice you bring to us.",
     cardHeadline:"Today we celebrate you, {first}!",
     cardBody:"Thank you for the voice and the energy you bring to the Chorale. Wishing you a wonderful birthday.",
     group:"\uD83C\uDF89 Today we celebrate {full}! Thank you for the voice you bring to the Chorale. Happy birthday!" },
- 
+
   { key:"uplifting", accent:"#BA7517",
     bannerOther:"\u2728 Happy birthday to {first} today!",
     bannerSelf :"\u2728 Happy birthday, {first}! Here\u2019s to another year of music and growth.",
     cardHeadline:"Happy Birthday, {first}! \u2728",
     cardBody:"Here\u2019s to another year of music, growth, and good company. The Chorale is celebrating you today.",
     group:"\u2728 Happy birthday, {full}! Here\u2019s to another year of music, growth, and good company. \uD83C\uDF89" },
- 
+
   { key:"simple", accent:"#1D9E75",
     bannerOther:"\uD83C\uDF82 Happy birthday, {first}!",
     bannerSelf :"\uD83C\uDF82 Happy birthday, {first}! Wishing you a wonderful day.",
@@ -2829,7 +3150,7 @@ var BIRTHDAY_TEMPLATES = [
     cardBody:"Wishing you joy today and all year. The whole Chorale is thinking of you.",
     group:"\uD83C\uDF82 Happy birthday, {full}! Wishing you joy today and all year. \uD83C\uDF89" }
 ];
- 
+
 /** One-time: schedule the daily 6 AM tasks (AU sweep + birthday check). Run from the editor. */
 function createBirthdayTrigger_() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
@@ -2838,13 +3159,13 @@ function createBirthdayTrigger_() {
   });
   ScriptApp.newTrigger("dailyTasks_").timeBased().everyDays(1).atHour(6).create();
 }
- 
+
 /** PUBLIC wrapper — run THIS from the editor to set up the birthday trigger. */
 function setupBirthdayTrigger() {
   createBirthdayTrigger_();
   return "Birthday trigger created — daily check at 6 AM.";
 }
- 
+
 /** PUBLIC wrapper — run THIS from the editor to list members missing a DOB. */
 function listMembersMissingDob() {
   var list = getMembersMissingDob_();
@@ -2852,7 +3173,7 @@ function listMembersMissingDob() {
   Logger.log("Members missing/invalid DOB (" + list.length + "):\n" + list.join("\n"));
   return list;
 }
- 
+
 /** Reads Member Details into objects with status guard support. */
 function bdReadMembers_() {
   var ss = getSpreadsheet_();
@@ -2873,7 +3194,7 @@ function bdReadMembers_() {
     };
   }).filter(function (m) { return m.name; });
 }
- 
+
 /** DOB parsing — handles Date cells and common string formats. */
 function bdParseDob_(v) {
   if (v === "" || v == null) return null;
@@ -2901,7 +3222,7 @@ function bdMatches_(dob, ref) {
 }
 function bdFirst_(name) { return String(name).split(/\s+/)[0] || name; }
 function bdAge_(dob, ref) { return dob.y ? (ref.getFullYear() - dob.y) : null; }
- 
+
 /** Core: who has a birthday in [today .. today+windowDays], with status guard. */
 function getUpcomingBirthdays_(windowDays) {
   windowDays = windowDays == null ? 0 : windowDays;
@@ -2923,14 +3244,14 @@ function getUpcomingBirthdays_(windowDays) {
   });
   return out;
 }
- 
+
 /** Lists active members with missing/unparseable DOB — run before go-live to chase gaps. */
 function getMembersMissingDob_() {
   return bdReadMembers_().filter(function (m) {
     return CELEBRATE_STATUSES.indexOf(m.status) !== -1 && !bdParseDob_(m.dobRaw);
   }).map(function (m) { return m.name + (m.email ? " <" + m.email + ">" : ""); });
 }
- 
+
 /** Deterministic per-person-per-year template pick. */
 function bdHash_(s) { var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); }
 function bdPick_(mem) { return BIRTHDAY_TEMPLATES[ bdHash_((mem.email || mem.name) + new Date().getFullYear()) % BIRTHDAY_TEMPLATES.length ]; }
@@ -2939,7 +3260,7 @@ function bdFill_(str, mem) {
                     .replace(/\{full\}/g, mem.name)
                     .replace(/\{age\}/g, mem.age == null ? "" : mem.age);
 }
- 
+
 /** Extracts a Drive file ID from a URL. */
 function bdFileId_(url) { var m = String(url).match(/[-\w]{25,}/); return m ? m[0] : null; }
 function bdPhotoBlob_(mem) {
@@ -2953,7 +3274,7 @@ function bdPhotoBlob_(mem) {
     }
   } catch(e) {}
   if (mem.photo) candidates.push(mem.photo);
- 
+
   for (var i = 0; i < candidates.length; i++) {
     var id = bdFileId_(candidates[i]);
     if (!id) continue;
@@ -2961,7 +3282,7 @@ function bdPhotoBlob_(mem) {
   }
   return null;
 }
- 
+
 /** Builds the birthday email card (email-safe, inline CSS, cid photo). */
 function buildBirthdayCardHtml_(mem, tpl, hasPhoto) {
   // Use the standalone festive template (not wrapped in EmailLayout).
@@ -2973,7 +3294,7 @@ function buildBirthdayCardHtml_(mem, tpl, hasPhoto) {
       age: mem.age == null ? "" : mem.age,
       message: bdFill_(tpl.cardBody, mem)
     }, { standalone: true });
- 
+
     // If the member has no photo, the cid image will be broken — swap to a graceful
     // accent-tinted initial circle instead of a missing-image icon.
     if (!hasPhoto) {
@@ -2982,7 +3303,7 @@ function buildBirthdayCardHtml_(mem, tpl, hasPhoto) {
         ';color:#FFFDF8;font-family:Georgia,serif;font-size:60px;line-height:150px;text-align:center;">' +
         (mem.first ? mem.first.charAt(0) : "\uD83C\uDF82") + '</div>');
     }
- 
+
     // Drop the age pill entirely when age is unknown
     if (mem.age == null) {
       html = html.replace(/<table[^>]*>\s*<tr>\s*<td[^>]*Turning[\s\S]*?<\/table>/, "");
@@ -3002,7 +3323,7 @@ function buildBirthdayCardHtml_(mem, tpl, hasPhoto) {
       '</table></div>';
   }
 }
- 
+
 function sendBirthdayCard_(mem) {
   if (!mem.email) return false;
   if (bdWasCardSent_(mem.email, new Date().getFullYear())) return false; // already sent this year
@@ -3016,39 +3337,40 @@ function sendBirthdayCard_(mem) {
   bdMarkCardSent_(mem.email, new Date().getFullYear());
   return true;
 }
- 
+
 /** Group-message draft (you paste this into WhatsApp; not auto-posted). */
 function buildGroupMessage_(mem) { return bdFill_(bdPick_(mem).group, mem); }
- 
+
 /** Daily trigger: day-before prep nudge + day-of. Auto-sends member cards if enabled. */
 /**
  * Daily scheduled entry point (6 AM). Runs the consecutive-AU offense sweep, then
  * the birthday reminders. Kept as one trigger so we don't add a second time-based job.
  */
 function dailyTasks_() {
+  try { dailySchemaCheck_(); } catch (e) { Logger.log("Schema check: " + e); }
   try { syncConsecutiveAuOffenses_(getSpreadsheet_()); } catch (e) { Logger.log("AU sweep: " + e); }
   try { dailyBirthdayReminder_(); } catch (e) { Logger.log("Birthday: " + e); }
 }
- 
+
 function dailyBirthdayReminder_() {
   var win      = getUpcomingBirthdays_(1);
   var today    = win.filter(function (m) { return m.daysAway === 0; });
   var tomorrow = win.filter(function (m) { return m.daysAway === 1; });
   if (!today.length && !tomorrow.length) return;
- 
+
   if (getAutoSendBirthdayCard_()) today.forEach(function (m) { try { sendBirthdayCard_(m); } catch (e) { Logger.log(e); } });
- 
+
   var subjBits = [];
   if (today.length)    subjBits.push(today.length + " today");
   if (tomorrow.length) subjBits.push(tomorrow.length + " tomorrow");
- 
+
   var coordinators = getBirthdayCoordinators_();
   MailApp.sendEmail(coordinators.join(","),
     "\uD83C\uDF82 Chorale birthdays \u2014 " + subjBits.join(" / "),
     "Birthday reminders",
     { htmlBody: bdCoordinatorEmail_(today, tomorrow), name: EMAIL_FROM_NAME });
 }
- 
+
 function bdCoordinatorEmail_(today, tomorrow) {
   function block(m, tag) {
     var status = (tag === "Today" && getAutoSendBirthdayCard_())
@@ -3065,7 +3387,7 @@ function bdCoordinatorEmail_(today, tomorrow) {
   if (tomorrow.length) { body.push('<h3 style="margin:14px 0 10px;color:#1c2333;font-family:Georgia,serif;">Tomorrow</h3>'); tomorrow.forEach(function (m) { body.push(block(m, "Tomorrow")); }); }
   return buildEmail_(body.join(""), { headerTitle: "Birthday Reminders", signatureKey: "general" });
 }
- 
+
 /** In-app banner endpoint — called by Scripts.html for ALL roles. */
 function getTodaysBirthdaysForBanner() {
   var viewer = "";
@@ -3088,7 +3410,7 @@ function getTodaysBirthdaysForBanner() {
     };
   });
 }
- 
+
 /**
  * Records that a birthday card was sent to an email this year (dedupe + dashboard status).
  * Uses a lightweight property store keyed by email+year.
@@ -3105,7 +3427,7 @@ function bdWasCardSent_(email, year) {
     return PropertiesService.getScriptProperties().getProperty("bdsent_" + year + "_" + email.toLowerCase()) === "1";
   } catch(e) { return false; }
 }
- 
+
 /**
  * Returns the default (editable) birthday message for a member — the card body copy
  * from their deterministically-chosen template, with tokens filled.
@@ -3126,7 +3448,7 @@ function getBirthdayMessageDraft(email) {
   }
   throw new Error("Member not found.");
 }
- 
+
 /**
  * Sends the DEFAULT birthday card (unedited template) to one member on demand.
  * For the dashboard's "send now" button when auto-send is off.
@@ -3148,7 +3470,7 @@ function sendBirthdayCardNow(email) {
   }
   throw new Error("Member not found.");
 }
- 
+
 /**
  * Sends a birthday card with an admin-edited message (overrides the template body).
  * @param {string} email — recipient
@@ -3182,7 +3504,7 @@ function sendCustomBirthdayCard(email, customMessage) {
   }
   throw new Error("Member not found.");
 }
- 
+
 /**
  * Birthday dashboard data. rangeMode: "today" (today+tomorrow, default), "week", "month".
  * Returns groups of decorated birthdays with editable draft + sent status.
@@ -3202,7 +3524,7 @@ function getBirthdayDashboard(rangeMode) {
              daysAway: m.daysAway,
              cardSent: bdWasCardSent_(m.email, year) };
   }
- 
+
   if (rangeMode === "week" || rangeMode === "month") {
     var windowDays = rangeMode === "week" ? 7 : 31;
     var all = getUpcomingBirthdays_(windowDays).map(decorate);
@@ -3211,13 +3533,13 @@ function getBirthdayDashboard(rangeMode) {
              tomorrow: all.filter(function(m){return m.daysAway===1;}),
              upcoming: all.filter(function(m){return m.daysAway>1;}) };
   }
- 
+
   // Default: today + tomorrow
   var today = getUpcomingBirthdays_(0).map(decorate);
   var tomorrow = getUpcomingBirthdays_(1).filter(function(m){ return m.daysAway === 1; }).map(decorate);
   return { range: "today", today: today, tomorrow: tomorrow, upcoming: [], autoSend: getAutoSendBirthdayCard_() };
 }
- 
+
 /**
  * Generates a birthday poster PNG and saves it to Drive, returning a shareable link.
  * (Wrapper around generateBirthdayPoster_ so the dashboard can offer a poster button.)
@@ -3239,7 +3561,7 @@ function makeBirthdayPoster(email) {
   }
   throw new Error("Member not found.");
 }
- 
+
 /** Poster generation (optional) — needs a Slides template. Returns a PNG blob. */
 /**
  * DIAGNOSTIC — run from the editor to inspect the poster template's slides.
@@ -3266,7 +3588,7 @@ function inspectPosterTemplate() {
     }
   }
 }
- 
+
 /**
  * Attempts to give an inserted image a circular appearance via the advanced Slides API.
  * NOTE: the Slides API does not expose a true circular *crop*; the supported lever is
@@ -3294,7 +3616,7 @@ function cropImageToCircle_(presentationId, imageObjectId) {
   }, presentationId);
   return true;
 }
- 
+
 function generateBirthdayPoster_(mem) {
   if (!BIRTHDAY_POSTER_TEMPLATE_ID) throw new Error("Set BIRTHDAY_POSTER_TEMPLATE_ID first.");
   var tpl  = bdPick_(mem);
@@ -3305,7 +3627,7 @@ function generateBirthdayPoster_(mem) {
   for (var t = 0; t < BIRTHDAY_TEMPLATES.length; t++) {
     if (BIRTHDAY_TEMPLATES[t].key === tpl.key) { index = t; break; }
   }
- 
+
   var copy = DriveApp.getFileById(BIRTHDAY_POSTER_TEMPLATE_ID).makeCopy("Birthday - " + mem.name);
   var copyId = copy.getId();
   var png;
@@ -3313,12 +3635,12 @@ function generateBirthdayPoster_(mem) {
     var deck = SlidesApp.openById(copyId);
     var slides = deck.getSlides();
     var slide = slides[index] || slides[0];
- 
+
     // Fill tokens on the chosen slide
     slide.replaceAllText("{{NAME}}", mem.first);
     slide.replaceAllText("{{AGE}}", mem.age == null ? "" : String(mem.age));
     slide.replaceAllText("{{MESSAGE}}", bdFill_(tpl.cardBody, mem));
- 
+
     // Swap the photo. The placeholder may be an IMAGE or a SHAPE (depending on how
     // the template was built/converted), so search both. We match by alt-text
     // description == "PHOTO". When found, insert the member photo at that exact
@@ -3326,7 +3648,7 @@ function generateBirthdayPoster_(mem) {
     var blob = bdPhotoBlob_(mem);
     if (blob) {
       var placed = false;
- 
+
       // (a) Try existing images first
       var imgs = slide.getImages();
       for (var ii = 0; ii < imgs.length; ii++) {
@@ -3337,7 +3659,7 @@ function generateBirthdayPoster_(mem) {
           break;
         }
       }
- 
+
       // (b) If not found as an image, look for a SHAPE placeholder by description/title,
       //     insert the photo at its bounds, then delete the placeholder shape.
       if (!placed) {
@@ -3367,7 +3689,7 @@ function generateBirthdayPoster_(mem) {
       // If still not placed, the placeholder couldn't be found — poster generates
       // without the photo rather than failing.
     }
- 
+
     // Remove the OTHER slides so the chosen one is the only page — makes the
     // thumbnail/export unambiguous and keeps the file clean.
     var keepId = slide.getObjectId();
@@ -3375,7 +3697,7 @@ function generateBirthdayPoster_(mem) {
       if (s.getObjectId() !== keepId) s.remove();
     });
     deck.saveAndClose();
- 
+
     // Export the (now single-slide) presentation as a PNG.
     // SlidesApp has no per-slide getAs(); use the Slides API thumbnail, which
     // returns a high-res PNG URL we then fetch as a blob.
@@ -3386,7 +3708,7 @@ function generateBirthdayPoster_(mem) {
   }
   return png;
 }
- 
+
 /**
  * Exports a single slide as a PNG blob using the Slides advanced service thumbnail.
  * REQUIRES the "Slides API" advanced service enabled in the Apps Script project
@@ -3408,7 +3730,7 @@ function exportSlideAsPng_(presentationId, slideObjectId, name) {
   } catch(e) {
     // fall through to PDF fallback
   }
- 
+
   // Fallback: export the presentation as a PDF blob (single slide, so one page).
   // Not a PNG, but ensures the feature degrades rather than throwing.
   var url = "https://docs.google.com/presentation/d/" + presentationId + "/export/pdf";
@@ -3416,11 +3738,11 @@ function exportSlideAsPng_(presentationId, slideObjectId, name) {
   var pdf = UrlFetchApp.fetch(url, { headers: { Authorization: "Bearer " + token } });
   return pdf.getBlob().setName("Birthday Poster - " + name + ".pdf");
 }
- 
+
 // -------------------------------------------------------
 //  PROFILE MANAGEMENT (Phase 2)
 // -------------------------------------------------------
- 
+
 /**
  * Returns a small (cacheable) data URI for list/avatar display.
  * Uses Drive's thumbnail rendering at a small size to stay under cache limits.
@@ -3434,12 +3756,12 @@ function driveAvatarDataUri_(urlOrId) {
     if (m) fileId = m[1];
     else if (/^[a-zA-Z0-9_-]+$/.test(s)) fileId = s;
     if (!fileId) return "";
- 
+
     var cache = CacheService.getScriptCache();
     var cacheKey = "avatar_" + fileId;
     var cached = cache.get(cacheKey);
     if (cached) return cached;
- 
+
     // Fetch a small thumbnail (128px) to keep it cacheable
     var file = DriveApp.getFileById(fileId);
     var thumb = file.getThumbnail ? file.getThumbnail() : null;
@@ -3450,7 +3772,7 @@ function driveAvatarDataUri_(urlOrId) {
       var blob = file.getBlob();
       dataUri = "data:" + blob.getContentType() + ";base64," + Utilities.base64Encode(blob.getBytes());
     }
- 
+
     if (dataUri.length < 100000) {
       try { cache.put(cacheKey, dataUri, 21600); } catch(e) {}
     }
@@ -3459,7 +3781,7 @@ function driveAvatarDataUri_(urlOrId) {
     return "";
   }
 }
- 
+
 /**
  * Converts a Drive image URL/ID to a base64 data URI for iframe-safe display.
  * Apps Script's sandbox blocks hotlinked Drive images, so we serve the bytes inline.
@@ -3474,17 +3796,17 @@ function driveImageToDataUri_(urlOrId) {
     if (m) fileId = m[1];
     else if (/^[a-zA-Z0-9_-]+$/.test(s)) fileId = s;
     if (!fileId) return "";
- 
+
     // Check cache first (data URIs can be large, so cache by file ID)
     var cache = CacheService.getScriptCache();
     var cacheKey = "img_" + fileId;
     var cached = cache.get(cacheKey);
     if (cached) return cached;
- 
+
     var file = DriveApp.getFileById(fileId);
     var blob = file.getBlob();
     var dataUri = "data:" + blob.getContentType() + ";base64," + Utilities.base64Encode(blob.getBytes());
- 
+
     // Cache only if under 100KB (CacheService limit per key)
     if (dataUri.length < 100000) {
       try { cache.put(cacheKey, dataUri, 21600); } catch(e) {}
@@ -3494,7 +3816,7 @@ function driveImageToDataUri_(urlOrId) {
     return "";
   }
 }
- 
+
 /**
  * Returns the logged-in member's full profile (Members + Member Details).
  */
@@ -3504,14 +3826,14 @@ function getMyProfile() {
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) throw new Error("No member found for " + email);
- 
+
   // Get profile photo from Members sheet
   var membersSheet = ss.getSheetByName(MEMBERS_SHEET);
   var headers = membersSheet.getRange(1, 1, 1, membersSheet.getLastColumn()).getValues()[0]
     .map(function(x) { return x.toString().trim().toLowerCase(); });
   var ppIdx = headers.indexOf("profile photo");
   var profilePhoto = (ppIdx !== -1 && member.rowIndex) ? membersSheet.getRange(member.rowIndex, ppIdx + 1).getValue().toString() : "";
- 
+
   // Get extended details from Member Details sheet
   var details = {};
   var detailSheet = ss.getSheetByName(MEMBER_DETAILS_SHEET);
@@ -3536,14 +3858,14 @@ function getMyProfile() {
       }
     }
   }
- 
+
   return {
     name: member.name, email: member.email, phone: member.phone,
     admNo: member.admNo, groups: member.groups, roles: member.roles,
     profilePhoto: driveAvatarDataUri_(profilePhoto), details: details
   };
 }
- 
+
 /**
  * Member updates their own phone number.
  */
@@ -3553,15 +3875,15 @@ function updateMyPhone(newPhone) {
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) throw new Error("No member found.");
- 
+
   var sheet = ss.getSheetByName(MEMBERS_SHEET);
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
     .map(function(x) { return x.toString().trim().toLowerCase(); });
   var phoneIdx = headers.indexOf("phone");
   if (phoneIdx === -1) throw new Error("Phone column not found.");
- 
+
   sheet.getRange(member.rowIndex, phoneIdx + 1).setValue(newPhone);
- 
+
   // Also update Member Details if exists
   var detailSheet = ss.getSheetByName(MEMBER_DETAILS_SHEET);
   if (detailSheet) {
@@ -3573,10 +3895,10 @@ function updateMyPhone(newPhone) {
       }
     }
   }
- 
+
   return { success: true };
 }
- 
+
 /**
  * Member uploads a profile photo (separate from passport photo).
  * Stored in Members sheet "Profile Photo" column.
@@ -3587,21 +3909,21 @@ function uploadProfilePhoto(base64Data, fileName, mimeType) {
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) throw new Error("No member found.");
- 
+
   var folder;
   var profileFolderId = (PROFILE_PHOTO_FOLDER_ID && PROFILE_PHOTO_FOLDER_ID !== "YOUR_PROFILE_FOLDER_ID_HERE") ? PROFILE_PHOTO_FOLDER_ID : PHOTO_FOLDER_ID;
   try { folder = DriveApp.getFolderById(profileFolderId); }
   catch(e) { throw new Error("Profile photo folder not configured."); }
- 
+
   var decoded = Utilities.base64Decode(base64Data);
   var ext = (fileName && fileName.indexOf(".") !== -1) ? fileName.split(".").pop() : "jpg";
   var safeName = "Profile_" + member.name.replace(/[^a-zA-Z0-9]/g, "_") + "." + ext;
   var blob = Utilities.newBlob(decoded, mimeType || "image/jpeg", safeName);
- 
+
   // Remove old profile photo
   var existing = folder.getFilesByName(safeName);
   while (existing.hasNext()) { existing.next().setTrashed(true); }
- 
+
   var file = folder.createFile(blob);
   try {
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
@@ -3611,7 +3933,7 @@ function uploadProfilePhoto(base64Data, fileName, mimeType) {
   var fileId = file.getId();
   // Use direct-content URL so the image renders in <img> tags
   var url = "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w400";
- 
+
   // Save URL to Members sheet
   var sheet = ss.getSheetByName(MEMBERS_SHEET);
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
@@ -3623,12 +3945,12 @@ function uploadProfilePhoto(base64Data, fileName, mimeType) {
     ppIdx = lastCol - 1;
   }
   sheet.getRange(member.rowIndex, ppIdx + 1).setValue(url);
- 
+
   // Return data URI for immediate iframe-safe display
   var dataUri = "data:" + (mimeType || "image/jpeg") + ";base64," + base64Data;
   return { success: true, url: dataUri };
 }
- 
+
 /**
  * Member requests a name change (requires admin approval).
  */
@@ -3638,13 +3960,13 @@ function requestNameChange(newName, reason) {
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) throw new Error("No member found.");
- 
+
   var sheet = ensureApologiesSheet_(ss);
   var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
   sheet.appendRow([todayStr_(), member.name, email, "Name Change", reason + " | New name: " + newName, now, "", "N/A", "Pending", newName, ""]);
   return { success: true };
 }
- 
+
 /**
  * Member requests a section transfer.
  */
@@ -3654,7 +3976,7 @@ function requestSectionTransfer(targetGroups, reason) {
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) throw new Error("No member found.");
- 
+
   var sheet = ensureApologiesSheet_(ss);
   var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
   var currentGroups = member.groups.join(", ");
@@ -3662,7 +3984,7 @@ function requestSectionTransfer(targetGroups, reason) {
   sheet.appendRow([todayStr_(), member.name, email, "Section Transfer", "From: " + currentGroups + " | To: " + targetStr + " | Reason: " + reason, now, "", "N/A", "Pending", targetStr, ""]);
   return { success: true };
 }
- 
+
 /**
  * Admin approves a section transfer — updates member's Groups column.
  */
@@ -3670,31 +3992,31 @@ function approveSectionTransfer(rowIndex, memberName) {
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(APOLOGIES_SHEET);
   if (!sheet) throw new Error("Apologies sheet not found.");
- 
+
   var data = sheet.getRange(rowIndex, 1, 1, 11).getValues()[0];
   var targetGroups = data[9].toString(); // End Date column stores target groups
- 
+
   // Update Members sheet Groups column
   var membersSheet = ss.getSheetByName(MEMBERS_SHEET);
   var mData = membersSheet.getDataRange().getValues();
   var mHeaders = mData[0].map(function(x) { return x.toString().trim().toLowerCase(); });
   var nameIdx = mHeaders.indexOf("name");
   var groupsIdx = mHeaders.indexOf("groups");
- 
+
   for (var i = 1; i < mData.length; i++) {
     if (mData[i][nameIdx].toString().trim() === memberName) {
       membersSheet.getRange(i + 1, groupsIdx + 1).setValue(targetGroups);
       break;
     }
   }
- 
+
   // Mark apology as approved
   sheet.getRange(rowIndex, 9).setValue("Approved");
   sheet.getRange(rowIndex, 11).setValue("Transfer approved");
- 
+
   return { success: true, name: memberName, newGroups: targetGroups };
 }
- 
+
 /**
  * Admin approves a name change — updates member's name across sheets.
  */
@@ -3713,7 +4035,7 @@ function cascadeMemberRename_(ss, oldName, newName) {
   oldName = oldName.toString().trim();
   newName = newName.toString().trim();
   var result = {};
- 
+
   // sheetName -> the 0-based column index where the name lives
   var nameColumns = [
     { sheet: MEMBERS_SHEET,        col: null },  // resolved by header below
@@ -3722,13 +4044,13 @@ function cascadeMemberRename_(ss, oldName, newName) {
     { sheet: OFFENSES_SHEET,       col: null },  // resolved by header
     { sheet: APOLOGIES_SHEET,      col: 1    }
   ];
- 
+
   nameColumns.forEach(function(target) {
     var sheet = ss.getSheetByName(target.sheet);
     if (!sheet) return;
     var data = sheet.getDataRange().getValues();
     if (data.length < 2) return;
- 
+
     // Resolve the name column by header if not fixed
     var col = target.col;
     if (col === null) {
@@ -3736,7 +4058,7 @@ function cascadeMemberRename_(ss, oldName, newName) {
       col = headers.indexOf("name");
       if (col === -1) return;
     }
- 
+
     var updated = 0;
     for (var i = 1; i < data.length; i++) {
       if (data[i][col] && data[i][col].toString().trim() === oldName) {
@@ -3746,33 +4068,33 @@ function cascadeMemberRename_(ss, oldName, newName) {
     }
     result[target.sheet] = updated;
   });
- 
+
   // Rebuild the derived registers/scoreboard caches so the new name aggregates correctly
   try { refreshAllRegisters_(ss); } catch(e) {}
- 
+
   return result;
 }
- 
+
 function approveNameChange(rowIndex, memberName) {
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(APOLOGIES_SHEET);
   if (!sheet) throw new Error("Requests sheet not found.");
- 
+
   var data = sheet.getRange(rowIndex, 1, 1, 11).getValues()[0];
   var newName = data[9].toString().trim(); // End Date column stores new name
   if (!newName) throw new Error("No new name found in the request.");
- 
+
   // Cascade the rename across ALL sheets (this is the fix — was only doing 2 sheets)
   var counts = cascadeMemberRename_(ss, memberName, newName);
- 
+
   // Mark the request approved (note: do this AFTER cascade, and the request row's own
   // Name cell was just renamed too, which is fine)
   sheet.getRange(rowIndex, 9).setValue("Approved");
   sheet.getRange(rowIndex, 11).setValue("Name changed to: " + newName);
- 
+
   return { success: true, oldName: memberName, newName: newName, updated: counts };
 }
- 
+
 /**
  * Member requests an edit to their course details (faculty / course / year).
  * Stored in the requests sheet with a structured payload, pending admin approval.
@@ -3785,7 +4107,7 @@ function requestCourseDetailsChange(changes, reason) {
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) throw new Error("No member found.");
- 
+
   var sheet = ensureApologiesSheet_(ss);
   var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
   changes = changes || {};
@@ -3803,7 +4125,7 @@ function requestCourseDetailsChange(changes, reason) {
   sheet.appendRow([todayStr_(), member.name, email, "Course Details", human, now, "", "N/A", "Pending", payload, ""]);
   return { success: true };
 }
- 
+
 /**
  * Admin approves a course-details change — writes the new values to Member Details.
  */
@@ -3811,12 +4133,12 @@ function approveCourseDetailsChange(rowIndex, memberName) {
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(APOLOGIES_SHEET);
   if (!sheet) throw new Error("Requests sheet not found.");
- 
+
   var data = sheet.getRange(rowIndex, 1, 1, 11).getValues()[0];
   var changes;
   try { changes = JSON.parse(data[9].toString()); }
   catch(e) { throw new Error("Could not read requested changes."); }
- 
+
   var detailSheet = ensureMemberDetailsSheet_(ss);
   var dmap = headerIndexMap_(detailSheet);
   var dd = detailSheet.getDataRange().getValues();
@@ -3830,12 +4152,12 @@ function approveCourseDetailsChange(rowIndex, memberName) {
       break;
     }
   }
- 
+
   sheet.getRange(rowIndex, 9).setValue("Approved");
   sheet.getRange(rowIndex, 11).setValue("Course details updated");
   return { success: true, name: memberName };
 }
- 
+
 // -------------------------------------------------------
 //  REGISTERS
 // -------------------------------------------------------
@@ -3848,9 +4170,9 @@ function refreshAllRegisters_(ss) {
   var mr=readMemberRoles_(ss);
   for(var gi=0;gi<GROUPS.length;gi++)buildGroupRegister_(ss,GROUPS[gi],allRec,sessDates[GROUPS[gi]]||{},mr);
 }
- 
+
 function readMemberRoles_(ss){var all=readAllMembers_(ss),r={};for(var i=0;i<all.length;i++)r[all[i].name]={groups:all[i].groups,roles:all[i].roles};return r;}
- 
+
 function buildGroupRegister_(ss, group, allRecords, groupSessionDates, memberRoles) {
   var tabName=group+" Register",regSheet=ss.getSheetByName(tabName);if(!regSheet)regSheet=ss.insertSheet(tabName);
   var gm=[];for(var name in memberRoles){if(memberRoles[name].groups.indexOf(group)!==-1)gm.push({name:name,role:(memberRoles[name].roles&&memberRoles[name].roles[group])||"Other"});}
@@ -3866,14 +4188,14 @@ function buildGroupRegister_(ss, group, allRecords, groupSessionDates, memberRol
   regSheet.clear();
   if(output.length>0&&output[0].length>0){regSheet.getRange(1,1,output.length,output[0].length).setValues(output);regSheet.getRange(1,1,1,output[0].length).setFontWeight("bold");regSheet.setFrozenRows(1);regSheet.setFrozenColumns(2);}
 }
- 
+
 // -------------------------------------------------------
 //  UTILITY
 // -------------------------------------------------------
 // -------------------------------------------------------
 //  SCHEDULE
 // -------------------------------------------------------
- 
+
 /**
  * Looks up session start time for a given date and groups.
  * Returns the earliest start time across selected groups.
@@ -3884,7 +4206,7 @@ function buildGroupRegister_(ss, group, allRecords, groupSessionDates, memberRol
 // -------------------------------------------------------
 //  MEETINGS (one-off sessions)
 // -------------------------------------------------------
- 
+
 /** Ensures the Meetings sheet exists. */
 function ensureMeetingsSheet_(ss) {
   var sheet = ss.getSheetByName(MEETINGS_SHEET);
@@ -3896,7 +4218,7 @@ function ensureMeetingsSheet_(ss) {
   }
   return sheet;
 }
- 
+
 /**
  * Admin schedules a one-off meeting.
  * @param {string} dateStr — "yyyy-MM-dd"
@@ -3909,7 +4231,7 @@ function addMeeting(dateStr, time, groups, title) {
   if (!dateStr) throw new Error("Date is required.");
   if (!time) throw new Error("Time is required.");
   if (!groups || groups.length === 0) throw new Error("Select at least one group.");
- 
+
   var sheet = ensureMeetingsSheet_(ss);
   var email = Session.getActiveUser().getEmail() || "";
   var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
@@ -3918,7 +4240,7 @@ function addMeeting(dateStr, time, groups, title) {
   sheet.appendRow([dateStr, normTime, groups.join(", "), title || "Meeting", email, now]);
   return { success: true, date: dateStr, time: normTime };
 }
- 
+
 /**
  * Object-argument alias for the client. Accepts { date, time, title, groups }.
  */
@@ -3926,7 +4248,7 @@ function scheduleMeeting(payload) {
   payload = payload || {};
   return addMeeting(payload.date, payload.time, payload.groups, payload.title);
 }
- 
+
 /**
  * Returns upcoming meetings (today onward by default).
  * @param {string} fromDate — optional "yyyy-MM-dd"; defaults to today
@@ -3961,7 +4283,7 @@ function getMeetings(fromDate) {
   out.sort(function(a, b) { return (a.date + a.time).localeCompare(b.date + b.time); });
   return out;
 }
- 
+
 /** Deletes a meeting by row index. */
 function deleteMeeting(rowIndex) {
   var ss = getSpreadsheet_();
@@ -3970,7 +4292,7 @@ function deleteMeeting(rowIndex) {
   sheet.deleteRow(rowIndex);
   return { success: true };
 }
- 
+
 /**
  * Returns meeting info for a specific date + groups (for Record auto-fill).
  * Mirrors getSessionTime's shape so the Record tab can use either.
@@ -3990,18 +4312,18 @@ function getMeetingForDate(dateStr, selectedGroups) {
   }
   return { found: earliest !== null, time: earliest || "", latest: latest || "", title: title, groups: matchGroups };
 }
- 
+
 function getSessionTime(dateStr, selectedGroups) {
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(SCHEDULE_SHEET);
- 
+
   var parts = dateStr.split("-");
   var d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
   var days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   var dayName = days[d.getDay()];
- 
+
   var earliest = null, latest = null;
- 
+
   // Practices from Schedule
   if (sheet) {
     var data = sheet.getDataRange().getValues();
@@ -4009,32 +4331,32 @@ function getSessionTime(dateStr, selectedGroups) {
       var rowDay = data[i][0].toString().trim();
       var rowGroup = data[i][1].toString().trim();
       var rowTime = data[i][2];
- 
+
       if (rowDay.toLowerCase() !== dayName.toLowerCase()) continue;
       if (selectedGroups.indexOf(rowGroup) === -1) continue;
- 
+
       var timeStr = "";
       if (rowTime instanceof Date) {
         timeStr = Utilities.formatDate(rowTime, Session.getScriptTimeZone(), "HH:mm");
       } else {
         timeStr = parseTimeStr_(rowTime.toString().trim());
       }
- 
+
       if (!earliest || timeStr < earliest) earliest = timeStr;
       if (!latest || timeStr > latest) latest = timeStr;
     }
   }
- 
+
   // Meetings (one-off) for this exact date
   var mt = getMeetingForDate(dateStr, selectedGroups);
   if (mt.found) {
     if (!earliest || mt.time < earliest) earliest = mt.time;
     if (!latest || mt.latest > latest) latest = mt.latest;
   }
- 
+
   return { found: earliest !== null, time: earliest || "", latest: latest || "", dayName: dayName };
 }
- 
+
 /**
  * Parses various time formats to "HH:mm".
  * Handles: "5:30 PM", "17:30", "5:30pm", "11:00 AM"
@@ -4056,11 +4378,11 @@ function parseTimeStr_(str) {
   }
   return str;
 }
- 
+
 // -------------------------------------------------------
 //  APOLOGIES
 // -------------------------------------------------------
- 
+
 /**
  * Member submits an apology.
  * Auto-validates timing: submitted_at must be >= 1 hour before session start.
@@ -4071,7 +4393,7 @@ function parseTimeStr_(str) {
  */
 // Apologies sheet columns:
 // 0:Date 1:Name 2:Email 3:Type 4:Reason 5:SubmittedAt 6:SessionTime 7:OnTime 8:Status 9:EndDate 10:ReviewNote
- 
+
 function ensureApologiesSheet_(ss) {
   var sheet = ss.getSheetByName(APOLOGIES_SHEET);
   if (!sheet) {
@@ -4091,7 +4413,7 @@ function ensureApologiesSheet_(ss) {
   }
   return sheet;
 }
- 
+
 /**
  * Member submits a single-day apology.
  */
@@ -4101,28 +4423,28 @@ function submitApology(dateStr, apologyType, reason, sessionTime, sessionLabel, 
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) throw new Error("No member found for " + email);
- 
+
   var sheet = ensureApologiesSheet_(ss);
   var now = new Date();
   var submittedAt = Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
- 
+
   var onTime = false;
   if (sessionTime) {
     var sp = sessionTime.split(":"), dp = dateStr.split("-");
     var sessionDT = new Date(parseInt(dp[0]), parseInt(dp[1])-1, parseInt(dp[2]), parseInt(sp[0]), parseInt(sp[1]));
     onTime = now <= new Date(sessionDT.getTime() - 3600000);
   }
- 
+
   // Store session label (e.g. "Practice" or meeting title) in the reason prefix if provided,
   // so the admin queue and member list can tell which session an apology targets.
   var storedReason = sessionLabel ? ("[" + sessionLabel + " @ " + (sessionTime||"") + "] " + reason) : reason;
   // Session groups (sorted, comma-joined) for per-session matching against attendance
   var groupsStr = (sessionGroups && sessionGroups.length) ? sessionGroups.slice().sort().join(",") : "";
- 
+
   sheet.appendRow([dateStr, member.name, email, apologyType, storedReason, submittedAt, sessionTime||"", onTime?"Yes":"No", "Pending", "", "", groupsStr]);
   return { success: true, name: member.name, onTime: onTime };
 }
- 
+
 /**
  * Member submits a long-term apology (date range, max 3 months).
  */
@@ -4132,41 +4454,41 @@ function submitLongTermApology(startDate, endDate, reason) {
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) throw new Error("No member found for " + email);
- 
+
   // Validate range: max 3 months
   var sd = new Date(startDate), ed = new Date(endDate);
   if (ed < sd) throw new Error("End date must be after start date.");
   var maxEnd = new Date(sd); maxEnd.setMonth(maxEnd.getMonth() + 3);
   if (ed > maxEnd) throw new Error("Long-term apology cannot exceed 3 months.");
- 
+
   var sheet = ensureApologiesSheet_(ss);
   var now = new Date();
   var submittedAt = Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
- 
+
   sheet.appendRow([startDate, member.name, email, "Absent", reason, submittedAt, "", "N/A", "Pending", endDate, ""]);
- 
+
   // Notify admins of the long-term apology
   try {
     sendLongTermApologyNotification_(member.name, email, startDate, endDate, reason);
   } catch(e) {}
- 
+
   return { success: true, name: member.name, startDate: startDate, endDate: endDate };
 }
- 
+
 /**
  * Emails admins when a long-term apology is submitted (needs their review).
  */
 function sendLongTermApologyNotification_(name, email, startDate, endDate, reason) {
   var subject = "Long-Term Apology — " + name + " (needs review)";
   var webAppUrl = APP_URL || ScriptApp.getService().getUrl();
- 
+
   // Look up member's groups for the template
   var groups = "";
   try {
     var mem = findMemberByEmail_(getSpreadsheet_(), email.toLowerCase());
     if (mem) groups = mem.groups.join(", ");
   } catch(e) {}
- 
+
   var html = renderEmailTemplate_("longterm-apology", {
     memberName: name,
     groups: groups || "—",
@@ -4175,7 +4497,7 @@ function sendLongTermApologyNotification_(name, email, startDate, endDate, reaso
     apologyReason: reason,
     appUrl: webAppUrl
   }, { signatureKey: null });
- 
+
   MailApp.sendEmail({
     to: EMAIL_CC,
     subject: subject,
@@ -4183,7 +4505,7 @@ function sendLongTermApologyNotification_(name, email, startDate, endDate, reaso
     name: EMAIL_FROM_NAME
   });
 }
- 
+
 /**
  * Returns the logged-in member's apologies.
  */
@@ -4218,7 +4540,7 @@ function getMyApologies() {
   result.sort(function(a, b) { return b.date.localeCompare(a.date); });
   return result;
 }
- 
+
 /**
  * Returns apologies for a date — checks single-day and long-term approved ranges.
  * When selectedGroups is provided, only returns apologies whose session groups
@@ -4231,31 +4553,31 @@ function getApologiesForDate(dateStr, selectedGroups) {
   if (!sheet) return {};
   var data = sheet.getDataRange().getValues();
   var result = {};
- 
+
   for (var i = 1; i < data.length; i++) {
     var rowType = data[i][3].toString();
     // Skip administrative requests — they live in this sheet but are NOT apologies.
     if (isRequestType_(rowType)) continue;
- 
+
     var rowDate = formatSheetDate_(data[i][0]);
     var status = data[i][8].toString();
     var endDate = data[i][9] ? formatSheetDate_(data[i][9]) : "";
     var name = data[i][1].toString();
     var apologyGroups = data[i][11] ? data[i][11].toString().split(",").map(function(g){return g.trim();}).filter(Boolean) : [];
- 
+
     // Session-group filter: if the apology specifies groups AND we're recording specific
     // groups, only match when they overlap. Apologies with no groups match any session.
     var groupMatch = true;
     if (selectedGroups && selectedGroups.length && apologyGroups.length) {
       groupMatch = apologyGroups.some(function(g){ return selectedGroups.indexOf(g) !== -1; });
     }
- 
+
     // Single-day: date matches, not rejected/revoked, group overlaps
     if (!endDate && rowDate === dateStr && groupMatch && status !== "Rejected" && status !== "Revoked" && status !== "Applied") {
       var onTime = data[i][7].toString() === "Yes";
       result[name] = { type: data[i][3].toString(), reason: data[i][4].toString(), onTime: onTime, status: status, rowIndex: i+1, longTerm: false };
     }
- 
+
     // Long-term: date falls within approved range (applies to all sessions that day)
     if (endDate && status === "Approved" && dateStr >= rowDate && dateStr <= endDate) {
       result[name] = { type: "Absent", reason: data[i][4].toString(), onTime: true, status: "Approved", rowIndex: i+1, longTerm: true };
@@ -4263,11 +4585,12 @@ function getApologiesForDate(dateStr, selectedGroups) {
   }
   return result;
 }
- 
+
 /**
  * Returns all apologies for admin review queue.
  */
 function getApologyQueue() {
+  requireManagement_();
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(APOLOGIES_SHEET);
   if (!sheet) return [];
@@ -4328,7 +4651,7 @@ function getApologyQueue() {
       });
     }
   }
- 
+
   // Sort: Pending first, then by date descending
   var statusOrder = { "Pending": 0, "Applied": 1, "Approved": 1, "Rejected": 2, "Revoked": 2 };
   result.sort(function(a, b) {
@@ -4339,7 +4662,7 @@ function getApologyQueue() {
   });
   return result;
 }
- 
+
 /**
  * Admin approves an apology.
  */
@@ -4351,7 +4674,7 @@ function approveApology(rowIndex, note) {
   if (note) sheet.getRange(rowIndex, 11).setValue(note);
   return { success: true };
 }
- 
+
 /**
  * Admin rejects an apology. If it was already applied to attendance, cascades the change.
  */
@@ -4359,18 +4682,18 @@ function rejectApology(rowIndex, note) {
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(APOLOGIES_SHEET);
   if (!sheet) throw new Error("Apologies sheet not found.");
- 
+
   var data = sheet.getRange(rowIndex, 1, 1, 11).getValues()[0];
   var currentStatus = data[8].toString();
   var memberName = data[1].toString();
   var dateStr = formatSheetDate_(data[0]);
   var apologyType = data[3].toString();
- 
+
   // Set status to Rejected or Revoked
   var newStatus = (currentStatus === "Applied" || currentStatus === "Approved") ? "Revoked" : "Rejected";
   sheet.getRange(rowIndex, 9).setValue(newStatus);
   if (note) sheet.getRange(rowIndex, 11).setValue(note);
- 
+
   // If was applied, cascade: change attendance LE→LU or AE→AU
   var cascaded = 0;
   if (currentStatus === "Applied") {
@@ -4392,7 +4715,7 @@ function rejectApology(rowIndex, note) {
       if (cascaded > 0) refreshAllRegisters_(ss);
     }
   }
- 
+
   // For approved long-term apologies being revoked, cascade all dates in range
   if (currentStatus === "Approved" && data[9]) {
     var endDate = formatSheetDate_(data[9]);
@@ -4411,10 +4734,10 @@ function rejectApology(rowIndex, note) {
       if (cascaded > 0) refreshAllRegisters_(ss);
     }
   }
- 
+
   return { success: true, newStatus: newStatus, cascaded: cascaded };
 }
- 
+
 /**
  * Gets the upcoming session time for a member to know their apology deadline.
  * Used in My Attendance tab.
@@ -4426,41 +4749,41 @@ function rejectApology(rowIndex, note) {
 function markApologiesApplied_(ss, dateStr, records) {
   var sheet = ss.getSheetByName(APOLOGIES_SHEET);
   if (!sheet) return;
- 
+
   var data = sheet.getDataRange().getValues();
- 
+
   // Build a lookup of saved attendance: name -> status
   var attLookup = {};
   for (var r = 0; r < records.length; r++) {
     attLookup[records[r].name] = records[r].status;
   }
- 
+
   for (var i = 1; i < data.length; i++) {
     var apologyType = data[i][3].toString();
     // Skip administrative requests — not apologies.
     if (isRequestType_(apologyType)) continue;
- 
+
     var status = data[i][8].toString();
     if (status !== "Pending" && status !== "Approved") continue;
- 
+
     var name = data[i][1].toString();
     var attStatus = attLookup[name];
     if (!attStatus) continue;
- 
+
     var rowDate = formatSheetDate_(data[i][0]);
     var endDate = data[i][9] ? formatSheetDate_(data[i][9]) : "";
- 
+
     // Check date match: single-day exact match, or long-term range
     var dateMatch = false;
     if (!endDate && rowDate === dateStr) dateMatch = true;
     if (endDate && dateStr >= rowDate && dateStr <= endDate) dateMatch = true;
     if (!dateMatch) continue;
- 
+
     // Check if attendance status matches apology type
     var applied = false;
     if (apologyType === "Late" && attStatus === "Late Excused") applied = true;
     if (apologyType === "Absent" && attStatus === "Absent Excused") applied = true;
- 
+
     if (applied && !endDate) {
       // Single-day: mark as Applied
       sheet.getRange(i + 1, 9).setValue("Applied");
@@ -4468,17 +4791,17 @@ function markApologiesApplied_(ss, dateStr, records) {
     // Long-term: keep as Approved (don't change to Applied since it covers multiple dates)
   }
 }
- 
+
 function getNextSessionInfo() {
   var ss = getSpreadsheet_();
   var email = Session.getActiveUser().getEmail();
   if (!email) return null;
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) return null;
- 
+
   var memberGroups = member.groups.filter(function(g) { return GROUPS.indexOf(g) !== -1; });
   if (memberGroups.length === 0) return null;
- 
+
   // Check today and next 7 days
   var now = new Date();
   for (var d = 0; d < 7; d++) {
@@ -4508,7 +4831,7 @@ function getNextSessionInfo() {
   }
   return null;
 }
- 
+
 /**
  * Returns ALL upcoming sessions (practices + meetings) for the member in the next 7 days,
  * each as a separate entry with its own deadline. This supports per-session apologies.
@@ -4520,19 +4843,19 @@ function getUpcomingSessions() {
   if (!email) return [];
   var member = findMemberByEmail_(ss, email.toLowerCase());
   if (!member) return [];
- 
+
   var memberGroups = member.groups.filter(function(g) { return GROUPS.indexOf(g) !== -1; });
   if (memberGroups.length === 0) return [];
- 
+
   var now = new Date();
   var days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
   var sessions = [];
- 
+
   for (var d = 0; d < 7; d++) {
     var checkDate = new Date(now.getTime() + d * 86400000);
     var dateStr = Utilities.formatDate(checkDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
     var dayName = days[checkDate.getDay()];
- 
+
     // --- Practices from Schedule (group the member belongs to) ---
     var schedSheet = ss.getSheetByName(SCHEDULE_SHEET);
     var practiceTimes = {}; // time -> groups[]
@@ -4553,7 +4876,7 @@ function getUpcomingSessions() {
     for (var pt in practiceTimes) {
       sessions.push(buildSessionEntry_(dateStr, dayName, pt, "Practice", "Practice", practiceTimes[pt], checkDate, now));
     }
- 
+
     // --- Meetings on this exact date that apply to the member ---
     var meetings = getMeetings(dateStr);
     for (var mi = 0; mi < meetings.length; mi++) {
@@ -4564,13 +4887,13 @@ function getUpcomingSessions() {
       sessions.push(buildSessionEntry_(dateStr, dayName, mt.time, "Meeting", mt.title, mt.groups, checkDate, now));
     }
   }
- 
+
   // Only future sessions (deadline-relevant): keep those whose session time hasn't passed
   sessions = sessions.filter(function(s){ return !s.sessionPassed; });
   sessions.sort(function(a, b){ return (a.date + a.time).localeCompare(b.date + b.time); });
   return sessions;
 }
- 
+
 /** Builds a single session entry with deadline logic. */
 function buildSessionEntry_(dateStr, dayName, time, type, title, groups, checkDate, now) {
   var tp = time.split(":");
@@ -4590,9 +4913,9 @@ function buildSessionEntry_(dateStr, dayName, time, type, title, groups, checkDa
     sessionKey: dateStr + "|" + time + "|" + groups.slice().sort().join(",")
   };
 }
- 
+
 function formatSheetDate_(v){return v instanceof Date?Utilities.formatDate(v,Session.getScriptTimeZone(),"yyyy-MM-dd"):v.toString();}
- 
+
 function parseFlexDate_(str) {
   if(!str)return"";if(/^\d{4}-\d{1,2}-\d{1,2}$/.test(str))return str;
   var p=str.split(/[\/\-]/);if(p.length===3){var a=parseInt(p[0],10),b=parseInt(p[1],10),c=parseInt(p[2],10);
@@ -4600,9 +4923,9 @@ function parseFlexDate_(str) {
     if(p[2].length===4){if(b>12)return String(c)+"-"+String(a).padStart(2,"0")+"-"+String(b).padStart(2,"0");return String(c)+"-"+String(b).padStart(2,"0")+"-"+String(a).padStart(2,"0");}}
   return str;
 }
- 
+
 function rebuildRegisters(){refreshAllRegisters_(getSpreadsheet_());}
- 
+
 /**
  * Manually triggers probation evaluation. Callable from the UI.
  */
