@@ -1,0 +1,67 @@
+
+<!-- SignatureFooter.html — Strathmore Chorale · PLUG-AND-PLAY signature footer
+     ═══════════════════════════════════════════════════════════════════════════
+     This is the ONE file you swap each year. Everything BELOW the person's title
+     lives here: the tricolour rule, the university logo, the contact block, the
+     social icons, and the Theme-of-the-Year banner.
+
+     HOW THE SIGNATURE IS ASSEMBLED (see getSignatureHtml_ in Code.gs):
+         1. Intro quote     — fixed, from a constant in Code.gs (never changes)
+         2. Person block    — Name + Title, from the Signatures sheet (changes with "Sign as")
+         3. THIS FOOTER     — read from this file, same for everyone, swapped yearly
+
+     THE CONTRACT — keep these two tokens somewhere in the file and functionality
+     survives any redesign. The backend fills them from the chosen signature:
+         {{mobile}}   → the signer's phone   (Signatures sheet · Phone)
+         {{email}}    → the signer's email   (Signatures sheet · Email)
+
+     TO UPDATE FOR A NEW YEAR:
+         • Replace the Theme-of-the-Year banner <img src="…"> with the new one.
+         • Update social / logo URLs only if the university changes them.
+         • Leave {{mobile}} and {{email}} in place. Nothing in Code.gs changes.
+
+     Everything between the FOOTER start/end marker comments (just below this
+     header) is what the backend injects. Do not write those marker tokens
+     anywhere in this header text, or the extractor will match them here.
+     Email-safe: table layout, inline styles, web-safe fonts, ~600px.
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<!--FOOTER-->
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:560px;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#000000;border-collapse:collapse;">
+  <!-- tricolour band -->
+  <tr>
+    <td colspan="2" style="padding:12px 0;">
+      <div style="height:3px;line-height:3px;font-size:0;background:linear-gradient(to right,#385CAD 25%,#CC9F53 25%,#CC9F53 50%,#E43D30 50%,#E43D30 75%,#F6D180 75%);">&nbsp;</div>
+    </td>
+  </tr>
+  <!-- logo + contact -->
+  <tr>
+    <td width="110" align="center" valign="top" style="text-align:center;vertical-align:top;">
+      <a href="https://www.strathmore.edu/" target="_blank"><img alt="Strathmore University Logo" src="https://strathmore.edu/wp-content/uploads/2024/12/University-Logo-Vertical-small-2.png" width="90" style="width:90px;height:auto;border:0;" /></a>
+    </td>
+    <td valign="top" style="vertical-align:top;padding-left:16px;line-height:1.55;">
+      <p style="margin:0;">
+        <strong>Mobile:</strong>&nbsp;{{mobile}}<br />
+        <strong>Email:</strong>&nbsp;<a href="mailto:{{email}}" style="color:#385CAD;text-decoration:none;" target="_blank">{{email}}</a><br />
+        <strong>Address:</strong>&nbsp;Strathmore University, Ole Sangale Road, Madaraka Estate, Nairobi, Kenya<br />
+        <a href="https://www.strathmore.edu/" style="color:#385CAD;" target="_blank">Visit Our Website</a>
+      </p>
+      <!-- socials -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;"><tr>
+        <td style="padding-right:6px;"><a href="https://www.facebook.com/StrathmoreUniversity" target="_blank"><img src="https://strathmore.edu/wp-content/uploads/2023/08/icons8-facebook-48.png" alt="Facebook" width="20" height="20" style="border:0;height:20px;width:20px;" /></a></td>
+        <td style="padding-right:6px;"><a href="https://x.com/StrathU" target="_blank"><img src="https://strathmore.edu/wp-content/uploads/2023/08/icons8-twitterx-50.png" alt="Twitter" width="20" height="20" style="border:0;height:20px;width:20px;" /></a></td>
+        <td style="padding-right:6px;"><a href="https://www.youtube.com/user/StrathmoreUniversity" target="_blank"><img src="https://strathmore.edu/wp-content/uploads/2023/11/icons8-youtube-48.png" alt="YouTube" width="20" height="20" style="border:0;height:20px;width:20px;" /></a></td>
+        <td style="padding-right:6px;"><a href="https://www.linkedin.com/school/strathmore-university" target="_blank"><img src="https://strathmore.edu/wp-content/uploads/2023/11/icons8-linkedin-48.png" alt="LinkedIn" width="20" height="20" style="border:0;height:20px;width:20px;" /></a></td>
+        <td style="padding-right:6px;"><a href="https://www.instagram.com/strathmoreuniversity" target="_blank"><img src="https://strathmore.edu/wp-content/uploads/2023/08/icons8-instagram-48.png" alt="Instagram" width="20" height="20" style="border:0;height:20px;width:20px;" /></a></td>
+        <td style="padding-right:6px;"><a href="https://whatsapp.com/channel/0029Va6exkV0LKZMBrgX2n2t" target="_blank"><img src="https://strathmore.edu/wp-content/uploads/2024/12/icons8-whatsapp-48.png" alt="WhatsApp" width="20" height="20" style="border:0;height:20px;width:20px;" /></a></td>
+        <td><a href="https://www.tiktok.com/@strathuni" target="_blank"><img src="https://strathmore.edu/wp-content/uploads/2024/12/icons8-tiktok-48.png" alt="TikTok" width="20" height="20" style="border:0;height:20px;width:20px;" /></a></td>
+      </tr></table>
+    </td>
+  </tr>
+  <!-- Theme-of-the-Year banner — SWAP THIS IMAGE EACH YEAR -->
+  <tr>
+    <td colspan="2" style="padding-top:15px;border-top:1px dotted #000000;">
+      <img src="https://strathmore.edu/wp-content/uploads/2026/01/Email-Signature-Banner-2026.webp" alt="Strathmore University Theme of The Year" width="420" style="width:420px;max-width:100%;height:auto;border:0;display:block;" />
+    </td>
+  </tr>
+</table>
+<!--/FOOTER-->
