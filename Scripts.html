@@ -974,7 +974,7 @@ function renderApologiesView() {
 var requestTypeFilter = "all";
 function reqBucket(a) {
   if (a.type === "Section Transfer") return "transfers";
-  if (a.type === "Name Change" || a.type === "Restart Probation" || a.type === "Course Details") return "changes";
+  if (a.type === "Name Change" || a.type === "Restart Probation" || a.type === "Course Details" || a.type === "Rejoin Request") return "changes";
   return "apologies";
 }
 function requestTypeChips() {
@@ -1093,6 +1093,8 @@ function renderApologyList() {
         h += '<div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end">';
         if (a.type === "Restart Probation") {
           h += '<button class="btn-export" style="border-color:var(--present);color:var(--present)" onclick="adminApproveRestart(\'' + esc(a.name).replace(/'/g, "\\'") + '\',' + a.rowIndex + ')">Approve restart</button>';
+        } else if (a.type === "Rejoin Request") {
+          h += '<button class="btn-export" style="border-color:var(--present);color:var(--present)" onclick="approveRejoin(' + a.rowIndex + ',\'' + esc(a.name).replace(/'/g, "\\'") + '\')">Approve rejoin</button>';
         } else if (a.type === "Section Transfer") {
           h += '<button class="btn-export" style="border-color:var(--present);color:var(--present)" onclick="approveSectionTransfer(' + a.rowIndex + ',\'' + esc(a.name).replace(/'/g, "\\'") + '\')">Approve transfer</button>';
         } else if (a.type === "Name Change") {
@@ -1158,6 +1160,7 @@ function renderApologyDetail() {
   if (a.status === "Pending" && a.type === "Section Transfer") statusLabel = "PENDING \u00b7 TRANSFER REQUEST";
   if (a.status === "Pending" && a.type === "Name Change")      statusLabel = "PENDING \u00b7 NAME CHANGE";
   if (a.status === "Pending" && a.type === "Course Details")   statusLabel = "PENDING \u00b7 ACADEMIC DETAILS";
+  if (a.status === "Pending" && a.type === "Rejoin Request")   statusLabel = "PENDING \u00b7 REJOIN REQUEST";
 
   var h = '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:20px">'
         +   '<div>'
@@ -1203,6 +1206,15 @@ function renderApologyDetail() {
       +            '<span class="consequence-arrow">\u2192</span>' : '')
       +    '<span style="font-size:15px;font-weight:600;color:var(--ink)">' + esc(newC || '\u2014') + '</span>'
       + '</div>';
+  } else if (a.status === "Pending" && a.type === "Rejoin Request") {
+    var rjFirst = ((a.name || "").trim().split(/\s+/)[0]) || "They";
+    h += '<div class="eyebrow" style="margin-bottom:8px">If you approve</div>'
+      +  '<div class="consequence-preview">'
+      +    '<span class="inactive-tag" style="font-size:11px;padding:4px 9px">INACTIVE</span>'
+      +    '<span class="consequence-arrow">\u2192</span>'
+      +    '<span class="prob-tag" style="font-size:11px;padding:4px 9px">REJOINING \u00b7 RE-ENTRY PROBATION</span>'
+      + '</div>'
+      +  '<p style="font-size:12.5px;color:var(--ink-600);line-height:1.55;margin-top:12px">' + esc(rjFirst) + ' re-enters a <b>fresh probation period</b>. Their banked attendance history and points are restored, and the new re-entry probation builds on top.</p>';
   } else if (a.status === "Pending" && (a.type === "Late" || a.type === "Absent" || a.type === "Long-term")) {
     var fromStatus = a.type === "Late" ? "Late Unexcused" : "Absent Unexcused";
     var toStatus   = a.type === "Late" ? "Late Excused"   : "Absent Excused";
@@ -1228,6 +1240,9 @@ function renderApologyDetail() {
       +    '<button class="btn btn-secondary" style="padding:10px 18px;font-size:13px" onclick="selectApology(null)">Skip</button>';
     if (a.type === "Restart Probation") {
       h += '<button class="btn btn-primary" style="padding:10px 22px;font-size:13px" onclick="adminApproveRestart(\'' + esc(a.name).replace(/'/g, "\\'") + '\',' + a.rowIndex + ')">Approve restart</button>';
+    } else if (a.type === "Rejoin Request") {
+      h += '<button class="btn btn-crimson" style="padding:10px 18px;font-size:13px" onclick="adminReject(' + a.rowIndex + ')">Decline</button>';
+      h += '<button class="btn btn-primary" style="padding:10px 22px;font-size:13px" onclick="approveRejoin(' + a.rowIndex + ',\'' + esc(a.name).replace(/'/g, "\\'") + '\')">Approve rejoin</button>';
     } else if (a.type === "Section Transfer") {
       h += '<button class="btn btn-crimson" style="padding:10px 18px;font-size:13px" onclick="adminReject(' + a.rowIndex + ')">Reject</button>';
       h += '<button class="btn btn-primary" style="padding:10px 22px;font-size:13px" onclick="approveSectionTransfer(' + a.rowIndex + ',\'' + esc(a.name).replace(/'/g, "\\'") + '\')">Approve transfer</button>';
@@ -1396,11 +1411,7 @@ function renderMemberList() {
     }).join(' ');
     var rate = 60 + ((m.name.charCodeAt(0) * 13) % 38);
     var barColor = rate >= 80 ? 'var(--present)' : rate >= 60 ? 'var(--gold)' : 'var(--crimson)';
-    var statusTag = m.probation
-      ? '<span class="prob-tag" style="background:var(--crimson-100);color:var(--crimson-600)">PROB</span>'
-      : m.probationFailed
-        ? '<span class="inactive-tag">FAILED</span>'
-        : '<span class="prob-tag" style="background:var(--present-bg);color:var(--present)">ACTIVE</span>';
+    var statusTag = memberStatusBadges(m);
     var tint = { Soprano: '#F3E9CE', Alto: '#F0E0CE', Tenor: '#ECE7DE', Bass: '#E1ECDF' }[section] || 'var(--paper-200)';
     var selClass = (selectedMemberName === m.name) ? ' selected' : '';
     var safeName = esc(m.name).replace(/'/g, "\\'");
@@ -1419,11 +1430,7 @@ function renderMemberList() {
   // Mobile: card layout (hidden on desktop via CSS)
   for (var j = 0; j < f.length; j++) {
     var m2 = f[j];
-    var tags2 =
-        (!m2.active           ? ' <span class="inactive-tag">Inactive</span>' : "")
-      + (m2.probation         ? ' <span class="prob-tag">Probation</span>' : "")
-      + (m2.probationPassed   ? ' <span class="prob-tag" style="background:var(--present-bg);color:var(--present)">Passed</span>' : "")
-      + (m2.probationFailed   ? ' <span class="inactive-tag">Failed</span>' : "");
+    var tags2 = " " + memberStatusBadges(m2);
     var rd2 = [];
     for (var g2 = 0; g2 < m2.groups.length; g2++) {
       var grp2 = m2.groups[g2], rl2 = m2.roles && m2.roles[grp2] ? m2.roles[grp2] : "";
@@ -1442,6 +1449,26 @@ function renderMemberList() {
   c.innerHTML = h;
 }
 var selectedMemberName = null;
+// A member is "Rejoining" when they're active + serving a re-entry probation
+// (Members.Status === "Rejoining"). getMemberList should surface that status; we
+// also accept a rejoining flag. Rejoining reads distinctly from ordinary probation.
+function isRejoining(m) {
+  return !!(m && (m.rejoining || (m.status && String(m.status).toLowerCase() === "rejoining")));
+}
+// Single source of truth for the membership-status badge, used by the roster table,
+// the mobile cards and the detail pane. `sty` is an optional base style string.
+function memberStatusBadges(m, sty) {
+  function tag(cls, extra, label) {
+    var s = [sty || "", extra || ""].filter(Boolean).join(";");
+    return '<span class="' + cls + '"' + (s ? ' style="' + s + '"' : "") + '>' + label + '</span>';
+  }
+  if (!m.active) return tag("inactive-tag", "", "INACTIVE");
+  if (isRejoining(m)) return tag("prob-tag", "background:var(--gold-100);color:var(--gold-700)", "REJOINING");
+  if (m.probation) return tag("prob-tag", "", "PROBATION");
+  if (m.probationPassed) return tag("prob-tag", "background:var(--present-bg);color:var(--present)", "PASSED");
+  if (m.probationFailed) return tag("inactive-tag", "", "FAILED");
+  return tag("prob-tag", "background:var(--present-bg);color:var(--present)", "ACTIVE");
+}
 function selectMember(name) {
   selectedMemberName = name;
   renderMemberList();
@@ -1484,12 +1511,7 @@ function renderMemberDetail() {
   var backBtn = '<button class="back-btn member-detail-back" onclick="closeMemberDetail()"><span style="font-family:var(--f-display);font-size:14px">\u2190</span> Back to roster</button>';
 
   var initial = (m.name || '\u00b7').trim().charAt(0).toUpperCase();
-  var status =
-      (!m.active           ? '<span class="inactive-tag" style="font-size:9.5px;padding:3px 7px">INACTIVE</span>' : '')
-    + (m.probation         ? '<span class="prob-tag" style="font-size:9.5px;padding:3px 7px">PROBATION</span>' : '')
-    + (m.probationPassed   ? '<span class="prob-tag" style="font-size:9.5px;padding:3px 7px;background:var(--present-bg);color:var(--present)">PASSED</span>' : '')
-    + (m.probationFailed   ? '<span class="inactive-tag" style="font-size:9.5px;padding:3px 7px">FAILED</span>' : '')
-    + (!m.probation && !m.probationPassed && !m.probationFailed && m.active ? '<span class="prob-tag" style="font-size:9.5px;padding:3px 7px;background:var(--present-bg);color:var(--present)">ACTIVE</span>' : '');
+  var status = memberStatusBadges(m, "font-size:9.5px;padding:3px 7px");
 
   var rolesHtml = '';
   for (var g = 0; g < m.groups.length; g++) {
@@ -1595,12 +1617,22 @@ function renderMemberDetail() {
       + '</div>';
   }
 
-  // Actions
-  h +=   '<div style="display:flex;gap:8px">'
-    +      (isFullAdmin() ? '<button class="btn btn-secondary" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="showEditProfile(\'' + esc(m.name).replace(/'/g, "\\'") + '\')">Edit profile</button>' : '')
-    +      '<button class="btn btn-crimson"   style="flex:1;padding:9px 14px;font-size:12.5px" onclick="prefillOffense(\'' + esc(m.name).replace(/'/g, "\\'") + '\')">Record offense</button>'
-    +    '</div>'
-    + '</div>';
+  // Actions — inactive members get the direct Reinstate route (admin / section admin);
+  // active members keep Edit profile + Record offense.
+  var safeNm = esc(m.name).replace(/'/g, "\\'");
+  var canReinstate = (userRole === "admin" || userRole === "sectionAdmin");
+  var actions = "";
+  if (!m.active && canReinstate) {
+    actions += '<button class="btn btn-primary" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="adminReinstateMember(\'' + safeNm + '\')">Reinstate member</button>';
+  }
+  if (isFullAdmin()) {
+    actions += '<button class="btn btn-secondary" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="showEditProfile(\'' + safeNm + '\')">Edit profile</button>';
+  }
+  if (m.active) {
+    actions += '<button class="btn btn-crimson" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="prefillOffense(\'' + safeNm + '\')">Record offense</button>';
+  }
+  if (actions) h += '<div style="display:flex;gap:8px">' + actions + '</div>';
+  h += '</div>';
   c.innerHTML = h;
 }
 
@@ -3107,9 +3139,14 @@ google.script.run.withSuccessHandler(function (r) {
   document.getElementById("authScreen").style.display = "none";
 
   if (r.role === "unknown") {
+    hideAppShell_();
     document.getElementById("deniedScreen").style.display = "block";
     document.getElementById("deniedMsg").textContent = "No account is registered for this email. Contact the chorale admin to be added.";
     document.getElementById("deniedEmail").textContent = r.email || "—";
+    return;
+  }
+  if (r.role === "removed") {
+    showRejoinScreen(r);
     return;
   }
   document.getElementById("appContainer").style.display = "";
@@ -3128,6 +3165,46 @@ google.script.run.withSuccessHandler(function (r) {
   document.getElementById("deniedScreen").style.display = "block";
   document.getElementById("deniedMsg").textContent = "Error: " + e.message;
 }).getUserRole();
+
+// ── Rejoin screen (role "removed": a known member whose membership is inactive) ──
+// Calm, member-facing re-entry: explains the pause, reassures history + points are
+// kept, and offers a rejoin request form (or the awaiting-review state if pending).
+function showRejoinScreen(r) {
+  var scr = document.getElementById("rejoinScreen");
+  if (!scr) return;
+  hideAppShell_();
+  scr.style.display = "block";
+  var first = ((r.name || "").trim().split(/\s+/)[0]) || "there";
+  var fn = document.getElementById("rejoinFirstName"); if (fn) fn.textContent = first;
+  var em = document.getElementById("rejoinEmail"); if (em) em.textContent = r.email || "—";
+  setRejoinState(!!r.rejoinPending);
+}
+// The desktop shell rule sets #appContainer { display:flex !important }, which would
+// otherwise override the inline display:none and bleed the empty app in behind the
+// blocking auth screens (denied / rejoin). Force it hidden with matching priority.
+function hideAppShell_() {
+  var app = document.getElementById("appContainer");
+  if (app) app.style.setProperty("display", "none", "important");
+}
+function setRejoinState(pending) {
+  var form = document.getElementById("rejoinFormState");
+  var pend = document.getElementById("rejoinPendingState");
+  if (form) form.style.display = pending ? "none" : "block";
+  if (pend) pend.style.display = pending ? "block" : "none";
+}
+function submitRejoin() {
+  var ta = document.getElementById("rejoinReason");
+  var reason = ta ? ta.value.trim() : "";
+  var btn = document.getElementById("btnRejoin");
+  if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
+  google.script.run.withSuccessHandler(function () {
+    setRejoinState(true);
+    showToast("Rejoin request sent.", "success");
+  }).withFailureHandler(function (e) {
+    if (btn) { btn.disabled = false; btn.textContent = "Send rejoin request"; }
+    showToast(e.message || "Could not send your request.", "error");
+  }).requestRejoin(reason);
+}
 
 // Birthday banner — runs for every role, fails silent (decorative)
 function renderBirthdayBanner() {
@@ -4765,6 +4842,28 @@ function adminApproveRestart(memberName, rowIndex) {
     .approveProbationRestart(memberName);
 }
 
+// Rejoin: approve a returning member's request from the queue. The member re-enters
+// a fresh re-entry probation; approveRejoin also stamps the request row Approved.
+function approveRejoin(rowIndex, memberName) {
+  if (!confirm("Approve " + memberName + "'s rejoin request? They return on a fresh re-entry probation.")) return;
+  google.script.run.withSuccessHandler(function () {
+    showToast(memberName + " reinstated \u2014 re-entry probation started.", "success");
+    selectedApologyIdx = null;
+    loadApologyQueue();
+  }).withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
+    .approveRejoin(rowIndex, memberName);
+}
+
+// Reinstate: the direct admin route from the Members tab (no request needed).
+function adminReinstateMember(memberName) {
+  if (!confirm("Reinstate " + memberName + "? They return on a fresh re-entry probation.")) return;
+  google.script.run.withSuccessHandler(function () {
+    showToast(memberName + " reinstated \u2014 re-entry probation started.", "success");
+    refreshMemberList();
+  }).withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
+    .adminReinstateMember(memberName);
+}
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  10.  EXPORT HANDLERS
@@ -4943,6 +5042,7 @@ function emailSessionSummary(dateStr,group){
 //  COMMUNIQUÉ (admin message sender) — renders into #communiqueContent
 // =============================================================
 var communiqueLoaded=false, communiqueData={recipientType:"all"};
+var COMM_SECTIONS=["Choir","Band","Orchestra"];
 
 function loadCommunique(){
   communiqueLoaded=true;
@@ -4958,35 +5058,64 @@ function loadCommunique(){
 function renderCommunique(){
   var c=document.getElementById("communiqueContent");if(!c)return;
   var opts=communiqueData.options||{groups:[],members:[],signatures:[]};
+  var full=isFullAdmin();
+  // Scoped admins (section admin / rep) can't blast everyone — default them to their section(s).
+  if(!full && communiqueData.recipientType==="all") communiqueData.recipientType="groups";
+  var rtype=communiqueData.recipientType||"all";
   var h='';
 
   // Subject
   h+='<div class="form-group"><label class="form-label">Subject *</label><input type="text" id="commSubject" class="form-input" placeholder="What is this message about?" oninput="renderCommuniquePreview()"></div>';
 
-  // Body
-  h+='<div class="form-group"><label class="form-label">Message *</label><textarea id="commBody" class="form-input" rows="8" placeholder="Type your message here. Leave a blank line between paragraphs." oninput="renderCommuniquePreview()"></textarea></div>';
+  // Message — rich-text editor (bold/italic/underline/lists/link) + name merge chips
+  h+='<div class="form-group">'
+   +   '<label class="form-label">Message *</label>'
+   +   '<div class="comm-editor-wrap">'
+   +     '<div class="comm-toolbar">'
+   +       '<button type="button" class="comm-tb-btn" onmousedown="return false" onclick="commExec(&#39;bold&#39;)" title="Bold"><b>B</b></button>'
+   +       '<button type="button" class="comm-tb-btn" onmousedown="return false" onclick="commExec(&#39;italic&#39;)" title="Italic"><i>I</i></button>'
+   +       '<button type="button" class="comm-tb-btn" onmousedown="return false" onclick="commExec(&#39;underline&#39;)" title="Underline"><u>U</u></button>'
+   +       '<span class="comm-tb-div"></span>'
+   +       '<button type="button" class="comm-tb-btn" onmousedown="return false" onclick="commExec(&#39;insertUnorderedList&#39;)" title="Bulleted list">\u2022</button>'
+   +       '<button type="button" class="comm-tb-btn" onmousedown="return false" onclick="commExec(&#39;insertOrderedList&#39;)" title="Numbered list">1.</button>'
+   +       '<button type="button" class="comm-tb-btn" onmousedown="return false" onclick="commExec(&#39;outdent&#39;)" title="Decrease indent">\u21e4</button>'
+   +       '<button type="button" class="comm-tb-btn" onmousedown="return false" onclick="commExec(&#39;indent&#39;)" title="Increase indent">\u21e5</button>'
+   +       '<button type="button" class="comm-tb-btn" onmousedown="return false" onclick="commLink()" title="Insert link">Link</button>'
+   +       '<span class="comm-tb-spacer"></span>'
+   +       '<span class="comm-merge-label">Name</span>'
+   +       '<button type="button" class="comm-merge-chip" onmousedown="return false" onclick="insertCommToken(&#39;{first name}&#39;)" title="Insert the recipient\u2019s first name">First</button>'
+   +       '<button type="button" class="comm-merge-chip" onmousedown="return false" onclick="insertCommToken(&#39;{last name}&#39;)" title="Insert the recipient\u2019s last name">Last</button>'
+   +       '<button type="button" class="comm-merge-chip" onmousedown="return false" onclick="insertCommToken(&#39;{full name}&#39;)" title="Insert the recipient\u2019s full name">Full</button>'
+   +     '</div>'
+   +     '<div id="commBody" class="comm-editor" contenteditable="true" data-placeholder="Type your message\u2026 use the toolbar to format." oninput="renderCommuniquePreview()"></div>'
+   +   '</div>'
+   +   '<p class="comm-merge-hint">Format with the toolbar, and drop in <code>{first name}</code>, <code>{last name}</code> or <code>{full name}</code> \u2014 each member sees their own when the email sends.</p>'
+   + '</div>';
 
   // Signature
   h+='<div class="form-group"><label class="form-label">Sign as</label><select id="commSignature" class="form-input" onchange="renderCommuniquePreview()">';
   for(var s=0;s<opts.signatures.length;s++)h+='<option value="'+esc(opts.signatures[s].key)+'">'+esc(opts.signatures[s].label)+'</option>';
   h+='</select></div>';
 
-  // Recipient type
+  // Recipient type — "All active members" is full-admin only
   h+='<div class="form-group"><label class="form-label">Send to</label>';
   h+='<div class="checkbox-row" style="flex-direction:column;align-items:stretch;gap:6px">';
-  h+='<label class="checkbox-label"><input type="radio" name="commRecip" value="all" checked onchange="onCommRecipChange()"> All active members</label>';
-  h+='<label class="checkbox-label"><input type="radio" name="commRecip" value="groups" onchange="onCommRecipChange()"> Specific sections</label>';
-  h+='<label class="checkbox-label"><input type="radio" name="commRecip" value="individuals" onchange="onCommRecipChange()"> Specific members</label>';
-  h+='<label class="checkbox-label"><input type="radio" name="commRecip" value="admins" onchange="onCommRecipChange()"> Admins only</label>';
+  h+='<label class="checkbox-label'+(full?'':' is-locked')+'"><input type="radio" name="commRecip" value="all"'+(rtype==="all"?' checked':'')+(full?'':' disabled')+' onchange="onCommRecipChange()"> All active members'+(full?'':'<span class="lock-note">Full admins</span>')+'</label>';
+  h+='<label class="checkbox-label"><input type="radio" name="commRecip" value="groups"'+(rtype==="groups"?' checked':'')+' onchange="onCommRecipChange()"> Specific sections</label>';
+  h+='<label class="checkbox-label"><input type="radio" name="commRecip" value="individuals"'+(rtype==="individuals"?' checked':'')+' onchange="onCommRecipChange()"> Specific members</label>';
+  h+='<label class="checkbox-label"><input type="radio" name="commRecip" value="admins"'+(rtype==="admins"?' checked':'')+' onchange="onCommRecipChange()"> Admins only</label>';
   h+='</div></div>';
 
-  // Group selector (hidden unless groups chosen)
-  h+='<div class="form-group" id="commGroupSelect" style="display:none"><label class="form-label">Sections</label><div class="checkbox-row">';
-  for(var g=0;g<opts.groups.length;g++)h+='<label class="checkbox-label"><input type="checkbox" class="commGroup" value="'+esc(opts.groups[g])+'" onchange="renderCommuniquePreview()"> '+esc(opts.groups[g])+'</label>';
+  // Section selector — only the caller's own section(s) are clickable
+  h+='<div class="form-group" id="commGroupSelect" style="display:'+(rtype==="groups"?"block":"none")+'"><label class="form-label">Sections</label><div class="checkbox-row">';
+  for(var g=0;g<COMM_SECTIONS.length;g++){
+    var gg=COMM_SECTIONS[g], okg=sectionAllowed(gg), pre=(!full&&okg&&userAccess.allowedSections.length===1);
+    h+='<label class="checkbox-label'+(okg?'':' section-locked')+'"><input type="checkbox" class="commGroup" value="'+esc(gg)+'"'+(pre?' checked':'')+(okg?'':' disabled')+' onchange="renderCommuniquePreview()"> '+esc(gg)+(okg?'':'<span class="lock-note">Locked</span>')+'</label>';
+  }
   h+='</div></div>';
 
-  // Individual selector (hidden unless individuals chosen)
-  h+='<div class="form-group" id="commMemberSelect" style="display:none"><label class="form-label">Members</label>';
+  // Individual selector — members are scoped to the caller by the backend
+  h+='<div class="form-group" id="commMemberSelect" style="display:'+(rtype==="individuals"?"block":"none")+'"><label class="form-label">Members</label>';
   h+='<input type="text" id="commMemberSearch" class="form-input" placeholder="Search members..." oninput="renderCommMemberList()" style="margin-bottom:8px">';
   h+='<div id="commMemberList" style="max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px"></div></div>';
 
@@ -4997,16 +5126,85 @@ function renderCommunique(){
   h+='<button class="btn-primary" id="btnSendComm" onclick="sendCommunique()">Send Message</button>';
 
   c.innerHTML=h;
+  if(rtype==="individuals")renderCommMemberList();
   renderCommuniquePreview();
 }
 
 function onCommRecipChange(){
-  var val=document.querySelector('input[name="commRecip"]:checked').value;
+  var sel=document.querySelector('input[name="commRecip"]:checked');if(!sel)return;
+  var val=sel.value;
+  if(val==="all"&&!isFullAdmin())val="groups"; // safety net
   communiqueData.recipientType=val;
   document.getElementById("commGroupSelect").style.display=val==="groups"?"block":"none";
   document.getElementById("commMemberSelect").style.display=val==="individuals"?"block":"none";
   if(val==="individuals")renderCommMemberList();
   renderCommuniquePreview();
+}
+
+// ── Rich-text editor helpers (message box is a contenteditable div) ──────────
+function commExec(cmd){var ed=document.getElementById("commBody");if(!ed)return;ed.focus();try{document.execCommand(cmd,false,null);}catch(e){}renderCommuniquePreview();}
+function commLink(){var ed=document.getElementById("commBody");if(!ed)return;ed.focus();var url=prompt("Link URL");if(!url)return;if(!/^(https?:|mailto:)/i.test(url))url="https://"+url;try{document.execCommand("createLink",false,url);}catch(e){}renderCommuniquePreview();}
+// Insert a merge token (e.g. "{first name}") at the caret
+function insertCommToken(token){var ed=document.getElementById("commBody");if(!ed)return;ed.focus();var ok=false;try{ok=document.execCommand("insertText",false,token);}catch(e){}if(!ok){ed.appendChild(document.createTextNode(token));}renderCommuniquePreview();}
+function commBodyHtml(){var ed=document.getElementById("commBody");return ed?ed.innerHTML:"";}
+function commBodyText(){var ed=document.getElementById("commBody");return ed?(ed.innerText||ed.textContent||""):"";}
+
+// A representative recipient NAME for the live preview — first chosen recipient,
+// else first member on the (scoped) roster, so tokens resolve visibly.
+function commSampleName(){
+  var opts=communiqueData.options||{};
+  var members=opts.members||[];
+  var rtype=communiqueData.recipientType||"all";
+  var pick=null;
+  if(rtype==="individuals"){
+    var sel=selectedCommMembers();
+    if(sel.length){var m=members.filter(function(x){return x.email===sel[0];})[0];if(m)pick=m.name;}
+  } else if(rtype==="groups"){
+    var gs=[];document.querySelectorAll(".commGroup:checked").forEach(function(cb){gs.push(cb.value);});
+    if(gs.length){var mm=members.filter(function(x){return (x.groups||[]).some(function(g){return gs.indexOf(g)!==-1;});})[0];if(mm)pick=mm.name;}
+  }
+  if(!pick&&members.length)pick=members[0].name;
+  return pick||"Achieng\u2019 Otieno";
+}
+// Replace {first name}/{last name}/{full name} in HTML with highlighted sample values
+function commResolveTokens(html,fullName){
+  var parts=String(fullName||"").trim().split(/\s+/);
+  var first=parts[0]||fullName||"there";
+  var last=parts.length>1?parts[parts.length-1]:first;
+  var full=fullName||first;
+  function wrap(v){return '<span class="cp-merge">'+esc(v)+'</span>';}
+  return String(html)
+    .replace(/\{\s*first\s*name\s*\}/gi,wrap(first))
+    .replace(/\{\s*last\s*name\s*\}/gi,wrap(last))
+    .replace(/\{\s*full\s*name\s*\}/gi,wrap(full));
+}
+// Faithful sign-off: fixed intro + person block (swaps with "Sign as") + plug-and-play brand footer
+function commSignatureBlock(sig){
+  sig=sig||{};
+  var name=sig.name||"The Strathmore Chorale Committee";
+  var title=sig.title||"";
+  var phone=sig.phone||"";
+  var email=sig.email||"chorale@strathmore.edu";
+  var BL="#385CAD",BLD="#0b5394",GD="#CC9F53",RD="#E43D30",LG="#F6D180";
+  var h='';
+  h+='<div style="font-family:Georgia,serif;font-style:italic;font-size:10.5px;line-height:1.55;color:var(--ink-700);margin-bottom:12px">\u201cStrathmore Chorale is a choral and instrumental group that offers a platform for performance, using music as the main medium, within Strathmore University and the community at large.\u201d</div>';
+  h+='<div style="font-size:12.5px;font-weight:700;color:'+BLD+'">'+esc(name)+'</div>';
+  h+='<div style="font-size:11px;font-weight:600;color:var(--ink-700);margin-top:1px">'+(title?esc(title)+' | ':'')+'<span style="color:'+BL+'">Strathmore Chorale</span></div>';
+  h+='<div style="height:3px;border-radius:2px;margin:10px 0;background:linear-gradient(to right,'+BL+' 25%,'+GD+' 25%,'+GD+' 50%,'+RD+' 50%,'+RD+' 75%,'+LG+' 75%)"></div>';
+  h+='<div style="display:flex;gap:12px;align-items:flex-start">';
+  h+=  '<div style="flex-shrink:0;width:52px;height:52px;border:1px dashed var(--paper-300);border-radius:6px;display:flex;align-items:center;justify-content:center;text-align:center;font-family:var(--f-mono);font-size:7px;letter-spacing:.06em;color:var(--ink-400);line-height:1.25">STRATH LOGO</div>';
+  h+=  '<div style="font-size:10px;line-height:1.5;color:var(--ink-700)">';
+  if(phone)h+='<div><b>Mobile:</b> '+esc(phone)+'</div>';
+  h+=      '<div><b>Email:</b> <span style="color:'+BL+'">'+esc(email)+'</span></div>';
+  h+=      '<div><b>Address:</b> Strathmore University, Ole Sangale Rd, Nairobi</div>';
+  h+=      '<div style="color:'+BL+'">Visit Our Website</div>';
+  h+=      '<div style="display:flex;gap:5px;margin-top:6px">';
+  for(var si=0;si<7;si++)h+='<span style="width:13px;height:13px;border-radius:3px;background:var(--paper-200)"></span>';
+  h+=      '</div>';
+  h+=  '</div>';
+  h+='</div>';
+  h+='<div style="margin-top:12px;padding-top:10px;border-top:1px dotted var(--ink-300)"><div style="height:44px;border:1px dashed var(--paper-300);border-radius:6px;display:flex;align-items:center;justify-content:center;font-family:var(--f-mono);font-size:8px;letter-spacing:.14em;color:var(--ink-400);text-transform:uppercase">Theme of the Year banner \u00b7 2026</div></div>';
+  return h;
 }
 
 function renderCommMemberList(){
@@ -5057,12 +5255,13 @@ function renderCommuniquePreview(){
   var subjEl=document.getElementById("commSubject");
   if(!subjEl){c.innerHTML='<div class="empty-pane">Live letterhead preview will show here.</div>';return;}
   var subject=(subjEl.value||"").trim();
-  var body=(document.getElementById("commBody").value||"").trim();
-  var sigSel=document.getElementById("commSignature");
-  var sigLabel=sigSel&&sigSel.options.length?sigSel.options[sigSel.selectedIndex].text:"The Strathmore Chorale";
-  var sigParts=sigLabel.split("·");
-  var sigName=(sigParts[0]||sigLabel).trim();
-  var sigRole=(sigParts[1]||"").trim();
+  var bodyHtml=commBodyHtml();
+  var bodyText=commBodyText().trim();
+  var personalize=/\{\s*(first|last|full)\s*name\s*\}/i.test(bodyText);
+  var sampleFull=commSampleName();
+  var opts=communiqueData.options||{};
+  var sigKey=(document.getElementById("commSignature")||{}).value||"";
+  var sig=((opts.signatures)||[]).filter(function(x){return x.key===sigKey;})[0]||{};
 
   // Recipient summary
   var rtype=communiqueData.recipientType||"all";
@@ -5078,14 +5277,12 @@ function renderCommuniquePreview(){
   }
   if(document.getElementById("commCcAdmins")&&document.getElementById("commCcAdmins").checked)rec+=" · cc admins";
 
-  // Body paragraphs (blank-line separated)
-  var paras=body?body.split(/\n\s*\n/).map(function(p){
-    return '<p style="margin:0 0 12px;font-size:11.5px;line-height:1.6;color:var(--ink-700)">'+esc(p).replace(/\n/g,"<br>")+'</p>';
-  }).join(""):'<p style="margin:0;font-size:11.5px;line-height:1.6;color:var(--ink-400);font-style:italic">Your message will appear here, on the letterhead, exactly as members will read it.</p>';
+  // Body — already HTML from the rich editor; resolve name tokens, don't re-escape
+  var bodyRendered=bodyText?'<div style="font-size:11.5px;line-height:1.6;color:var(--ink-700)">'+commResolveTokens(bodyHtml,sampleFull)+'</div>':'<p style="margin:0;font-size:11.5px;line-height:1.6;color:var(--ink-400);font-style:italic">Your message will appear here, on the letterhead, exactly as members will read it.</p>';
 
   var h='<div class="cp-frame">'
     + '<div class="cp-bar"><span class="form-label">Live letterhead preview</span><span class="cp-file">EmailLayout.html</span></div>'
-    + '<div class="cp-recipients"><b>TO</b> '+esc(rec)+'</div>'
+    + '<div class="cp-recipients"><b>TO</b> '+esc(rec)+(personalize?' <span class="cp-merge" style="margin-left:auto">\u2726 personalised</span>':'')+'</div>'
     + '<div class="cp-sheet">'
     +   '<div style="height:3px;background:linear-gradient(90deg,var(--gold-700),var(--gold),var(--gold-300))"></div>'
     +   '<div style="background:var(--ink);padding:18px 20px 16px">'
@@ -5096,12 +5293,11 @@ function renderCommuniquePreview(){
     +     '<div style="width:24px;height:2px;background:var(--gold);margin:10px 0"></div>'
     +     '<div class="display" style="font-size:21px;line-height:1.12;color:var(--paper)">'+(esc(subject)||'<span style="color:var(--ink-400)">Your subject line</span>')+'</div>'
     +   '</div>'
-    +   '<div style="background:#fff;padding:18px 20px 6px">'+paras+'</div>'
-    +   '<div style="background:#fff;padding:0 20px 18px">'
+    +   '<div style="background:#fff;padding:18px 20px 6px">'+bodyRendered+'</div>'
+    +   '<div style="background:#fff;padding:8px 20px 18px">'
     +     '<div style="border-top:1px solid var(--paper-200);margin-bottom:12px"></div>'
-    +     '<div style="font-size:11px;color:var(--ink-700);margin-bottom:2px">Warm regards,</div>'
-    +     '<div style="font-family:var(--f-display);font-style:italic;font-size:15px;color:var(--ink)">'+esc(sigName)+'</div>'
-    +     (sigRole?'<div style="font-family:var(--f-mono);font-size:8.5px;letter-spacing:.16em;color:var(--ink-400);text-transform:uppercase;margin-top:2px">'+esc(sigRole)+'</div>':'')
+    +     '<div style="font-size:11px;color:var(--ink-700);margin-bottom:8px">Warm regards,</div>'
+    +     commSignatureBlock(sig)
     +   '</div>'
     +   '<div style="background:var(--paper);border-top:1px solid var(--paper-200);padding:14px 20px;text-align:center">'
     +     '<div style="font-family:var(--f-display);font-style:italic;font-size:12.5px;color:var(--ink)">One voice from many.</div>'
@@ -5113,16 +5309,18 @@ function renderCommuniquePreview(){
 
 function sendCommunique(){
   var subject=document.getElementById("commSubject").value.trim();
-  var body=document.getElementById("commBody").value.trim();
+  var bodyHtml=commBodyHtml();
+  var bodyText=commBodyText().trim();
   if(!subject){showToast("Subject is required.","error");return;}
-  if(!body){showToast("Message is required.","error");return;}
+  if(!bodyText){showToast("Message is required.","error");return;}
 
   var rtype=communiqueData.recipientType||"all";
-  var payload={subject:subject,body:body,signatureKey:document.getElementById("commSignature").value,recipientType:rtype,ccAdmins:document.getElementById("commCcAdmins").checked};
+  if(rtype==="all"&&!isFullAdmin()){showToast("Only full admins can send to all members.","error");return;}
+  var payload={subject:subject,body:bodyHtml,format:"html",signatureKey:document.getElementById("commSignature").value,recipientType:rtype,ccAdmins:document.getElementById("commCcAdmins").checked};
 
   if(rtype==="groups"){
-    var groups=[];document.querySelectorAll(".commGroup:checked").forEach(function(cb){groups.push(cb.value);});
-    if(groups.length===0){showToast("Select at least one section.","error");return;}
+    var groups=[];document.querySelectorAll(".commGroup:checked").forEach(function(cb){if(sectionAllowed(cb.value))groups.push(cb.value);});
+    if(groups.length===0){showToast("Select at least one section you manage.","error");return;}
     payload.groups=groups;
   } else if(rtype==="individuals"){
     var emails=selectedCommMembers();
@@ -5135,7 +5333,8 @@ function sendCommunique(){
   google.script.run.withSuccessHandler(function(r){
     btn.disabled=false;btn.textContent="Send Message";
     showToast("Message sent to "+r.count+" recipient(s).","success");
-    document.getElementById("commSubject").value="";document.getElementById("commBody").value="";
+    document.getElementById("commSubject").value="";var ed=document.getElementById("commBody");if(ed)ed.innerHTML="";
+    renderCommuniquePreview();
   }).withFailureHandler(function(e){btn.disabled=false;btn.textContent="Send Message";showToast("Failed: "+e.message,"error");
   }).sendCommunique(payload);
 }

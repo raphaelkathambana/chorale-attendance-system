@@ -52,6 +52,7 @@ var CONSECUTIVE_ABSENCE_PENALTY = -2;
  
 // Offense penalty per offense
 var OFFENSE_PENALTY = -3;
+var AU_REMOVAL_ENABLED = false;
 
 function getSpreadsheet_() { return SpreadsheetApp.openById(SPREADSHEET_ID); }
  
@@ -258,6 +259,12 @@ function getAccess_(ss) {
     return { role: "member", level: 0, email: email, name: memberInfo.name,
              groups: memberInfo.groups, section: "", repGroup: "", allowedSections: [] };
   }
+  // Known member whose membership is inactive — they get the rejoin screen, not
+  // the "we don't know you" screen.
+  if (memberInfo) {
+    return { role: "removed", level: 0, email: email, name: memberInfo.name,
+             groups: memberInfo.groups, section: "", repGroup: "", allowedSections: [] };
+  }
   return { role: "unknown", level: -1, email: email, name: "", groups: [], section: "", repGroup: "", allowedSections: [] };
 }
 
@@ -313,6 +320,37 @@ function scopeMemberPredicate_(access, ss) {
 }
 
 /** Diagnostic — lists Band/Orchestra instruments with no family mapping. Run in editor. */
+
+/**
+ * DIAGNOSTIC — lists this project's triggers so you can see exactly which
+ * handler runs on a schedule. Time-based triggers run the latest SAVED code,
+ * not a deployed version, so this is the real answer to "what will fire?".
+ * Only "dailyTasks_" runs the consecutive-AU sweep; "dailyBirthdayReminder_"
+ * does birthdays only.
+ */
+function listProjectTriggers() {
+  var trigs = ScriptApp.getProjectTriggers();
+  if (!trigs.length) { Logger.log("No triggers installed."); return []; }
+  var out = trigs.map(function (t) {
+    var info = { handler: t.getHandlerFunction(), source: t.getEventType().toString() };
+    info.runsAuSweep = (info.handler === "dailyTasks_");
+    return info;
+  });
+  Logger.log(JSON.stringify(out, null, 2));
+  out.forEach(function (o) {
+    Logger.log(o.handler + (o.runsAuSweep ? "  <-- RUNS THE AU SWEEP (removals possible)" : "  (no AU sweep)"));
+  });
+  return out;
+}
+
+/** Removes all scheduled triggers — use if you want to pause automation entirely. */
+function deleteAllTriggers() {
+  var n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); n++; });
+  Logger.log("Deleted " + n + " trigger(s).");
+  return n;
+}
+
 function listUnmappedInstruments() {
   var ss = getSpreadsheet_();
   var famMap = getInstrumentFamilyMap_(ss);
@@ -372,11 +410,28 @@ function getUserRole() {
   }
   // Backward compatible: role "admin" | "member" as before, PLUS the new tiers
   // "sectionAdmin" | "elevated" and scope fields the client can use to gate UI.
-  return {
+  var out = {
     role: a.role, email: a.email, name: a.name, groups: a.groups,
     section: a.section, repGroup: a.repGroup, allowedSections: a.allowedSections,
     isAdminLike: a.level >= ROLE_LEVELS.elevated
   };
+  // Removed members need to know whether a rejoin request is already pending,
+  // so the UI can show "awaiting review" instead of the submit form.
+  if (a.role === "removed") {
+    out.rejoinPending = false;
+    try {
+      var sh = ss.getSheetByName(APOLOGIES_SHEET);
+      if (sh && sh.getLastRow() > 1) {
+        var rows = sh.getDataRange().getValues();
+        for (var i = 1; i < rows.length; i++) {
+          if (rows[i][1].toString().trim() === a.name &&
+              rows[i][3].toString() === "Rejoin Request" &&
+              rows[i][8].toString() === "Pending") { out.rejoinPending = true; break; }
+        }
+      }
+    } catch(e) {}
+  }
+  return out;
 }
 
 /**
@@ -853,12 +908,14 @@ function evaluateProbation_(ss) {
     if (stats.attended >= required) {
       // Clean pass: ≥80%
       outcome = "passed_clean";
+      try { setMembershipState_(ss, m.name, "Active", "Active", ""); } catch(e) {}
       sheet.getRange(row, probIdx + 1).setValue("Passed");
       sheet.getRange(row, probEndIdx + 1).setValue(stats.lastSessionDate);
       sheet.getRange(row, penaltyIdx + 1).setValue(0);
     } else if (stats.attended >= minRequired) {
       // Conditional pass: 50-79% — passed but with penalty
       outcome = "passed_conditional";
+      try { setMembershipState_(ss, m.name, "Active", "Active", ""); } catch(e) {}
       penalty = (required - stats.attended) * PROBATION_PENALTY_MULTIPLIER;
       sheet.getRange(row, probIdx + 1).setValue("Passed");
       sheet.getRange(row, probEndIdx + 1).setValue(stats.lastSessionDate);
@@ -870,6 +927,7 @@ function evaluateProbation_(ss) {
       sheet.getRange(row, probEndIdx + 1).setValue(stats.lastSessionDate);
       sheet.getRange(row, penaltyIdx + 1).setValue(0);
       if (statusIdx !== -1) sheet.getRange(row, statusIdx + 1).setValue("Inactive");
+      try { setMembershipState_(ss, m.name, null, "Left", todayStr_()); } catch(e) {}
     }
 
     // Reset acknowledged flag for new outcome
@@ -1222,7 +1280,11 @@ function syncConsecutiveAuOffenses_(ss) {
     }
   });
 
-  var added = 0;
+  // Only ACTIVE members are eligible for removal; look up records once.
+  var memberByName = {};
+  readAllMembers_(ss).forEach(function(m){ memberByName[m.name] = m; });
+
+  var added = 0, removed = 0;
   for (var name in byMember) {
     var dates = Object.keys(byMember[name]).sort(); // chronological
     var run = 0;
@@ -1244,14 +1306,99 @@ function syncConsecutiveAuOffenses_(ss) {
         run = 0;
       }
     }
+
+    // (B) REMOVAL — based ONLY on the member's CURRENT standing: are their most
+    // recent sessions an unbroken run of 3+ unexcused absences? A member who had
+    // a 3-AU set months ago but has attended since is NOT removed (they already
+    // recovered) — though the historical offense above still stands on their record.
+    var trailing = 0;
+    for (var t = dates.length - 1; t >= 0; t--) {
+      if (byMember[name][dates[t]] === "Absent Unexcused") trailing++;
+      else break;
+    }
+    if (AU_REMOVAL_ENABLED && trailing >= CONSECUTIVE_ABSENCE_COUNT) {
+      var mem = memberByName[name];
+      if (mem && mem.active) {
+        try {
+          setMembershipState_(ss, name, "Inactive", "Left", dates[dates.length - 1]);
+          sendRemovalNotice_(ss, mem);
+          removed++;
+        } catch (e) { Logger.log("removal failed for " + name + ": " + e); }
+      }
+    }
   }
-  return { added: added };
+  return { added: added, removed: removed };
 }
 
 /** Public wrapper — admins can run a manual sweep; also called by the daily trigger. */
+
+/**
+ * DRY RUN — reports who WOULD be removed/offended by the 3-AU rule, without
+ * writing anything. Run this from the editor BEFORE deploying the removal
+ * behaviour so a retroactive sweep doesn't surprise you.
+ */
+function previewConsecutiveAuRemovals() {
+  var ss = getSpreadsheet_();
+  var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (!attSheet) return { sets: [], wouldRemove: [] };
+  var data = attSheet.getDataRange().getValues();
+
+  var byMember = {};
+  for (var i = 1; i < data.length; i++) {
+    var ds = formatSheetDate_(data[i][0]);
+    var n = data[i][1].toString();
+    var st = data[i][4].toString();
+    if (!byMember[n]) byMember[n] = {};
+    byMember[n][ds] = bestStatus_(byMember[n][ds], st);
+  }
+
+  var existing = readOffenses_(ss), existingKeys = {};
+  existing.forEach(function (o) {
+    if (o.description && o.description.indexOf(CONSEC_AU_OFFENSE_TAG) !== -1) {
+      if (!existingKeys[o.name]) existingKeys[o.name] = {};
+      existingKeys[o.name][o.date] = true;
+    }
+  });
+
+  var memberByName = {};
+  readAllMembers_(ss).forEach(function (m) { memberByName[m.name] = m; });
+
+  var sets = [], wouldRemove = [];
+  for (var name in byMember) {
+    var dates = Object.keys(byMember[name]).sort(), run = 0;
+    // (A) historical sets -> offenses
+    for (var d = 0; d < dates.length; d++) {
+      if (byMember[name][dates[d]] === "Absent Unexcused") {
+        run++;
+        if (run >= CONSECUTIVE_ABSENCE_COUNT) {
+          var key = dates[d];
+          var already = existingKeys[name] && existingKeys[name][key];
+          sets.push({ name: name, thirdAuDate: key, alreadyLogged: !!already });
+          run = 0;
+        }
+      } else { run = 0; }
+    }
+    // (B) CURRENT trailing streak -> removal
+    var trailing = 0;
+    for (var t = dates.length - 1; t >= 0; t--) {
+      if (byMember[name][dates[t]] === "Absent Unexcused") trailing++;
+      else break;
+    }
+    var mem = memberByName[name];
+    if (trailing >= CONSECUTIVE_ABSENCE_COUNT && mem && mem.active) {
+      wouldRemove.push({ name: name, currentStreak: trailing, lastSession: dates[dates.length - 1] });
+    }
+  }
+  var newSets = sets.filter(function (s) { return !s.alreadyLogged; }).length;
+  Logger.log("Completed 3-AU sets in history: " + sets.length + " (" + newSets + " not yet logged as offenses)" +
+             "\nWould REMOVE " + wouldRemove.length + " active member(s) currently sitting at 3+ AU:\n" +
+             (wouldRemove.map(function (w) { return w.name + " (streak " + w.currentStreak + ", last " + w.lastSession + ")"; }).join("\n") || "(none)"));
+  return { sets: sets, newOffenses: newSets, wouldRemove: wouldRemove };
+}
+
 function runConsecutiveAuSweep() {
   var r = syncConsecutiveAuOffenses_(getSpreadsheet_());
-  return { success: true, added: r.added };
+  return { success: true, added: r.added, removed: r.removed };
 }
 
 
@@ -2656,7 +2803,7 @@ function buildEmail_(bodyHtml, opts) {
 
 /**
  * Returns the HTML signature for a given key from the Signatures sheet.
- * Falls back to the Gmail signature file (EmailSignature.html) for "general",
+ * Assembles: intro quote + person block + plug-and-play brand footer.
  * or a minimal text signature if nothing is found.
  *
  * Signatures sheet layout:
@@ -2664,34 +2811,104 @@ function buildEmail_(bodyHtml, opts) {
  *   general | Strathmore Chorale | Attendance System | chorale@... |
  *   chairperson | Raphael K. | Chairperson | raphael@... | +254...
  */
-function getSignatureHtml_(key) {
+
+// -------------------------------------------------------
+//  SIGNATURE SYSTEM (§3) — three layers:
+//    1. Intro quote      — fixed, same for everyone (constant below)
+//    2. Person block     — per "Sign as" pick, from the Signatures sheet
+//    3. Brand/year footer— logo, address, socials, Theme-of-the-Year banner.
+//       PLUG-AND-PLAY: paste next year's approved footer into the Apps Script
+//       HTML file "SignatureFooter" (or set Config cell key signatureFooterHtml)
+//       and every signature updates. Nothing else changes.
+// -------------------------------------------------------
+var SIGNATURE_INTRO_HTML =
+  '<p style="margin:14px 0 12px;font-family:Georgia,\'Times New Roman\',serif;font-style:italic;' +
+  'font-size:13px;line-height:1.6;color:#6B6058;">' +
+  '\u201CStrathmore Chorale is a choral and instrumental group that offers a platform for ' +
+  'performance, using music as the main medium, within Strathmore University and the adjacent ' +
+  'community at large. We are a mixed choir which gives different singing and playing ' +
+  'opportunities to those with an interest in Music and performing arts.\u201D</p>';
+
+/** Reads one person's signature fields from the Signatures sheet. */
+function getSignaturePerson_(key) {
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(SIGNATURES_SHEET);
-
-  if (sheet) {
-    var data = sheet.getDataRange().getValues();
-    var headers = data[0].map(function(x){ return x.toString().trim().toLowerCase(); });
-    var ki = headers.indexOf("key"), ni = headers.indexOf("name"),
-        ti = headers.indexOf("title"), ei = headers.indexOf("email"), pi = headers.indexOf("phone");
-    for (var i = 1; i < data.length; i++) {
-      if (data[i][ki].toString().trim().toLowerCase() === key.toLowerCase()) {
-        var name = ni!==-1 ? data[i][ni].toString() : "";
-        var title = ti!==-1 ? data[i][ti].toString() : "";
-        var sigEmail = ei!==-1 ? data[i][ei].toString() : "";
-        var phone = pi!==-1 ? data[i][pi].toString() : "";
-        return buildTextSignature_(name, title, sigEmail, phone);
-      }
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  var data = sheet.getDataRange().getValues();
+  var h = data[0].map(function (x) { return x.toString().trim().toLowerCase(); });
+  var ki = h.indexOf("key"), ni = h.indexOf("name"), ti = h.indexOf("title"),
+      ei = h.indexOf("email"), pi = h.indexOf("phone");
+  if (ki === -1) return null;
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][ki].toString().trim().toLowerCase() === String(key || "").toLowerCase()) {
+      return {
+        key: data[i][ki].toString().trim(),
+        name:  ni !== -1 ? data[i][ni].toString() : "",
+        title: ti !== -1 ? data[i][ti].toString() : "",
+        email: ei !== -1 ? data[i][ei].toString() : "",
+        phone: pi !== -1 ? data[i][pi].toString() : ""
+      };
     }
   }
+  return null;
+}
 
-  // Fallback for "general" — use the full Gmail signature file if present
-  if (key === "general") {
+/** Renders the per-person block — Name + Title only. Contact lives in the footer. */
+function renderPersonBlock_(p) {
+  if (!p) return "";
+  var BLUE = "#0b5394", BLUE2 = "#385CAD";
+  var h = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 12px;">' +
+          '<tr><td style="font-family:Arial,Helvetica,sans-serif;">';
+  if (p.name)  h += '<div style="font-size:15px;font-weight:bold;color:' + BLUE + ';">' + p.name + '</div>';
+  if (p.title) h += '<div style="font-size:12px;font-weight:bold;color:#2A2522;margin-top:2px;">' +
+                    p.title + ' | <a style="color:' + BLUE2 + ';text-decoration:none;">Strathmore Chorale</a></div>';
+  h += '</td></tr></table>';
+  return h;
+}
+
+/**
+ * Plug-and-play brand/year footer. Swap once a year (SignatureFooter HTML file,
+ * or Config cell key "signatureFooterHtml"). Fills the per-person contact tokens
+ * {{mobile}} / {{email}} from the same person record used by the person block.
+ */
+function getSignatureFooterHtml_(person) {
+  var raw = "";
+  try { raw = HtmlService.createHtmlOutputFromFile("SignatureFooter").getContent(); } catch (e) {}
+  if (!raw) {
     try {
-      return HtmlService.createHtmlOutputFromFile("EmailSignature").getContent();
-    } catch(e) {}
+      var ss = getSpreadsheet_(), sheet = ss.getSheetByName(CONFIG_SHEET);
+      if (sheet && sheet.getLastRow() > 1) {
+        var data = sheet.getDataRange().getValues();
+        for (var i = 1; i < data.length && !raw; i++) {
+          for (var c = 0; c < data[i].length - 1; c++) {
+            if (data[i][c].toString().trim() === "signatureFooterHtml") { raw = data[i][c + 1].toString(); break; }
+          }
+        }
+      }
+    } catch (e2) {}
   }
+  if (!raw) return "";
 
-  return buildTextSignature_("Strathmore Chorale", "", "", "");
+  // Use only the content between the <!--FOOTER--> markers when present.
+  var m = raw.match(/<!--FOOTER-->([\s\S]*?)<!--\/FOOTER-->/i);
+  var footer = m ? m[1] : raw;
+
+  var phone = person && person.phone ? person.phone : "";
+  var email = person && person.email ? person.email : "";
+  footer = footer.replace(/\{\{\s*mobile\s*\}\}/g, phone)
+                 .replace(/\{\{\s*email\s*\}\}/g, email);
+  // No phone → drop the whole "Mobile:" line (tag may carry attributes)
+  if (!phone) footer = footer.replace(/<strong[^>]*>Mobile:<\/strong>[\s\S]*?<br[^>]*>/i, "");
+  return footer;
+}
+
+function getSignatureHtml_(key) {
+  key = key || "general";
+  var person = getSignaturePerson_(key);
+  var intro  = SIGNATURE_INTRO_HTML;
+  // ONE signature system for everyone (including "general"):
+  // intro + person block (name/title) + plug-and-play footer (contact + brand).
+  return intro + renderPersonBlock_(person) + getSignatureFooterHtml_(person);
 }
 
 /** Builds a simple HTML signature block from fields. */
@@ -2711,17 +2928,25 @@ function buildTextSignature_(name, title, email, phone) {
 function getSignatureOptions() {
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(SIGNATURES_SHEET);
-  var options = [{ key: "general", label: "General (automated)" }];
-  if (!sheet) return options;
+  var options = [{ key: "general", label: "General (automated)", name: "", title: "", email: "", phone: "" }];
+  if (!sheet || sheet.getLastRow() < 2) return options;
   var data = sheet.getDataRange().getValues();
-  var headers = data[0].map(function(x){ return x.toString().trim().toLowerCase(); });
-  var ki = headers.indexOf("key"), ni = headers.indexOf("name"), ti = headers.indexOf("title");
+  var h = data[0].map(function (x) { return x.toString().trim().toLowerCase(); });
+  var ki = h.indexOf("key"), ni = h.indexOf("name"), ti = h.indexOf("title"),
+      ei = h.indexOf("email"), pi = h.indexOf("phone");
+  if (ki === -1) return options;
   for (var i = 1; i < data.length; i++) {
     var key = data[i][ki].toString().trim();
     if (!key || key.toLowerCase() === "general") continue;
-    var name = ni!==-1 ? data[i][ni].toString() : key;
-    var title = ti!==-1 ? data[i][ti].toString() : "";
-    options.push({ key: key, label: name + (title ? " — " + title : "") });
+    var name  = ni !== -1 ? data[i][ni].toString() : key;
+    var title = ti !== -1 ? data[i][ti].toString() : "";
+    options.push({
+      key: key,
+      label: name + (title ? " — " + title : ""),
+      name: name, title: title,
+      email: ei !== -1 ? data[i][ei].toString() : "",
+      phone: pi !== -1 ? data[i][pi].toString() : ""
+    });
   }
   return options;
 }
@@ -2736,17 +2961,21 @@ function getSignatureOptions() {
  */
 function getCommuniqueRecipientOptions() {
   var ss = getSpreadsheet_();
-  var all = readAllMembers_(ss);
-  var members = [];
-  for (var i = 0; i < all.length; i++) {
-    if (!all[i].active || !all[i].email) continue;
-    members.push({ name: all[i].name, email: all[i].email, groups: all[i].groups });
-  }
-  members.sort(function(a, b) { return a.name.localeCompare(b.name); });
+  var access = getAccess_(ss);
+  if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
+  var inScope = scopeMemberPredicate_(access, ss);
+
+  var groups = (access.level >= ROLE_LEVELS.admin) ? GROUPS.slice() : (access.allowedSections || []).slice();
+  var members = readAllMembers_(ss)
+    .filter(function (m) { return m.active && m.email && inScope(m); })
+    .map(function (m) { return { name: m.name, email: m.email, groups: m.groups }; })
+    .sort(function (a, b) { return a.name.localeCompare(b.name); });
+
   return {
-    groups: GROUPS,
+    groups: groups,
     members: members,
-    signatures: getSignatureOptions()
+    signatures: getSignatureOptions(),
+    canSendAll: access.level >= ROLE_LEVELS.admin
   };
 }
 
@@ -2761,49 +2990,16 @@ function getCommuniqueRecipientOptions() {
  */
 function sendCommunique(payload) {
   var ss = getSpreadsheet_();
+  var access = getAccess_(ss);
+  if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
   if (!payload.subject || !payload.subject.trim()) throw new Error("Subject is required.");
-  if (!payload.body || !payload.body.trim()) throw new Error("Message body is required.");
+  if (!payload.body || !String(payload.body).replace(/<[^>]*>/g, "").trim())
+    throw new Error("Message body is required.");
+  if (payload.recipientType === "all" && access.level < ROLE_LEVELS.admin)
+    throw new Error("Only full admins can send to all members.");
 
-  var recipients = [];
-  var rtype = payload.recipientType || "all";
-
-  if (rtype === "admins") {
-    recipients = getAdminEmails_(ss);
-  } else {
-    var all = readAllMembers_(ss);
-    for (var i = 0; i < all.length; i++) {
-      var m = all[i];
-      if (!m.active || !m.email) continue;
-      if (m.probation && m.probationFailed) continue; // skip failed members
-
-      if (rtype === "all") {
-        recipients.push(m.email);
-      } else if (rtype === "groups") {
-        var inGroup = m.groups.some(function(g) { return (payload.groups || []).indexOf(g) !== -1; });
-        if (inGroup) recipients.push(m.email);
-      } else if (rtype === "individuals") {
-        if ((payload.emails || []).indexOf(m.email) !== -1) recipients.push(m.email);
-      }
-    }
-  }
-
-  // Dedupe
-  var seen = {}, unique = [];
-  for (var r = 0; r < recipients.length; r++) {
-    var e = recipients[r].toLowerCase();
-    if (!seen[e]) { seen[e] = true; unique.push(recipients[r]); }
-  }
-  recipients = unique;
-
-  if (recipients.length === 0) throw new Error("No recipients matched your selection.");
-
-  // Convert the plain-text body into HTML paragraphs
-  var bodyHtml = communiqueBodyToHtml_(payload.body);
-
-  var html = buildEmail_(bodyHtml, {
-    headerTitle: payload.subject,
-    signatureKey: payload.signatureKey || "general"
-  });
+  var recipients = resolveCommuniqueRecipients_(ss, payload, access); // [{email,name}], scoped
+  if (!recipients.length) throw new Error("No recipients matched your selection.");
 
   var ccAdmins = "";
   if (payload.ccAdmins) {
@@ -2811,13 +3007,134 @@ function sendCommunique(payload) {
     if (admins.length > 0) ccAdmins = admins.join(",");
   }
 
-  return sendBulkBcc_(recipients, payload.subject, html, { cc: ccAdmins });
+  function makeHtml(bodyText) {
+    return buildEmail_(communiqueBodyToSafeHtml_(bodyText, payload.format), {
+      headerTitle: payload.subject,
+      signatureKey: payload.signatureKey || "general"
+    });
+  }
+
+  // No personalisation -> one efficient BCC blast (unchanged behaviour)
+  if (!hasNameTokens_(payload.body)) {
+    return sendBulkBcc_(recipients.map(function (r) { return r.email; }),
+                        payload.subject, makeHtml(payload.body), { cc: ccAdmins });
+  }
+
+  // Personalised -> one send per recipient. Check quota up front rather than half-send.
+  var remaining = MailApp.getRemainingDailyQuota();
+  if (recipients.length > remaining) {
+    throw new Error("Not enough email quota today: need " + recipients.length +
+                    ", only " + remaining + " left.");
+  }
+  for (var i = 0; i < recipients.length; i++) {
+    var mail = {
+      to: recipients[i].email,
+      subject: payload.subject,
+      htmlBody: makeHtml(fillNameTokens_(payload.body, recipients[i].name)),
+      name: EMAIL_FROM_NAME
+    };
+    if (ccAdmins && i === 0) mail.cc = ccAdmins;
+    MailApp.sendEmail(mail);
+  }
+  return { success: true, count: recipients.length, personalized: true };
+}
+
+/** Resolves the scoped recipient list as [{email, name}] — never trusts the client. */
+function resolveCommuniqueRecipients_(ss, payload, access) {
+  var rtype = payload.recipientType || "all";
+  var inScope = scopeMemberPredicate_(access, ss);
+  var out = {};
+  function add(email, name) {
+    if (!email) return;
+    var k = email.toLowerCase();
+    if (!out[k]) out[k] = { email: email, name: name || "" };
+  }
+
+  if (rtype === "admins") {
+    var nameBy = {};
+    readAllMembers_(ss).forEach(function (m) { if (m.email) nameBy[m.email.toLowerCase()] = m.name; });
+    getAdminEmails_(ss).forEach(function (e) { add(e, nameBy[e.toLowerCase()] || ""); });
+    return Object.keys(out).map(function (k) { return out[k]; });
+  }
+
+  var allowed = access.allowedSections || [];
+  readAllMembers_(ss).forEach(function (m) {
+    if (!m.active || !m.email) return;
+    if (m.probation && m.probationFailed) return;
+    if (access.level < ROLE_LEVELS.admin && !inScope(m)) return; // section / rep-group scope
+    if (rtype === "all") {
+      add(m.email, m.name);
+    } else if (rtype === "groups") {
+      var gs = (payload.groups || []).filter(function (g) {
+        return access.level >= ROLE_LEVELS.admin || allowed.indexOf(g) !== -1;
+      });
+      if (m.groups.some(function (g) { return gs.indexOf(g) !== -1; })) add(m.email, m.name);
+    } else if (rtype === "individuals") {
+      if ((payload.emails || []).indexOf(m.email) !== -1) add(m.email, m.name);
+    }
+  });
+  return Object.keys(out).map(function (k) { return out[k]; });
 }
 
 /**
  * Converts plain text (with line breaks) into safe HTML paragraphs.
  * Double newline = new paragraph; single newline = <br>.
  */
+
+// -------------------------------------------------------
+//  COMMUNIQUÉ HELPERS — name tokens (§1) + rich text (§2)
+// -------------------------------------------------------
+var COMMUNIQUE_NAME_TOKENS = /\{\s*(first|last|full)\s*name\s*\}/gi;
+
+/** True if the body contains any {first name} / {last name} / {full name} token. */
+function hasNameTokens_(text) {
+  return /\{\s*(first|last|full)\s*name\s*\}/i.test(String(text || ""));
+}
+
+/** Replaces name tokens with this recipient's own name. Unknown name -> "there". */
+function fillNameTokens_(text, fullName) {
+  var parts = String(fullName || "").trim().split(/\s+/).filter(String);
+  var first = parts[0] || "there";
+  var last  = parts.length > 1 ? parts[parts.length - 1] : first;
+  var full  = fullName || first;
+  return String(text).replace(/\{\s*(first|last|full)\s*name\s*\}/gi, function (m, which) {
+    which = which.toLowerCase();
+    return which === "first" ? first : (which === "last" ? last : full);
+  });
+}
+
+/**
+ * Allowlist sanitiser for admin-authored rich text. Apps Script has no DOM, so this
+ * is a regex pass: strip script/style blocks, event handlers, javascript: hrefs, and
+ * any tag outside the allowlist (keeping its inner text).
+ */
+function sanitizeEmailHtml_(html) {
+  var s = String(html || "");
+  s = s.replace(/<\s*(script|style)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, "");
+  s = s.replace(/<\s*(script|style)[^>]*>/gi, "");
+  s = s.replace(/\son\w+\s*=\s*"[^"]*"/gi, "").replace(/\son\w+\s*=\s*'[^']*'/gi, "");
+  s = s.replace(/\son\w+\s*=\s*[^\s>]+/gi, "");
+  s = s.replace(/(href\s*=\s*["']?)\s*javascript:[^"'>\s]*/gi, "$1#");
+  var ALLOWED = ["p","br","b","strong","i","em","u","ul","ol","li","a","span","div"];
+  s = s.replace(/<\s*\/?\s*([a-zA-Z0-9]+)([^>]*)>/g, function (tag, name, attrs) {
+    if (ALLOWED.indexOf(name.toLowerCase()) === -1) return "";
+    // keep only href/style on allowed tags
+    var kept = "";
+    var href = /href\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i.exec(attrs);
+    if (href && name.toLowerCase() === "a") kept += " href=" + href[1];
+    var style = /style\s*=\s*("[^"]*"|'[^']*')/i.exec(attrs);
+    if (style) kept += " style=" + style[1];
+    return tag.indexOf("</") === 0 ? "</" + name + ">" : "<" + name + kept + ">";
+  });
+  return s;
+}
+
+/** Branches on format: HTML from the rich editor, or legacy plain text. */
+function communiqueBodyToSafeHtml_(body, format) {
+  if (format === "html") return sanitizeEmailHtml_(body);
+  return communiqueBodyToHtml_(body);
+}
+
 function communiqueBodyToHtml_(text) {
   var escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   var paragraphs = escaped.split(/\n\s*\n/);
@@ -3553,10 +3870,20 @@ function makeBirthdayPoster(email) {
       var mem = { name: members[i].name, first: bdFirst_(members[i].name),
                   email: members[i].email, photo: members[i].photo,
                   age: dob ? bdAge_(dob, new Date()) : null };
-      var png = generateBirthdayPoster_(mem);
-      var file = DriveApp.createFile(png).setName("Birthday Poster - " + mem.name + ".png");
+      var blob = generateBirthdayPoster_(mem);
+      // Use the blob's ACTUAL type — forcing ".png" onto a PDF fallback produced
+      // files that would not open. Name/extension now follow the real content.
+      var ctype = blob.getContentType() || "";
+      var isPng = ctype.indexOf("png") !== -1;
+      var ext = isPng ? ".png" : ".pdf";
+      var file = DriveApp.createFile(blob).setName("Birthday Poster - " + mem.name + ext);
       try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch(e) {}
-      return { success: true, url: file.getUrl(), name: mem.name };
+      return {
+        success: true, url: file.getUrl(), name: mem.name,
+        format: isPng ? "png" : "pdf",
+        downloadUrl: "https://drive.google.com/uc?export=download&id=" + file.getId(),
+        note: isPng ? "" : "Exported as PDF — enable the Google Slides API advanced service for PNG posters."
+      };
     }
   }
   throw new Error("Member not found.");
@@ -3724,7 +4051,10 @@ function exportSlideAsPng_(presentationId, slideObjectId, name) {
       });
       if (thumb && thumb.contentUrl) {
         var resp = UrlFetchApp.fetch(thumb.contentUrl);
-        return resp.getBlob().setName("Birthday Poster - " + name + ".png");
+        // Force the content type — the fetched blob can arrive as octet-stream,
+        // which makes the downloaded file unopenable.
+        return resp.getBlob().setContentType("image/png")
+                   .setName("Birthday Poster - " + name + ".png");
       }
     }
   } catch(e) {
@@ -3736,7 +4066,8 @@ function exportSlideAsPng_(presentationId, slideObjectId, name) {
   var url = "https://docs.google.com/presentation/d/" + presentationId + "/export/pdf";
   var token = ScriptApp.getOAuthToken();
   var pdf = UrlFetchApp.fetch(url, { headers: { Authorization: "Bearer " + token } });
-  return pdf.getBlob().setName("Birthday Poster - " + name + ".pdf");
+  return pdf.getBlob().setContentType("application/pdf")
+            .setName("Birthday Poster - " + name + ".pdf");
 }
 
 // -------------------------------------------------------
@@ -4101,6 +4432,158 @@ function approveNameChange(rowIndex, memberName) {
  * @param {Object} changes — { courseFaculty, courseName, yearOfStudy }
  * @param {string} reason
  */
+
+// -------------------------------------------------------
+//  MEMBERSHIP STATE (removal & rejoin)
+//  Members.Status:            Active | Rejoining | Inactive
+//  MemberDetails.Member Status: Active | Rejoining | Left  (also Alumnus/Memorial)
+//  A member removed for 3 unexcused absences keeps ALL historical records. While
+//  Inactive they are not rostered, so no further absences accrue and their points
+//  sit frozen ("banked"). Passing a re-entry probation restores them to Active and
+//  their banked history counts again, with the new probation attendance on top.
+// -------------------------------------------------------
+var MEMBERS_REMOVED_ON_COL = "Removed On";
+
+/** Sets a member's status in BOTH sheets. Pass null to leave one untouched. */
+function setMembershipState_(ss, memberName, membersStatus, detailsStatus, removedOnDate) {
+  ss = ss || getSpreadsheet_();
+  // --- Members sheet ---
+  var sheet = ss.getSheetByName(MEMBERS_SHEET);
+  if (sheet && sheet.getLastRow() > 1) {
+    var data = sheet.getDataRange().getValues();
+    var h = data[0].map(function(x){ return x.toString().trim().toLowerCase(); });
+    var nameIdx = h.indexOf("name"), statusIdx = h.indexOf("status");
+    var remIdx = h.indexOf(MEMBERS_REMOVED_ON_COL.toLowerCase());
+    if (remIdx === -1 && removedOnDate !== undefined) {
+      var col = sheet.getLastColumn() + 1;
+      sheet.getRange(1, col).setValue(MEMBERS_REMOVED_ON_COL).setFontWeight("bold");
+      remIdx = col - 1;
+    }
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][nameIdx].toString().trim() !== memberName) continue;
+      if (membersStatus && statusIdx !== -1) sheet.getRange(i + 1, statusIdx + 1).setValue(membersStatus);
+      if (removedOnDate !== undefined && remIdx !== -1) sheet.getRange(i + 1, remIdx + 1).setValue(removedOnDate || "");
+      break;
+    }
+  }
+  // --- Member Details sheet ---
+  if (detailsStatus) {
+    var ds = ss.getSheetByName(MEMBER_DETAILS_SHEET);
+    if (ds && ds.getLastRow() > 1) {
+      var dmap = headerIndexMap_(ds);
+      var msIdx = dmap["member status"];
+      if (msIdx != null) {
+        var dd = ds.getDataRange().getValues();
+        for (var r = 1; r < dd.length; r++) {
+          if (dd[r][0].toString().trim() === memberName) {
+            ds.getRange(r + 1, msIdx + 1).setValue(detailsStatus);
+            break;
+          }
+        }
+      }
+    }
+  }
+}
+
+/** Emails the removed member and the admins when a 3-AU removal fires. */
+function sendRemovalNotice_(ss, member) {
+  var admins = getAdminEmails_(ss);
+  var appUrl = APP_URL || ScriptApp.getService().getUrl();
+  try {
+    if (member.email) {
+      var body = "<p>Hi " + member.name + ",</p>" +
+        "<p>Our records show three consecutive unexcused absences, so your membership has been set to <b>inactive</b>.</p>" +
+        "<p>Your attendance history and points are kept safely on file. If you would like to return, sign in and submit a " +
+        "<b>rejoin request</b> — once an admin approves it you will serve a short re-entry probation, after which your previous record is restored.</p>" +
+        '<p><a href="' + appUrl + '">Open the attendance system</a></p>';
+      MailApp.sendEmail({ to: member.email, subject: "Your Chorale membership is now inactive",
+                          htmlBody: buildEmail_(body, { headerTitle: "Membership Update", signatureKey: "general" }),
+                          name: EMAIL_FROM_NAME });
+    }
+  } catch(e) { Logger.log("removal member email: " + e); }
+  try {
+    if (admins.length) {
+      MailApp.sendEmail({ to: admins.join(","), subject: "Member set inactive — " + member.name,
+        htmlBody: buildEmail_("<p><b>" + member.name + "</b> reached three consecutive unexcused absences and has been set to " +
+          "<b>Inactive</b> (Member Status: Left). An offense was recorded. Their history is preserved; they may submit a rejoin request.</p>",
+          { headerTitle: "Automatic Removal", signatureKey: "general" }), name: EMAIL_FROM_NAME });
+    }
+  } catch(e) { Logger.log("removal admin email: " + e); }
+}
+
+/** MEMBER — submit a request to rejoin after being set inactive. */
+function requestRejoin(reason) {
+  var ss = getSpreadsheet_();
+  var email = Session.getActiveUser().getEmail();
+  if (!email) throw new Error("Could not detect your email.");
+  var member = findMemberByEmail_(ss, email.toLowerCase());
+  if (!member) throw new Error("No member record found.");
+  if (member.active) throw new Error("Your membership is already active.");
+  var sheet = ensureApologiesSheet_(ss);
+  // Block duplicate pending requests
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][1].toString().trim() === member.name &&
+        data[i][3].toString() === "Rejoin Request" &&
+        data[i][8].toString() === "Pending") {
+      throw new Error("You already have a rejoin request awaiting review.");
+    }
+  }
+  var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+  sheet.appendRow([todayStr_(), member.name, email, "Rejoin Request", reason || "", now, "", "N/A", "Pending", "", ""]);
+  try {
+    var admins = getAdminEmails_(ss);
+    if (admins.length) MailApp.sendEmail({ to: admins.join(","), subject: "Rejoin request — " + member.name,
+      htmlBody: buildEmail_("<p><b>" + member.name + "</b> has asked to rejoin.</p><p>Reason: " + (reason || "—") + "</p>",
+        { headerTitle: "Rejoin Request", signatureKey: "general" }), name: EMAIL_FROM_NAME });
+  } catch(e) {}
+  return { success: true };
+}
+
+/** ADMIN — approve a rejoin request: member enters re-entry probation. */
+function approveRejoin(rowIndex, memberName) {
+  requireManagement_();
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(APOLOGIES_SHEET);
+  if (!sheet) throw new Error("Requests sheet not found.");
+  reinstateMemberToProbation_(ss, memberName);
+  sheet.getRange(rowIndex, 9).setValue("Approved");
+  sheet.getRange(rowIndex, 11).setValue("Rejoin approved — re-entry probation started");
+  return { success: true, name: memberName };
+}
+
+/** ADMIN — reinstate a member directly, without a request. */
+function adminReinstateMember(memberName) {
+  requireManagement_();
+  reinstateMemberToProbation_(getSpreadsheet_(), memberName);
+  return { success: true, name: memberName };
+}
+
+/** Shared: put a returning member into a fresh probation period. */
+function reinstateMemberToProbation_(ss, memberName) {
+  var sheet = ss.getSheetByName(MEMBERS_SHEET);
+  if (!sheet) throw new Error("Members sheet not found.");
+  var data = sheet.getDataRange().getValues();
+  var h = data[0].map(function(x){ return x.toString().trim().toLowerCase(); });
+  var nameIdx = h.indexOf("name"), probIdx = h.indexOf("probation"),
+      startIdx = h.indexOf("probation start"), endIdx = h.indexOf("probation end"),
+      penIdx = h.indexOf("probation penalty"), ackIdx = h.indexOf("probation acknowledged");
+  var today = todayStr_();
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][nameIdx].toString().trim() !== memberName) continue;
+    var row = i + 1;
+    if (probIdx !== -1)  sheet.getRange(row, probIdx + 1).setValue("Yes");
+    if (startIdx !== -1) sheet.getRange(row, startIdx + 1).setValue(today);
+    if (endIdx !== -1)   sheet.getRange(row, endIdx + 1).setValue("");
+    if (penIdx !== -1)   sheet.getRange(row, penIdx + 1).setValue("");
+    if (ackIdx !== -1)   sheet.getRange(row, ackIdx + 1).setValue("");
+    break;
+  }
+  // Rejoining members ARE rostered (they must attend to complete probation)
+  setMembershipState_(ss, memberName, "Rejoining", "Rejoining", "");
+  return true;
+}
+
 function requestCourseDetailsChange(changes, reason) {
   var ss = getSpreadsheet_();
   var email = Session.getActiveUser().getEmail();
