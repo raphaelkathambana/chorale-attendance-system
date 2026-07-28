@@ -5052,6 +5052,7 @@ function loadCommunique(){
   google.script.run.withSuccessHandler(function(opts){
     communiqueData.options=opts;
     renderCommunique();
+    refreshScheduledCount();
   }).withFailureHandler(function(e){c.innerHTML='<p class="loading">Error: '+esc(e.message)+'</p>';}).getCommuniqueRecipientOptions();
 }
 
@@ -5062,6 +5063,8 @@ function renderCommunique(){
   // Scoped admins (section admin / rep) can't blast everyone — default them to their section(s).
   if(!full && communiqueData.recipientType==="all") communiqueData.recipientType="groups";
   var rtype=communiqueData.recipientType||"all";
+  if(!communiqueData.sendMode)communiqueData.sendMode="now";
+  var mode=communiqueData.sendMode;
   var h='';
 
   // Subject
@@ -5092,6 +5095,17 @@ function renderCommunique(){
    +   '<p class="comm-merge-hint">Format with the toolbar, and drop in <code>{first name}</code>, <code>{last name}</code> or <code>{full name}</code> \u2014 each member sees their own when the email sends.</p>'
    + '</div>';
 
+  // Attachments — files go out as real attachments OR a Drive link (auto-chosen by size)
+  h+='<div class="form-group"><label class="form-label">Attachments</label>'
+   +   '<div class="comm-dropzone" id="commDropzone" ondragover="commDragOver(event)" ondragleave="commDragLeave(event)" ondrop="commDrop(event)">'
+   +     '<input type="file" id="commFileInput" multiple style="display:none" onchange="onCommFilesPicked(this.files)">'
+   +     '<span class="comm-dz-glyph">\u25A4</span>'
+   +     '<div class="comm-dz-text">Drop files here, or <button type="button" class="comm-dz-browse" onclick="document.getElementById(&#39;commFileInput&#39;).click()">browse</button></div>'
+   +     '<div class="comm-dz-hint">Small files attach to the email; large files \u2014 or big personalised sends \u2014 go out as a secure Drive link. Keep each file under ~8\u00a0MB.</div>'
+   +   '</div>'
+   +   '<div id="commAttachList" class="comm-attach-list" style="display:none"></div>'
+   + '</div>';
+
   // Signature
   h+='<div class="form-group"><label class="form-label">Sign as</label><select id="commSignature" class="form-input" onchange="renderCommuniquePreview()">';
   for(var s=0;s<opts.signatures.length;s++)h+='<option value="'+esc(opts.signatures[s].key)+'">'+esc(opts.signatures[s].label)+'</option>';
@@ -5120,13 +5134,30 @@ function renderCommunique(){
   h+='<div id="commMemberList" style="max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px"></div></div>';
 
   // CC admins
-  h+='<label class="checkbox-label" style="margin-bottom:12px"><input type="checkbox" id="commCcAdmins" onchange="renderCommuniquePreview()"> CC admins on this message</label>';
+  h+='<label class="checkbox-label" style="margin-bottom:16px"><input type="checkbox" id="commCcAdmins" onchange="renderCommuniquePreview()"> CC admins on this message</label>';
 
-  // Send
-  h+='<button class="btn-primary" id="btnSendComm" onclick="sendCommunique()">Send Message</button>';
+  // When to send — send now, or schedule for a future date + time
+  h+='<div class="form-group"><label class="form-label">When to send</label>'
+   +   '<div class="comm-mode">'
+   +     '<button type="button" class="comm-mode-btn'+(mode==="now"?' is-active':'')+'" id="commModeNow" onclick="setCommMode(&#39;now&#39;)"><span class="gl">\u2192</span> Send now</button>'
+   +     '<button type="button" class="comm-mode-btn'+(mode==="later"?' is-active':'')+'" id="commModeLater" onclick="setCommMode(&#39;later&#39;)"><span class="gl">\u25F7</span> Schedule for later</button>'
+   +   '</div>'
+   +   '<div class="comm-schedule-row" id="commScheduleRow" style="display:'+(mode==="later"?"block":"none")+'">'
+   +     '<input type="datetime-local" id="commSendAt" class="form-input" min="'+esc(commMinDateTime())+'" value="'+esc(commDefaultDateTime())+'">'
+   +     '<p class="comm-schedule-hint">Interpreted in your local time \u00b7 '+esc(commTZLabel())+'. Delivery lands within about a minute of this time.</p>'
+   +   '</div>'
+   + '</div>';
+
+  // Delivery disclosure — filled by getCommuniquePlan() when attachments are present
+  h+='<div id="commPlanNotice" class="comm-plan-notice" style="display:none"></div>';
+
+  // Send / Schedule
+  h+='<button class="btn-primary" id="btnSendComm" onclick="submitCommunique()">'+(mode==="later"?"Schedule message":"Send message")+'</button>';
 
   c.innerHTML=h;
   if(rtype==="individuals")renderCommMemberList();
+  renderCommAttachList();
+  renderCommPlanNotice(communiqueData.plan);
   renderCommuniquePreview();
 }
 
@@ -5283,6 +5314,7 @@ function renderCommuniquePreview(){
   var h='<div class="cp-frame">'
     + '<div class="cp-bar"><span class="form-label">Live letterhead preview</span><span class="cp-file">EmailLayout.html</span></div>'
     + '<div class="cp-recipients"><b>TO</b> '+esc(rec)+(personalize?' <span class="cp-merge" style="margin-left:auto">\u2726 personalised</span>':'')+'</div>'
+    + commPreviewAttachLine()
     + '<div class="cp-sheet">'
     +   '<div style="height:3px;background:linear-gradient(90deg,var(--gold-700),var(--gold),var(--gold-300))"></div>'
     +   '<div style="background:var(--ink);padding:18px 20px 16px">'
@@ -5296,7 +5328,6 @@ function renderCommuniquePreview(){
     +   '<div style="background:#fff;padding:18px 20px 6px">'+bodyRendered+'</div>'
     +   '<div style="background:#fff;padding:8px 20px 18px">'
     +     '<div style="border-top:1px solid var(--paper-200);margin-bottom:12px"></div>'
-    +     '<div style="font-size:11px;color:var(--ink-700);margin-bottom:8px">Warm regards,</div>'
     +     commSignatureBlock(sig)
     +   '</div>'
     +   '<div style="background:var(--paper);border-top:1px solid var(--paper-200);padding:14px 20px;text-align:center">'
@@ -5305,38 +5336,316 @@ function renderCommuniquePreview(){
     +   '</div>'
     + '</div></div>';
   c.innerHTML=h;
+  scheduleCommPlanRefresh();
 }
 
-function sendCommunique(){
+// Small attachments strip for the live preview (mirrors what recipients will see).
+// Count + size only — the delivery MODE is disclosed in the notice by the send button,
+// so this stays synchronous and never depends on the async plan (no refresh loop).
+function commPreviewAttachLine(){
+  var atts=communiqueData.attachments||[];
+  if(!atts.length)return '';
+  var totalMB=atts.reduce(function(s,a){return s+(Number(a.sizeMB)||0);},0);
+  return '<div class="cp-attach"><span class="cp-attach-glyph">\u25A4</span>'+atts.length+' file'+(atts.length>1?'s':'')+' \u00b7 '+totalMB.toFixed(1)+' MB</div>';
+}
+
+// ── Send-mode toggle (Send now / Schedule for later) ────────────────────────
+function setCommMode(mode){
+  communiqueData.sendMode=mode;
+  var now=document.getElementById("commModeNow"),later=document.getElementById("commModeLater");
+  if(now)now.classList.toggle("is-active",mode==="now");
+  if(later)later.classList.toggle("is-active",mode==="later");
+  var row=document.getElementById("commScheduleRow");if(row)row.style.display=mode==="later"?"block":"none";
+  var btn=document.getElementById("btnSendComm");if(btn)btn.textContent=mode==="later"?"Schedule message":"Send message";
+}
+
+// datetime-local helpers — the input's value is the admin's LOCAL wall-clock time.
+function toLocalInput_(d){function p(n){return n<10?"0"+n:""+n;}return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"T"+p(d.getHours())+":"+p(d.getMinutes());}
+function commMinDateTime(){return toLocalInput_(new Date(Date.now()+2*60000));}
+function commDefaultDateTime(){var d=new Date(Date.now()+60*60000);d.setSeconds(0,0);d.setMinutes(d.getMinutes()-(d.getMinutes()%5));return toLocalInput_(d);}
+function commTZLabel(){try{return Intl.DateTimeFormat().resolvedOptions().timeZone||"local time";}catch(e){return "local time";}}
+// ISO → friendly local label, e.g. "Tue 8 Jul, 7:00 AM"
+function fmtSchedWhen(iso){
+  var d=new Date(iso);if(isNaN(d.getTime()))return iso||"";
+  var days=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"],mons=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  var h=d.getHours(),mn=d.getMinutes(),ap=h<12?"AM":"PM",h12=h%12;if(h12===0)h12=12;
+  return days[d.getDay()]+" "+d.getDate()+" "+mons[d.getMonth()]+", "+h12+":"+(mn<10?"0"+mn:mn)+" "+ap;
+}
+
+// Shared: read + validate the composer into a payload (returns null on invalid).
+function buildCommuniquePayload(){
   var subject=document.getElementById("commSubject").value.trim();
   var bodyHtml=commBodyHtml();
   var bodyText=commBodyText().trim();
-  if(!subject){showToast("Subject is required.","error");return;}
-  if(!bodyText){showToast("Message is required.","error");return;}
-
+  if(!subject){showToast("Subject is required.","error");return null;}
+  if(!bodyText){showToast("Message is required.","error");return null;}
   var rtype=communiqueData.recipientType||"all";
-  if(rtype==="all"&&!isFullAdmin()){showToast("Only full admins can send to all members.","error");return;}
-  var payload={subject:subject,body:bodyHtml,format:"html",signatureKey:document.getElementById("commSignature").value,recipientType:rtype,ccAdmins:document.getElementById("commCcAdmins").checked};
-
+  if(rtype==="all"&&!isFullAdmin()){showToast("Only full admins can send to all members.","error");return null;}
+  var payload={subject:subject,body:bodyHtml,format:"html",signatureKey:document.getElementById("commSignature").value,recipientType:rtype,ccAdmins:document.getElementById("commCcAdmins").checked,attachments:(communiqueData.attachments||[]).map(function(a){return {id:a.id,name:a.name};})};
   if(rtype==="groups"){
     var groups=[];document.querySelectorAll(".commGroup:checked").forEach(function(cb){if(sectionAllowed(cb.value))groups.push(cb.value);});
-    if(groups.length===0){showToast("Select at least one section you manage.","error");return;}
+    if(groups.length===0){showToast("Select at least one section you manage.","error");return null;}
     payload.groups=groups;
   } else if(rtype==="individuals"){
     var emails=selectedCommMembers();
-    if(emails.length===0){showToast("Select at least one member.","error");return;}
+    if(emails.length===0){showToast("Select at least one member.","error");return null;}
     payload.emails=emails;
   }
+  return payload;
+}
 
-  if(!confirm("Send this message? It will go out with the letterhead to the selected recipients."))return;
-  var btn=document.getElementById("btnSendComm");btn.disabled=true;btn.textContent="Sending...";
+// Clears the composer to a fresh state (after a successful send/schedule).
+function resetCommuniqueForm(){
+  communiqueData.selected={};
+  communiqueData.sendMode="now";
+  communiqueData.attachments=[];
+  communiqueData.uploading=[];
+  communiqueData.plan=null;
+  renderCommunique();
+}
+
+// Success-toast copy — surfaces how attachments were delivered (attach vs Drive link).
+function commSentToast(r){
+  var msg="Message sent to "+r.count+" recipient"+(r.count===1?"":"s")+".";
+  if(r.attachmentMode==="link")msg+=" Attachments sent as a Drive link.";
+  else if(r.attachmentMode==="attach")msg+=" Files attached.";
+  return msg;
+}
+
+// Button dispatcher — branch on the send mode.
+function submitCommunique(){
+  if((communiqueData.sendMode||"now")==="later")return scheduleCommuniqueSend();
+  return sendCommuniqueNow();
+}
+
+function sendCommuniqueNow(){
+  var payload=buildCommuniquePayload();if(!payload)return;
+  if(!confirm("Send this message now? It will go out with the letterhead to the selected recipients."))return;
+  var btn=document.getElementById("btnSendComm");btn.disabled=true;btn.textContent="Sending\u2026";
   google.script.run.withSuccessHandler(function(r){
-    btn.disabled=false;btn.textContent="Send Message";
-    showToast("Message sent to "+r.count+" recipient(s).","success");
-    document.getElementById("commSubject").value="";var ed=document.getElementById("commBody");if(ed)ed.innerHTML="";
-    renderCommuniquePreview();
-  }).withFailureHandler(function(e){btn.disabled=false;btn.textContent="Send Message";showToast("Failed: "+e.message,"error");
+    btn.disabled=false;btn.textContent="Send message";
+    showToast(commSentToast(r),"success");
+    resetCommuniqueForm();
+  }).withFailureHandler(function(e){btn.disabled=false;btn.textContent="Send message";showToast("Failed: "+e.message,"error");
   }).sendCommunique(payload);
+}
+
+function scheduleCommuniqueSend(){
+  var payload=buildCommuniquePayload();if(!payload)return;
+  var input=document.getElementById("commSendAt");
+  var val=input?input.value:"";
+  if(!val){showToast("Pick a date and time to schedule.","error");return;}
+  var when=new Date(val); // datetime-local parsed as local wall-clock time
+  if(isNaN(when.getTime())){showToast("That date and time isn\u2019t valid.","error");return;}
+  if(when.getTime()<Date.now()+60*1000){showToast("Please schedule at least a minute in the future.","error");return;}
+  payload.sendAt=when.toISOString();
+  var btn=document.getElementById("btnSendComm");btn.disabled=true;btn.textContent="Scheduling\u2026";
+  google.script.run.withSuccessHandler(function(r){
+    btn.disabled=false;btn.textContent="Schedule message";
+    showToast("Scheduled for "+fmtSchedWhen(r.sendAt)+" \u2014 "+r.recipientCount+" recipient"+(r.recipientCount===1?"":"s")+".","success");
+    resetCommuniqueForm();
+    showCommSubtab("scheduled");
+  }).withFailureHandler(function(e){btn.disabled=false;btn.textContent="Schedule message";showToast("Failed: "+e.message,"error");
+  }).scheduleCommunique(payload);
+}
+
+// ── Compose / Scheduled sub-tabs ─────────────────────────────────────────────
+function showCommSubtab(which){
+  var scheduled=which==="scheduled";
+  var compose=document.getElementById("commComposePane"),sched=document.getElementById("commScheduledPane");
+  var tc=document.getElementById("commSubtabCompose"),ts=document.getElementById("commSubtabScheduled");
+  if(compose)compose.style.display=scheduled?"none":"block";
+  if(sched)sched.style.display=scheduled?"block":"none";
+  if(tc)tc.classList.toggle("is-active",!scheduled);
+  if(ts)ts.classList.toggle("is-active",scheduled);
+  if(scheduled)loadScheduledEmails();
+}
+
+// Lightweight: just refresh the count pill on the Scheduled sub-tab.
+function refreshScheduledCount(){
+  google.script.run.withSuccessHandler(function(rows){updateScheduledCount(rows||[]);}).withFailureHandler(function(){}).getScheduledEmails();
+}
+function updateScheduledCount(rows){
+  var badge=document.getElementById("commScheduledCount");if(!badge)return;
+  var n=0;for(var i=0;i<rows.length;i++){if(rows[i].status==="Scheduled"||rows[i].status==="Sending")n++;}
+  if(n>0){badge.textContent=n;badge.style.display="inline-flex";}else{badge.style.display="none";}
+}
+
+var scheduledLoading=false;
+function loadScheduledEmails(){
+  var list=document.getElementById("commScheduledList");if(!list)return;
+  if(scheduledLoading)return;scheduledLoading=true;
+  list.innerHTML='<div class="loading"><div class="spinner"></div><p>Loading scheduled messages\u2026</p></div>';
+  google.script.run.withSuccessHandler(function(rows){
+    scheduledLoading=false;renderScheduledList(rows||[]);
+  }).withFailureHandler(function(e){
+    scheduledLoading=false;list.innerHTML='<p class="loading">Error: '+esc(e.message)+'</p>';
+  }).getScheduledEmails();
+}
+
+function renderScheduledList(rows){
+  var list=document.getElementById("commScheduledList");if(!list)return;
+  updateScheduledCount(rows);
+  if(!rows.length){
+    list.innerHTML='<div class="empty-pane">Nothing scheduled.<div style="font-family:var(--f-sans);font-style:normal;font-size:12.5px;color:var(--ink-500);margin-top:8px">Compose a message and choose \u201cSchedule for later\u201d to line one up.</div></div>';
+    return;
+  }
+  var STATUS={Scheduled:"s-scheduled",Sending:"s-sending",Sent:"s-sent",Failed:"s-failed",Cancelled:"s-cancelled"};
+  var h='';
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];
+    var cls=STATUS[r.status]||"s-scheduled";
+    h+='<div class="sched-row">'
+     +   '<div class="sched-main">'
+     +     '<div class="sched-time">'+esc(fmtSchedWhen(r.sendAt))+'</div>'
+     +     '<div class="sched-subject">'+(esc(r.subject)||'<span style="color:var(--ink-400)">(no subject)</span>')+'</div>'
+     +     '<div class="sched-meta">Scheduled by '+esc(r.scheduledBy||"\u2014")+'</div>'
+     +     (r.result?'<div class="sched-result">'+esc(r.result)+'</div>':'')
+     +   '</div>'
+     +   '<div class="sched-side">'
+     +     '<span class="sched-badge '+cls+'">'+esc(r.status)+'</span>'
+     +     (r.canCancel?'<button class="sched-cancel" onclick="cancelScheduled(&#39;'+esc(r.id)+'&#39;)">Cancel</button>':'')
+     +   '</div>'
+     + '</div>';
+  }
+  list.innerHTML=h;
+}
+
+function cancelScheduled(id){
+  if(!confirm("Cancel this scheduled message? It will not be sent."))return;
+  google.script.run.withSuccessHandler(function(){
+    showToast("Scheduled message cancelled.","success");
+    loadScheduledEmails();
+  }).withFailureHandler(function(e){showToast("Failed: "+e.message,"error");
+  }).cancelScheduledEmail(id);
+}
+
+// ── Attachments (composer) ────────────────────────────────────────────────────
+// Files upload to Drive immediately (so scheduled sends work); the payload only
+// ever carries {id,name}. Delivery mode (real attachment vs Drive link) is decided
+// by the backend and disclosed via getCommuniquePlan() before sending.
+var COMM_ATTACH_MAX_BYTES=8*1024*1024; // ~8MB — base64 inflates ~33%, larger gets unreliable
+
+function onCommFilesPicked(files){
+  if(!files||!files.length)return;
+  for(var i=0;i<files.length;i++)uploadOneCommFile(files[i]);
+  var input=document.getElementById("commFileInput");if(input)input.value=""; // allow re-picking the same file
+}
+
+function uploadOneCommFile(file){
+  if(file.size>COMM_ATTACH_MAX_BYTES){
+    showToast("\u201c"+file.name+"\u201d is "+(file.size/1048576).toFixed(1)+" MB \u2014 keep attachments under 8 MB so uploads stay reliable.","error");
+    return;
+  }
+  var tmpId="tmp_"+Date.now()+"_"+Math.floor(Math.random()*1e4);
+  communiqueData.uploading=communiqueData.uploading||[];
+  communiqueData.uploading.push({tmpId:tmpId,name:file.name,sizeMB:file.size/1048576});
+  renderCommAttachList();
+  var reader=new FileReader();
+  reader.onload=function(){
+    var res=reader.result||"";
+    var comma=res.indexOf(",");
+    var base64=comma!==-1?res.substring(comma+1):res; // strip "data:...;base64," prefix
+    google.script.run.withSuccessHandler(function(meta){
+      communiqueData.uploading=(communiqueData.uploading||[]).filter(function(u){return u.tmpId!==tmpId;});
+      communiqueData.attachments=communiqueData.attachments||[];
+      communiqueData.attachments.push(meta);
+      renderCommAttachList();
+      refreshCommPlan();
+      renderCommuniquePreview();
+    }).withFailureHandler(function(e){
+      communiqueData.uploading=(communiqueData.uploading||[]).filter(function(u){return u.tmpId!==tmpId;});
+      renderCommAttachList();
+      showToast("Couldn\u2019t upload \u201c"+file.name+"\u201d: "+e.message,"error");
+    }).uploadCommuniqueAttachment(file.name,file.type||"application/octet-stream",base64);
+  };
+  reader.onerror=function(){
+    communiqueData.uploading=(communiqueData.uploading||[]).filter(function(u){return u.tmpId!==tmpId;});
+    renderCommAttachList();
+    showToast("Couldn\u2019t read \u201c"+file.name+"\u201d.","error");
+  };
+  reader.readAsDataURL(file);
+}
+
+function commFmtMB(mb){mb=Number(mb)||0;return (mb<0.1?mb.toFixed(2):mb.toFixed(1))+" MB";}
+
+function renderCommAttachList(){
+  var el=document.getElementById("commAttachList");if(!el)return;
+  var files=communiqueData.attachments||[],up=communiqueData.uploading||[];
+  if(!files.length&&!up.length){el.innerHTML="";el.style.display="none";return;}
+  el.style.display="flex";
+  var h="";
+  for(var i=0;i<files.length;i++){
+    var f=files[i];
+    h+='<div class="comm-attach-item"><span class="cai-glyph">\u25A4</span>'
+     +   '<div class="cai-main"><div class="cai-name">'+esc(f.name)+'</div><div class="cai-size">'+commFmtMB(f.sizeMB)+'</div></div>'
+     +   '<button type="button" class="cai-remove" title="Remove" onclick="removeCommAttachment(&#39;'+esc(String(f.id))+'&#39;)">\u00d7</button>'
+     + '</div>';
+  }
+  for(var j=0;j<up.length;j++){
+    var u=up[j];
+    h+='<div class="comm-attach-item is-uploading"><span class="cai-spin"></span>'
+     +   '<div class="cai-main"><div class="cai-name">'+esc(u.name)+'</div><div class="cai-size">Uploading\u2026</div></div>'
+     + '</div>';
+  }
+  el.innerHTML=h;
+}
+
+function removeCommAttachment(id){
+  communiqueData.attachments=(communiqueData.attachments||[]).filter(function(x){return String(x.id)!==String(id);});
+  renderCommAttachList();
+  refreshCommPlan();
+  renderCommuniquePreview();
+  google.script.run.withSuccessHandler(function(){}).withFailureHandler(function(){}).deleteCommuniqueAttachment(id);
+}
+
+// Drag-and-drop onto the dropzone
+function commDragOver(e){e.preventDefault();var z=document.getElementById("commDropzone");if(z)z.classList.add("is-drag");}
+function commDragLeave(e){var z=document.getElementById("commDropzone");if(z)z.classList.remove("is-drag");}
+function commDrop(e){e.preventDefault();var z=document.getElementById("commDropzone");if(z)z.classList.remove("is-drag");var dt=e.dataTransfer;if(dt&&dt.files&&dt.files.length)onCommFilesPicked(dt.files);}
+
+// ── Delivery disclosure (getCommuniquePlan) ──────────────────────────────────
+// Only meaningful when there are attachments; skipped (and the notice cleared)
+// otherwise, so typing / recipient changes stay quiet until a file is attached.
+var _commPlanTimer=null,_commPlanSeq=0;
+function scheduleCommPlanRefresh(){
+  if((communiqueData.attachments||[]).length===0){communiqueData.plan=null;renderCommPlanNotice(null);return;}
+  if(_commPlanTimer)clearTimeout(_commPlanTimer);
+  _commPlanTimer=setTimeout(refreshCommPlan,400);
+}
+function refreshCommPlan(){
+  if((communiqueData.attachments||[]).length===0){communiqueData.plan=null;renderCommPlanNotice(null);return;}
+  var payload=buildCommPlanPayload();
+  var seq=++_commPlanSeq;
+  google.script.run.withSuccessHandler(function(plan){
+    if(seq!==_commPlanSeq)return; // ignore stale responses
+    communiqueData.plan=plan;
+    renderCommPlanNotice(plan);
+  }).withFailureHandler(function(){}).getCommuniquePlan(payload);
+}
+// Unvalidated payload snapshot for the plan call (no toasts, subject not required).
+function buildCommPlanPayload(){
+  var rtype=communiqueData.recipientType||"all";
+  var payload={body:commBodyHtml(),format:"html",recipientType:rtype,
+    ccAdmins:!!((document.getElementById("commCcAdmins")||{}).checked),
+    attachments:(communiqueData.attachments||[]).map(function(a){return {id:a.id,name:a.name};})};
+  if(rtype==="groups"){var g=[];document.querySelectorAll(".commGroup:checked").forEach(function(cb){if(sectionAllowed(cb.value))g.push(cb.value);});payload.groups=g;}
+  else if(rtype==="individuals"){payload.emails=selectedCommMembers();}
+  return payload;
+}
+function renderCommPlanNotice(plan){
+  var el=document.getElementById("commPlanNotice");if(!el)return;
+  if(!plan||!plan.attachmentMode||plan.attachmentMode==="none"||plan.attachmentMode==="attach"){
+    el.style.display="none";el.innerHTML="";return;
+  }
+  // attachmentMode === "link": forced = loud warning; otherwise a quieter note.
+  var forced=!!plan.forced;
+  var reason=plan.reason||("Attachments total "+plan.totalMB+" MB \u2014 recipients get a secure Drive link instead of a file.");
+  el.className="comm-plan-notice "+(forced?"is-forced":"is-info");
+  el.innerHTML='<span class="cpn-icon">'+(forced?"\u26A0":"\u2139")+'</span>'
+    +'<div class="cpn-body"><div class="cpn-title">'+(forced?"Will send as a Drive link":"Sending as a Drive link")+'</div>'
+    +'<div class="cpn-reason">'+esc(reason)+'</div></div>';
+  el.style.display="flex";
 }
 
 

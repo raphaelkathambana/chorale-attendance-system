@@ -12,6 +12,7 @@ var ADMINS_SHEET     = "Admins";
 var SCHEDULE_SHEET   = "Schedule";
 var MEETINGS_SHEET   = "Meetings";
 var APOLOGIES_SHEET  = "Apologies";
+var SCHEDULED_SHEET  = "Scheduled Emails";
 var REQUEST_TYPES = ["Name Change", "Section Transfer", "Course Details", "Restart Probation"];
 function isRequestType_(type) {
   return REQUEST_TYPES.indexOf(String(type || "").trim()) !== -1;
@@ -21,6 +22,7 @@ var CONFIG_SHEET     = "Config";
 var SIGNATURES_SHEET = "Signatures";
 var PHOTO_FOLDER_ID  = "1-HhDK1DNADta_zoqSlkcRJLZqXOl4WNlixQinheteKcc0Sf-whvREBR81ABgAIuzgHHAvBgk";
 var PROFILE_PHOTO_FOLDER_ID = "1QyfgOnHAA71NX1WJCpTbXonJJDJVzU5O";
+var ATTACHMENT_FOLDER_ID = "1ruOobDLFVdJ4sq1n98wsWm-G1c5UKjuP";
 var GROUPS           = ["Choir", "Band", "Orchestra"];
 var ROLE_COLUMNS     = { "Choir": "choir part", "Band": "band role", "Orchestra": "orchestra role" };
 var PROBATION_THRESHOLD = 0.8;
@@ -215,9 +217,14 @@ function getInstrumentFamilyMap_(ss) {
  * Resolves the caller's access record once: role tier + scope.
  * Returns { role, level, email, name, groups, section, repGroup, allowedSections }.
  */
-function getAccess_(ss) {
+function getAccess_(ss, emailOverride) {
   ss = ss || getSpreadsheet_();
-  var email = Session.getActiveUser().getEmail();
+  // emailOverride lets non-interactive contexts (time-based triggers) resolve access
+  // for a specific person. In a trigger there is NO active session, so
+  // Session.getActiveUser().getEmail() returns "" — hence the fallbacks.
+  var email = emailOverride || "";
+  if (!email) { try { email = Session.getActiveUser().getEmail() || ""; } catch (e) {} }
+  if (!email) { try { email = Session.getEffectiveUser().getEmail() || ""; } catch (e) {} }
   if (!email) return { role: "unknown", level: -1, email: "", name: "", groups: [], section: "", repGroup: "", allowedSections: [] };
   var emailLower = email.toLowerCase();
   var memberInfo = findMemberByEmail_(ss, emailLower);
@@ -2988,10 +2995,379 @@ function getCommuniqueRecipientOptions() {
  *   ccAdmins: bool
  * }
  */
-function sendCommunique(payload) {
+
+
+// =======================================================
+//  COMMUNIQUÉ ATTACHMENTS
+//  Files live in Drive; the payload carries file IDs (so scheduled sends still
+//  work — a blob can't be stored in a sheet). Two delivery modes:
+//    "attach" — real email attachment (small files, Gmail caps at 25MB/message)
+//    "link"   — a styled link block appended to the body (no size ceiling)
+//  Mode is auto-picked by size, and FORCED to "link" when a personalised send
+//  (name tokens => one email per recipient) would blow the 6-minute execution
+//  budget. getCommuniquePlan() lets the UI disclose this before sending.
+// =======================================================
+var ATTACH_MAX_TOTAL_MB      = 20;   // hard cap for real attachments (Gmail ~25MB)
+var ATTACH_PERSONALISED_BUDGET = 150; // recipients × MB — beyond this, force link mode
+
+function getAttachmentFolder_() {
+  var id = (ATTACHMENT_FOLDER_ID && ATTACHMENT_FOLDER_ID !== "YOUR_ATTACHMENT_FOLDER_ID_HERE")
+             ? ATTACHMENT_FOLDER_ID : PHOTO_FOLDER_ID;
+  if (!id || id === "YOUR_FOLDER_ID_HERE") throw new Error("No Drive folder configured for attachments.");
+  return DriveApp.getFolderById(id);
+}
+
+/**
+ * Uploads one attachment from the composer. Client sends base64 (which inflates
+ * ~33%), so keep individual files modest — larger files still work in link mode.
+ * @returns {Object} { id, name, mimeType, sizeBytes, sizeMB, url }
+ */
+function uploadCommuniqueAttachment(fileName, mimeType, base64Data) {
+  var access = getAccess_(getSpreadsheet_());
+  if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
+  if (!fileName || !base64Data) throw new Error("Missing file data.");
+  var bytes = Utilities.base64Decode(base64Data);
+  var blob = Utilities.newBlob(bytes, mimeType || "application/octet-stream", fileName);
+  var file = getAttachmentFolder_().createFile(blob);
+  // Public link access, per policy — link mode must be openable by any recipient.
+  try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
+  var size = file.getSize();
+  return {
+    id: file.getId(), name: file.getName(), mimeType: file.getMimeType(),
+    sizeBytes: size, sizeMB: Math.round((size / 1048576) * 100) / 100,
+    url: file.getUrl()
+  };
+}
+
+/** Removes an uploaded attachment (before send, or on cancel). */
+function deleteCommuniqueAttachment(fileId) {
+  var access = getAccess_(getSpreadsheet_());
+  if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
+  try { DriveApp.getFileById(fileId).setTrashed(true); } catch (e) {}
+  return { success: true };
+}
+
+/** Reads stored attachment file IDs into metadata (skips anything deleted). */
+function readAttachmentMeta_(attachments) {
+  var out = [];
+  (attachments || []).forEach(function (a) {
+    var id = (typeof a === "string") ? a : a.id;
+    if (!id) return;
+    try {
+      var f = DriveApp.getFileById(id);
+      var size = f.getSize();
+      out.push({ id: id, name: f.getName(), url: f.getUrl(),
+                 sizeBytes: size, sizeMB: size / 1048576, file: f });
+    } catch (e) { /* deleted — silently skip */ }
+  });
+  return out;
+}
+
+/**
+ * Decides how attachments will be delivered.
+ * @returns {Object} { mode, totalMB, files:[{name,url,sizeMB}], reason, forced }
+ */
+function planAttachments_(metas, recipientCount, personalised) {
+  var totalMB = 0;
+  metas.forEach(function (m) { totalMB += m.sizeMB; });
+  totalMB = Math.round(totalMB * 100) / 100;
+  var plan = { mode: "attach", totalMB: totalMB, forced: false, reason: "",
+               files: metas.map(function (m) { return { name: m.name, url: m.url, sizeMB: Math.round(m.sizeMB*100)/100 }; }) };
+  if (!metas.length) { plan.mode = "none"; return plan; }
+
+  if (totalMB > ATTACH_MAX_TOTAL_MB) {
+    plan.mode = "link"; plan.forced = true;
+    plan.reason = "Total size " + totalMB + "MB exceeds the " + ATTACH_MAX_TOTAL_MB + "MB attachment limit — sending as a Drive link.";
+    return plan;
+  }
+  if (personalised && (recipientCount * totalMB) > ATTACH_PERSONALISED_BUDGET) {
+    plan.mode = "link"; plan.forced = true;
+    plan.reason = "Personalised messages send one email per recipient. " + recipientCount +
+                  " recipients × " + totalMB + "MB would exceed the execution limit — sending as a Drive link instead.";
+    return plan;
+  }
+  return plan;
+}
+
+/** Appends a styled "Attachments" block with Drive links to the email body. */
+function attachmentLinkBlockHtml_(files) {
+  if (!files || !files.length) return "";
+  var rows = files.map(function (f) {
+    return '<tr><td style="padding:6px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;">' +
+           '<a href="' + f.url + '" style="color:#0b5394;text-decoration:none;font-weight:bold;">' + f.name + '</a>' +
+           '<span style="color:#8C8478;"> &nbsp;·&nbsp; ' + f.sizeMB + ' MB</span></td></tr>';
+  }).join("");
+  return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:22px 0 4px;">' +
+         '<tr><td style="border-top:1px solid #E8DEC6;padding-top:14px;">' +
+         '<p style="margin:0 0 6px;font-family:\'Courier New\',Courier,monospace;font-size:11px;letter-spacing:2px;' +
+         'text-transform:uppercase;color:#B08538;">Attachments</p>' +
+         '<table role="presentation" cellpadding="0" cellspacing="0" border="0">' + rows + '</table>' +
+         '</td></tr></table>';
+}
+
+/**
+ * PREVIEW — tells the composer what will happen before sending, so the UI can
+ * disclose a forced link-mode switch rather than silently swapping.
+ * @returns { recipientCount, personalised, attachmentMode, totalMB, forced, reason, files }
+ */
+function getCommuniquePlan(payload) {
   var ss = getSpreadsheet_();
   var access = getAccess_(ss);
   if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
+  payload = payload || {};
+  var recipients = [];
+  try { recipients = resolveCommuniqueRecipients_(ss, payload, access); } catch (e) {}
+  var personalised = hasNameTokens_(payload.body || "");
+  var metas = readAttachmentMeta_(payload.attachments);
+  var plan = planAttachments_(metas, recipients.length, personalised);
+  return {
+    recipientCount: recipients.length,
+    personalised: personalised,
+    attachmentMode: plan.mode,
+    totalMB: plan.totalMB,
+    forced: plan.forced,
+    reason: plan.reason,
+    files: plan.files
+  };
+}
+
+// =======================================================
+//  SCHEDULED COMMUNIQUÉS (hybrid: durable queue + one-time triggers)
+//  A row in "Scheduled Emails" is the source of truth. A 5-min checker sends
+//  anything due (the resilient net). Sends within the next horizon ALSO get a
+//  one-time trigger for near-exact (~±1min) timing. Fires as the scheduler,
+//  from their quota, on the day — same access checks as an immediate send.
+// =======================================================
+var SCHEDULE_PRECISION_HORIZON_MIN = 60;  // within this window, add a precise one-time trigger
+var SCHEDULE_MAX_ONETIME_TRIGGERS  = 15;  // stay well under the 20-trigger project cap
+
+function ensureScheduledSheet_(ss) {
+  var sheet = ss.getSheetByName(SCHEDULED_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(SCHEDULED_SHEET);
+    sheet.appendRow(["ID","Send At","Status","Scheduled By","Scheduled By Email","Subject","Created At","Sent At","Result","Payload JSON"]);
+    sheet.getRange(1,1,1,10).setFontWeight("bold");
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+function scheduledColMap_(sheet) {
+  var h = sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0].map(function(x){return x.toString().trim().toLowerCase();});
+  return { id:h.indexOf("id"), sendAt:h.indexOf("send at"), status:h.indexOf("status"),
+           by:h.indexOf("scheduled by"), byEmail:h.indexOf("scheduled by email"),
+           subject:h.indexOf("subject"), created:h.indexOf("created at"),
+           sentAt:h.indexOf("sent at"), result:h.indexOf("result"), payload:h.indexOf("payload json") };
+}
+
+/**
+ * Schedule a communiqué. Validates recipients/scope NOW (so bad sends fail fast),
+ * stores the payload, and — if the send is soon — drops a precise one-time trigger.
+ * @param {Object} payload — same shape as sendCommunique's, PLUS sendAt (ISO string or ms).
+ */
+function scheduleCommunique(payload) {
+  var ss = getSpreadsheet_();
+  var access = getAccess_(ss);
+  if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
+  if (!payload || !payload.sendAt) throw new Error("A send time is required.");
+  if (!payload.subject || !payload.subject.trim()) throw new Error("Subject is required.");
+  if (!payload.body || !String(payload.body).replace(/<[^>]*>/g,"").trim())
+    throw new Error("Message body is required.");
+  if (payload.recipientType === "all" && access.level < ROLE_LEVELS.admin)
+    throw new Error("Only full admins can send to all members.");
+
+  var when = new Date(payload.sendAt);
+  if (isNaN(when.getTime())) throw new Error("Invalid send time.");
+  if (when.getTime() < Date.now() + 60 * 1000) throw new Error("Please schedule at least a minute in the future.");
+
+  // Validate scope/recipients up front — fail now, not silently at fire time.
+  var recips = resolveCommuniqueRecipients_(ss, payload, access);
+  if (!recips.length) throw new Error("No recipients matched your selection.");
+
+  var sheet = ensureScheduledSheet_(ss);
+  var id = "sch_" + Date.now() + "_" + Math.floor(Math.random() * 1e4);
+  var email = access.email;
+  // Store payload WITHOUT sendAt duplication noise but keep everything needed to send.
+  var stored = {
+    subject: payload.subject, body: payload.body, format: payload.format || "html",
+    signatureKey: payload.signatureKey || "general", recipientType: payload.recipientType || "all",
+    groups: payload.groups || [], emails: payload.emails || [], ccAdmins: !!payload.ccAdmins,
+    // Store file IDs only — blobs are fetched from Drive at fire time.
+    attachments: (payload.attachments || []).map(function (a) {
+      return { id: (typeof a === "string") ? a : a.id, name: a.name || "" };
+    })
+  };
+  sheet.appendRow([id, when, "Scheduled", access.name || email, email, payload.subject,
+                   new Date(), "", "", JSON.stringify(stored)]);
+
+  // Near-exact: if it's within the horizon, add a one-time trigger now.
+  maybeAddPreciseTrigger_(id, when);
+  return { success: true, id: id, sendAt: when.toISOString(), recipientCount: recips.length };
+}
+
+/** Adds a one-time trigger for a specific scheduled item if it's within the horizon and under the cap. */
+function maybeAddPreciseTrigger_(id, when) {
+  var mins = (when.getTime() - Date.now()) / 60000;
+  if (mins > SCHEDULE_PRECISION_HORIZON_MIN) return false; // the 5-min checker will pick it up later
+  var oneTimeCount = ScriptApp.getProjectTriggers().filter(function(t){
+    return t.getHandlerFunction() === "fireScheduledEmails_";
+  }).length;
+  if (oneTimeCount >= SCHEDULE_MAX_ONETIME_TRIGGERS) return false; // net still catches it
+  try { ScriptApp.newTrigger("fireScheduledEmails_").timeBased().at(when).create(); return true; }
+  catch (e) { Logger.log("precise trigger failed: " + e); return false; }
+}
+
+/**
+ * Fires due scheduled emails. Called by BOTH the 5-min checker and one-time triggers.
+ * Sends anything with status "Scheduled" whose Send At <= now. Idempotent via status flip.
+ */
+function fireScheduledEmails_() {
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(SCHEDULED_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) { cleanupOneTimeTriggers_(); return; }
+  var c = scheduledColMap_(sheet);
+  var data = sheet.getDataRange().getValues();
+  var now = Date.now();
+
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][c.status].toString() !== "Scheduled") continue;
+    var when = new Date(data[i][c.sendAt]);
+    if (isNaN(when.getTime()) || when.getTime() > now) continue;
+
+    // Claim the row first (idempotency — two triggers can't double-send)
+    sheet.getRange(i + 1, c.status + 1).setValue("Sending");
+    SpreadsheetApp.flush();
+
+    var payload, result = "", ok = false;
+    try { payload = JSON.parse(data[i][c.payload].toString()); }
+    catch (e) { sheet.getRange(i + 1, c.status + 1).setValue("Failed");
+                sheet.getRange(i + 1, c.result + 1).setValue("Corrupt payload"); continue; }
+
+    try {
+      // Triggers have no active session — resolve access for the ORIGINAL scheduler
+      // so their role/scope is what governs the send.
+      var schedulerEmail = data[i][c.byEmail].toString();
+      var schedulerAccess = getAccess_(ss, schedulerEmail);
+      if (schedulerAccess.level < ROLE_LEVELS.elevated) {
+        throw new Error("The scheduler (" + schedulerEmail + ") no longer has permission to send this.");
+      }
+      var r = sendCommuniqueAs_(ss, payload, schedulerAccess); // same scope/quota/personalisation logic
+      ok = true;
+      result = r.personalized ? ("Sent to " + r.count + " (personalised)") : ("Sent (BCC blast)");
+    } catch (e2) {
+      result = "Failed: " + e2.message;
+      // Notify the scheduler so a quota/scope failure isn't silent
+      try {
+        MailApp.sendEmail({ to: data[i][c.byEmail].toString(),
+          subject: "Scheduled email did not send — " + data[i][c.subject],
+          htmlBody: buildEmail_("<p>Your scheduled message <b>" + data[i][c.subject] +
+            "</b> could not be sent:</p><p>" + e2.message + "</p><p>You can reschedule it from the app.</p>",
+            { headerTitle: "Scheduled Send Failed", signatureKey: "general" }), name: EMAIL_FROM_NAME });
+      } catch (e3) {}
+    }
+    sheet.getRange(i + 1, c.status + 1).setValue(ok ? "Sent" : "Failed");
+    sheet.getRange(i + 1, c.sentAt + 1).setValue(new Date());
+    sheet.getRange(i + 1, c.result + 1).setValue(result);
+  }
+  cleanupOneTimeTriggers_();
+}
+
+/** Deletes spent one-time fire triggers (keeps the project well under the 20 cap). */
+function cleanupOneTimeTriggers_() {
+  // A one-time trigger only ever fires once; after firing it's dead weight. We can't
+  // tell "already fired" directly, so we prune when nothing is imminently due.
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(SCHEDULED_SHEET);
+  var imminent = false;
+  if (sheet && sheet.getLastRow() > 1) {
+    var c = scheduledColMap_(sheet), data = sheet.getDataRange().getValues(), horizon = Date.now() + SCHEDULE_PRECISION_HORIZON_MIN*60000;
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][c.status].toString() === "Scheduled") {
+        var w = new Date(data[i][c.sendAt]).getTime();
+        if (w <= horizon) { imminent = true; break; }
+      }
+    }
+  }
+  if (imminent) return; // keep triggers; something's about to fire
+  // Only prune one-time FIRE triggers (handler fireScheduledEmails_). The recurring
+  // 5-minute net uses a DIFFERENT handler (scheduledEmailCheck_) and is never touched.
+  ScriptApp.getProjectTriggers().forEach(function(t){
+    if (t.getHandlerFunction() === "fireScheduledEmails_") {
+      try { ScriptApp.deleteTrigger(t); } catch(e){}
+    }
+  });
+}
+
+/** ADMIN/rep — list scheduled emails. Admins see all; reps/section admins see their own. */
+function getScheduledEmails() {
+  var ss = getSpreadsheet_();
+  var access = getAccess_(ss);
+  if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
+  var sheet = ss.getSheetByName(SCHEDULED_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var c = scheduledColMap_(sheet), data = sheet.getDataRange().getValues(), out = [];
+  for (var i = 1; i < data.length; i++) {
+    var byEmail = data[i][c.byEmail].toString();
+    var mine = byEmail.toLowerCase() === access.email.toLowerCase();
+    if (access.level < ROLE_LEVELS.admin && !mine) continue; // reps see only their own
+    var when = new Date(data[i][c.sendAt]);
+    out.push({
+      id: data[i][c.id].toString(),
+      sendAt: isNaN(when.getTime()) ? "" : when.toISOString(),
+      status: data[i][c.status].toString(),
+      scheduledBy: data[i][c.by].toString(),
+      subject: data[i][c.subject].toString(),
+      result: data[i][c.result].toString(),
+      canCancel: (data[i][c.status].toString() === "Scheduled") && (access.level >= ROLE_LEVELS.admin || mine)
+    });
+  }
+  out.sort(function(a,b){ return (a.sendAt||"").localeCompare(b.sendAt||""); });
+  return out;
+}
+
+/** Cancel a scheduled email (admins any; reps only their own). */
+function cancelScheduledEmail(id) {
+  var ss = getSpreadsheet_();
+  var access = getAccess_(ss);
+  if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
+  var sheet = ss.getSheetByName(SCHEDULED_SHEET);
+  if (!sheet) throw new Error("No scheduled emails.");
+  var c = scheduledColMap_(sheet), data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][c.id].toString() !== id) continue;
+    if (data[i][c.status].toString() !== "Scheduled") throw new Error("This email can no longer be cancelled.");
+    var mine = data[i][c.byEmail].toString().toLowerCase() === access.email.toLowerCase();
+    if (access.level < ROLE_LEVELS.admin && !mine) throw new Error("You can only cancel your own scheduled emails.");
+    sheet.getRange(i + 1, c.status + 1).setValue("Cancelled");
+    sheet.getRange(i + 1, c.result + 1).setValue("Cancelled by " + (access.name || access.email));
+    return { success: true };
+  }
+  throw new Error("Scheduled email not found.");
+}
+
+/** One-time setup — creates the recurring 5-minute checker. Run from the editor. */
+function setupScheduledEmailChecker() {
+  ScriptApp.getProjectTriggers().forEach(function(t){
+    if (t.getHandlerFunction() === "scheduledEmailCheck_") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("scheduledEmailCheck_").timeBased().everyMinutes(5).create();
+  return "Scheduled-email checker created (every 5 minutes).";
+}
+
+/** The recurring net — separate handler so cleanup never deletes it. */
+function scheduledEmailCheck_() { fireScheduledEmails_(); }
+
+function sendCommunique(payload) {
+  var ss = getSpreadsheet_();
+  return sendCommuniqueAs_(ss, payload, getAccess_(ss));
+}
+
+/**
+ * Internal core — sends using an EXPLICIT access context rather than the live
+ * session. Scheduled sends run inside a trigger (no session), so they resolve the
+ * original scheduler's access and pass it in here. All scope rules still apply.
+ */
+function sendCommuniqueAs_(ss, payload, access) {
+  if (!access || access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
   if (!payload.subject || !payload.subject.trim()) throw new Error("Subject is required.");
   if (!payload.body || !String(payload.body).replace(/<[^>]*>/g, "").trim())
     throw new Error("Message body is required.");
@@ -3007,17 +3383,32 @@ function sendCommunique(payload) {
     if (admins.length > 0) ccAdmins = admins.join(",");
   }
 
+  var personalised = hasNameTokens_(payload.body);
+
+  // Attachments: decide delivery mode (may be FORCED to link — see planAttachments_)
+  var metas = readAttachmentMeta_(payload.attachments);
+  var plan = planAttachments_(metas, recipients.length, personalised);
+  var linkBlock = (plan.mode === "link") ? attachmentLinkBlockHtml_(plan.files) : "";
+  var blobs = [];
+  if (plan.mode === "attach") {
+    metas.forEach(function (m) { try { blobs.push(m.file.getBlob()); } catch (e) {} });
+  }
+
   function makeHtml(bodyText) {
-    return buildEmail_(communiqueBodyToSafeHtml_(bodyText, payload.format), {
+    return buildEmail_(communiqueBodyToSafeHtml_(bodyText, payload.format) + linkBlock, {
       headerTitle: payload.subject,
       signatureKey: payload.signatureKey || "general"
     });
   }
 
   // No personalisation -> one efficient BCC blast (unchanged behaviour)
-  if (!hasNameTokens_(payload.body)) {
-    return sendBulkBcc_(recipients.map(function (r) { return r.email; }),
-                        payload.subject, makeHtml(payload.body), { cc: ccAdmins });
+  if (!personalised) {
+    var res = sendBulkBcc_(recipients.map(function (r) { return r.email; }),
+                           payload.subject, makeHtml(payload.body),
+                           { cc: ccAdmins, attachments: blobs });
+    res.attachmentMode = plan.mode;
+    res.attachmentNote = plan.reason;
+    return res;
   }
 
   // Personalised -> one send per recipient. Check quota up front rather than half-send.
@@ -3034,9 +3425,11 @@ function sendCommunique(payload) {
       name: EMAIL_FROM_NAME
     };
     if (ccAdmins && i === 0) mail.cc = ccAdmins;
+    if (blobs.length) mail.attachments = blobs;
     MailApp.sendEmail(mail);
   }
-  return { success: true, count: recipients.length, personalized: true };
+  return { success: true, count: recipients.length, personalized: true,
+           attachmentMode: plan.mode, attachmentNote: plan.reason };
 }
 
 /** Resolves the scoped recipient list as [{email, name}] — never trusts the client. */
@@ -3213,6 +3606,7 @@ function sendBulkBcc_(recipients, subject, htmlBody, opts) {
       name: fromName
     };
     if (opts.cc && batches === 0) mail.cc = opts.cc; // CC admins on first batch only
+    if (opts.attachments && opts.attachments.length) mail.attachments = opts.attachments;
     MailApp.sendEmail(mail);
     batches++;
   }

@@ -1067,6 +1067,9 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
   display: flex; gap: 6px; align-items: baseline; line-height: 1.5;
 }
 #communiquePreview .cp-recipients b { color: var(--gold-700); font-weight: 700; }
+#communiquePreview .cp-attach { display: flex; align-items: center; gap: 7px; padding: 8px 14px; background: var(--paper); border-bottom: 1px solid var(--paper-200); font-family: var(--f-sans); font-size: 11px; color: var(--ink-600); }
+#communiquePreview .cp-attach .cp-attach-glyph { font-size: 12px; color: var(--gold-700); }
+#communiquePreview .cp-attach .cp-attach-mode { margin-left: auto; font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--gold-700); background: var(--gold-100); border-radius: 999px; padding: 2px 7px; }
 
 /* The composer sits on a single sheet of stationery */
 #communiqueContent {
@@ -1178,6 +1181,68 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 #tab-communique .checkbox-label.is-locked,
 #tab-communique .checkbox-label.section-locked { opacity: .45; cursor: not-allowed; }
 #tab-communique .checkbox-label .lock-note { font-family: var(--f-mono); font-size: 8.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-400); margin-left: 6px; }
+
+/* ── COMMUNIQUÉ · Compose / Scheduled sub-tabs ──────────────────────────── */
+#tab-communique .comm-subtabs { display: flex; gap: 4px; padding: 4px; background: var(--paper-100); border: 1px solid var(--paper-200); border-radius: 12px; margin-bottom: 20px; max-width: 340px; }
+#tab-communique .comm-subtab { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 14px; border: none; border-radius: 9px; background: transparent; cursor: pointer; font-family: var(--f-sans); font-size: 13px; font-weight: 600; color: var(--ink-500); transition: background .14s ease, color .14s ease; }
+#tab-communique .comm-subtab:hover { color: var(--ink); }
+#tab-communique .comm-subtab.is-active { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(20,17,15,0.06); }
+#tab-communique .comm-subtab-count { font-family: var(--f-mono); font-size: 10px; font-weight: 700; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--gold); color: #fff; display: inline-flex; align-items: center; justify-content: center; }
+
+/* Send-mode toggle (Send now / Schedule for later) inside the composer */
+#communiqueContent .comm-mode { display: flex; gap: 4px; padding: 4px; background: var(--paper-100); border: 1px solid var(--paper-200); border-radius: 10px; }
+#communiqueContent .comm-mode-btn { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 12px; border: none; border-radius: 7px; background: transparent; cursor: pointer; font-family: var(--f-sans); font-size: 12.5px; font-weight: 600; color: var(--ink-500); transition: background .14s ease, color .14s ease; }
+#communiqueContent .comm-mode-btn:hover { color: var(--ink); }
+#communiqueContent .comm-mode-btn.is-active { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(20,17,15,0.06); }
+#communiqueContent .comm-mode-btn .gl { font-family: var(--f-display); font-size: 14px; line-height: 1; }
+#communiqueContent .comm-schedule-row { margin-top: 12px; }
+#communiqueContent #commSendAt { color-scheme: light; }
+#communiqueContent .comm-schedule-hint { font-size: 11.5px; line-height: 1.5; color: var(--ink-500); margin: 7px 2px 0; }
+
+/* Attachments — dropzone, file chips, and the delivery-mode disclosure */
+#communiqueContent .comm-dropzone { border: 1.5px dashed var(--paper-300); border-radius: 10px; background: var(--paper); padding: 15px 16px 13px; text-align: center; transition: border-color .12s ease, background .12s ease; }
+#communiqueContent .comm-dropzone.is-drag { border-color: var(--gold); background: var(--gold-100); }
+#communiqueContent .comm-dz-glyph { display: block; font-size: 19px; line-height: 1; color: var(--gold-700); margin-bottom: 6px; }
+#communiqueContent .comm-dz-text { font-size: 13px; color: var(--ink-700); }
+#communiqueContent .comm-dz-browse { border: none; background: none; padding: 0; font: inherit; color: var(--gold-700); font-weight: 600; cursor: pointer; text-decoration: underline; }
+#communiqueContent .comm-dz-hint { font-size: 11px; line-height: 1.5; color: var(--ink-500); margin-top: 5px; }
+#communiqueContent .comm-attach-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+#communiqueContent .comm-attach-item { display: flex; align-items: center; gap: 11px; padding: 9px 11px; border: 1px solid var(--paper-200); border-radius: 9px; background: var(--paper); }
+#communiqueContent .comm-attach-item .cai-glyph { font-size: 15px; line-height: 1; color: var(--gold-700); flex-shrink: 0; }
+#communiqueContent .comm-attach-item .cai-main { flex: 1; min-width: 0; }
+#communiqueContent .comm-attach-item .cai-name { font-size: 12.5px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#communiqueContent .comm-attach-item .cai-size { font-family: var(--f-mono); font-size: 10px; color: var(--ink-500); margin-top: 1px; }
+#communiqueContent .comm-attach-item .cai-remove { flex-shrink: 0; width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--paper-300); background: var(--paper); color: var(--ink-500); font-size: 16px; line-height: 1; cursor: pointer; transition: border-color .12s ease, color .12s ease, background .12s ease; }
+#communiqueContent .comm-attach-item .cai-remove:hover { border-color: var(--crimson); color: var(--crimson-600); background: var(--crimson-100); }
+#communiqueContent .comm-attach-item.is-uploading { opacity: .85; }
+#communiqueContent .comm-attach-item .cai-spin { width: 15px; height: 15px; border-radius: 999px; border: 2px solid var(--paper-300); border-top-color: var(--gold-700); animation: spin .7s linear infinite; flex-shrink: 0; }
+#communiqueContent .comm-plan-notice { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 10px; font-family: var(--f-sans); margin-top: 2px; }
+#communiqueContent .comm-plan-notice.is-forced { background: var(--gold-100); border: 1px solid var(--gold-300); }
+#communiqueContent .comm-plan-notice.is-info { background: var(--paper-100); border: 1px solid var(--paper-200); }
+#communiqueContent .comm-plan-notice .cpn-icon { font-size: 15px; line-height: 1.35; flex-shrink: 0; }
+#communiqueContent .comm-plan-notice.is-forced .cpn-icon { color: var(--gold-700); }
+#communiqueContent .comm-plan-notice.is-info .cpn-icon { color: var(--ink-500); }
+#communiqueContent .comm-plan-notice .cpn-title { font-size: 12.5px; font-weight: 700; color: var(--ink); }
+#communiqueContent .comm-plan-notice .cpn-reason { font-size: 11.5px; line-height: 1.5; color: var(--ink-600); margin-top: 2px; }
+
+/* Scheduled list */
+#commScheduledList { max-width: 780px; }
+.sched-row { display: flex; align-items: flex-start; gap: 14px; padding: 15px 17px; background: #fff; border: 1px solid var(--paper-200); border-radius: 12px; margin-bottom: 10px; }
+.sched-main { flex: 1; min-width: 0; }
+.sched-time { font-family: var(--f-mono); font-size: 11.5px; font-weight: 700; letter-spacing: .03em; color: var(--ink); }
+.sched-subject { font-size: 13.5px; font-weight: 600; color: var(--ink); line-height: 1.3; margin-top: 3px; }
+.sched-meta { font-family: var(--f-mono); font-size: 9.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-400); margin-top: 5px; }
+.sched-result { font-size: 11.5px; color: var(--ink-500); line-height: 1.45; margin-top: 6px; }
+.sched-side { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 9px; }
+.sched-badge { font-family: var(--f-mono); font-size: 9.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; padding: 4px 9px; border-radius: 999px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.sched-badge::before { content: ""; width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
+.sched-badge.s-scheduled { background: var(--paper-100); color: var(--ink-600); }
+.sched-badge.s-sending { background: var(--gold-100); color: var(--gold-700); }
+.sched-badge.s-sent { background: var(--present-bg); color: var(--present); }
+.sched-badge.s-failed { background: var(--crimson-100); color: var(--crimson-600); }
+.sched-badge.s-cancelled { background: var(--paper-100); color: var(--ink-400); }
+.sched-cancel { padding: 6px 13px; border-radius: 8px; border: 1px solid var(--paper-300); background: var(--paper); color: var(--crimson-600); font-family: var(--f-sans); font-size: 11.5px; font-weight: 600; cursor: pointer; transition: background .12s ease, border-color .12s ease; }
+.sched-cancel:hover { border-color: var(--crimson); background: var(--crimson-100); }
 
 /* ── RECORD · schedule-a-meeting panel ──────────────────────────────────── */
 .meeting-panel { border: 1px solid var(--paper-200); border-radius: 12px; background: var(--paper); margin-bottom: 16px; overflow: hidden; }
@@ -1849,13 +1914,22 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
           <h2>Send a communiqué.</h2>
           <p class="subtitle">Write once, send to the whole chorale or a chosen few. Every message goes out on the official chorale letterhead.</p>
         </div>
-        <div class="two-pane comm-two-pane">
-          <div class="two-pane-list">
-            <div id="communiqueContent"></div>
+        <div class="comm-subtabs">
+          <button type="button" class="comm-subtab is-active" id="commSubtabCompose" onclick="showCommSubtab('compose')">Compose</button>
+          <button type="button" class="comm-subtab" id="commSubtabScheduled" onclick="showCommSubtab('scheduled')">Scheduled <span class="comm-subtab-count" id="commScheduledCount" style="display:none">0</span></button>
+        </div>
+        <div id="commComposePane">
+          <div class="two-pane comm-two-pane">
+            <div class="two-pane-list">
+              <div id="communiqueContent"></div>
+            </div>
+            <div class="two-pane-detail">
+              <div id="communiquePreview"><div class="empty-pane">Live letterhead preview will show here.</div></div>
+            </div>
           </div>
-          <div class="two-pane-detail">
-            <div id="communiquePreview"><div class="empty-pane">Live letterhead preview will show here.</div></div>
-          </div>
+        </div>
+        <div id="commScheduledPane" style="display:none">
+          <div id="commScheduledList"><div class="empty-pane">Nothing scheduled yet.</div></div>
         </div>
       </div>
     </section>
