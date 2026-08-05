@@ -28,6 +28,7 @@ var ROLE_COLUMNS     = { "Choir": "choir part", "Band": "band role", "Orchestra"
 var PROBATION_THRESHOLD = 0.8;
 var PROBATION_CONDITIONAL = 0.5; // 50% — below this = failed
 var PROBATION_PENALTY_MULTIPLIER = 2; // penalty per missed session
+var WHATSAPP_COMMUNITY_LINK = "https://chat.whatsapp.com/IeDdUZmWIiM6UV8rOjmv2u?s=sw&p=a&ilr=4&amv=1"; // WhatsApp community invite link, shown ONLY in the welcome email
 var APP_URL = "https://script.google.com/a/macros/strathmore.edu/s/AKfycbw0_PlBuONvu9P2utJFwtAUJg6JCdwnHevBbBI6SOxO4M-C9bsQUkL_ncBjoTc9BXR75Q/exec";
  
 // Email config
@@ -217,6 +218,20 @@ function getInstrumentFamilyMap_(ss) {
  * Resolves the caller's access record once: role tier + scope.
  * Returns { role, level, email, name, groups, section, repGroup, allowedSections }.
  */
+function getMemberDetailStatus_(ss, memberName) {
+  ss = ss || getSpreadsheet_();
+  var sheet = ss.getSheetByName(MEMBER_DETAILS_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return "";
+  var dmap = headerIndexMap_(sheet);
+  var msIdx = dmap["member status"];
+  if (msIdx == null) return "";
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0].toString().trim() === memberName) return data[i][msIdx].toString().trim();
+  }
+  return "";
+}
+
 function getAccess_(ss, emailOverride) {
   ss = ss || getSpreadsheet_();
   // emailOverride lets non-interactive contexts (time-based triggers) resolve access
@@ -266,10 +281,18 @@ function getAccess_(ss, emailOverride) {
     return { role: "member", level: 0, email: email, name: memberInfo.name,
              groups: memberInfo.groups, section: "", repGroup: "", allowedSections: [] };
   }
-  // Known member whose membership is inactive — they get the rejoin screen, not
-  // the "we don't know you" screen.
+  // Known member whose membership is inactive. WHY they're inactive decides which
+  // screen they see and how they return:
+  //   "removed"         — Left via 3-AU removal → rejoin (fresh probation)
+  //   "failedProbation" — failed probation → its own screen, same rejoin path
+  //   "hiatus"          — planned break (On Hiatus) → welcome-back reactivation, no probation
   if (memberInfo) {
-    return { role: "removed", level: 0, email: email, name: memberInfo.name,
+    var detail = getMemberDetailStatus_(ss, memberInfo.name);
+    var subrole = "removed";
+    if (detail === "On Hiatus") subrole = "hiatus";
+    else if (memberInfo.probationFailed) subrole = "failedProbation";
+    return { role: "removed", subrole: subrole, detailStatus: detail, level: 0,
+             email: email, name: memberInfo.name,
              groups: memberInfo.groups, section: "", repGroup: "", allowedSections: [] };
   }
   return { role: "unknown", level: -1, email: email, name: "", groups: [], section: "", repGroup: "", allowedSections: [] };
@@ -425,6 +448,9 @@ function getUserRole() {
   // Removed members need to know whether a rejoin request is already pending,
   // so the UI can show "awaiting review" instead of the submit form.
   if (a.role === "removed") {
+    out.subrole = a.subrole || "removed";      // "removed" | "failedProbation" | "hiatus"
+    out.detailStatus = a.detailStatus || "";
+    out.adminContact = ADMIN_CONTACT_EMAIL;    // hiatus screen shows this; used for the Gmail link
     out.rejoinPending = false;
     try {
       var sh = ss.getSheetByName(APOLOGIES_SHEET);
@@ -2236,6 +2262,26 @@ function headerIndexMap_(sheet) {
  * @param {string} email
  * @param {Array} groups
  */
+
+/** WhatsApp community link — Config sheet key "whatsappCommunityLink" overrides the constant. */
+function getWhatsappLink_() {
+  try {
+    var ss = getSpreadsheet_(), sheet = ss.getSheetByName(CONFIG_SHEET);
+    if (sheet && sheet.getLastRow() > 1) {
+      var data = sheet.getDataRange().getValues();
+      for (var i = 1; i < data.length; i++) {
+        for (var c = 0; c < data[i].length - 1; c++) {
+          if (data[i][c].toString().trim() === "whatsappCommunityLink") {
+            var v = data[i][c + 1].toString().trim();
+            if (v) return v;
+          }
+        }
+      }
+    }
+  } catch (e) {}
+  return WHATSAPP_COMMUNITY_LINK || "";
+}
+
 function sendWelcomeEmail(name, email, groups) {
   if (!email) throw new Error("No email provided for " + name);
 
@@ -2247,8 +2293,12 @@ function sendWelcomeEmail(name, email, groups) {
       groups: groups.join(", "),
       appUrl: webAppUrl,
       probationSessions: PROBATION_SESSIONS,
-      threshold: Math.round(PROBATION_THRESHOLD * 100)
+      threshold: Math.round(PROBATION_THRESHOLD * 100),
+      whatsappLink: getWhatsappLink_()
     });
+    if (!getWhatsappLink_()) {
+      htmlBody = htmlBody.replace(/<!--WHATSAPP-->[\s\S]*?<!--\/WHATSAPP-->/i, "");
+    }
 
     MailApp.sendEmail({
       to: email,
@@ -3764,7 +3814,7 @@ function formatTime12_(t) {
 //   2. Run createBirthdayTrigger_() once from the editor (daily 6 AM check).
 //   3. (Poster, optional) create a Slides template, put its ID in BIRTHDAY_POSTER_TEMPLATE_ID.
 
-var CELEBRATE_STATUSES = ["Active", "Alumnus"];   // never "Memorial"
+var CELEBRATE_STATUSES = ["Active", "Alumnus", "On Hiatus"];   // hiatus members still celebrated; never "Memorial"/"Left"
 var LEAP_DAY_OBSERVED  = "FEB28";                  // "FEB28" or "MAR01"
 var AUTO_SEND_MEMBER_CARD_DEFAULT = true;          // default when no setting saved yet
 
@@ -4947,9 +4997,86 @@ function approveRejoin(rowIndex, memberName) {
 }
 
 /** ADMIN — reinstate a member directly, without a request. */
-function adminReinstateMember(memberName) {
+function adminReinstateMember(memberName, mode) {
   requireManagement_();
-  reinstateMemberToProbation_(getSpreadsheet_(), memberName);
+  var ss = getSpreadsheet_();
+  mode = (mode === "active") ? "active" : "probation";
+  if (mode === "active") {
+    reinstateMemberActive_(ss, memberName);
+  } else {
+    reinstateMemberToProbation_(ss, memberName);
+  }
+  return { success: true, name: memberName, mode: mode };
+}
+
+/**
+ * Reinstate straight to Active with NO probation — for correcting an accidental
+ * removal, or an admin decision to waive re-entry probation. Clears probation
+ * flags and returns the member to full Active in both sheets.
+ */
+function reinstateMemberActive_(ss, memberName) {
+  var sheet = ss.getSheetByName(MEMBERS_SHEET);
+  if (!sheet) throw new Error("Members sheet not found.");
+  var data = sheet.getDataRange().getValues();
+  var h = data[0].map(function(x){ return x.toString().trim().toLowerCase(); });
+  var nameIdx = h.indexOf("name"), probIdx = h.indexOf("probation"),
+      startIdx = h.indexOf("probation start"), endIdx = h.indexOf("probation end"),
+      penIdx = h.indexOf("probation penalty"), ackIdx = h.indexOf("probation acknowledged"),
+      passIdx = h.indexOf("probation passed"), failIdx = h.indexOf("probation failed");
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][nameIdx].toString().trim() !== memberName) continue;
+    var row = i + 1;
+    if (probIdx !== -1)  sheet.getRange(row, probIdx + 1).setValue("No");
+    if (startIdx !== -1) sheet.getRange(row, startIdx + 1).setValue("");
+    if (endIdx !== -1)   sheet.getRange(row, endIdx + 1).setValue("");
+    if (penIdx !== -1)   sheet.getRange(row, penIdx + 1).setValue("");
+    if (ackIdx !== -1)   sheet.getRange(row, ackIdx + 1).setValue("");
+    if (passIdx !== -1)  sheet.getRange(row, passIdx + 1).setValue("");
+    if (failIdx !== -1)  sheet.getRange(row, failIdx + 1).setValue("");
+    break;
+  }
+  setMembershipState_(ss, memberName, "Active", "Active", "");
+  return true;
+}
+
+/**
+ * ADMIN — set an active member inactive from the profile editor (manual removal,
+ * distinct from the automatic 3-AU path). Preserves history; stamps Removed On.
+ */
+function adminSetMemberInactive_(memberName, reason) {
+  requireManagement_();
+  var ss = getSpreadsheet_();
+  setMembershipState_(ss, memberName, "Inactive", "Left", todayStr_());
+  return { success: true, name: memberName };
+}
+function adminSetMemberInactive(memberName, reason) { return adminSetMemberInactive_(memberName, reason); }
+
+/**
+ * ADMIN — put a member on planned hiatus. Distinct from removal: Member Details
+ * status becomes "On Hiatus", so on return they go STRAIGHT to Active with NO
+ * probation. History preserved; while inactive they are not rostered (points freeze).
+ * Hiatus members still receive birthday recognition (CELEBRATE_STATUSES).
+ */
+function adminSetMemberOnHiatus(memberName, reason) {
+  requireManagement_();
+  var ss = getSpreadsheet_();
+  setMembershipState_(ss, memberName, "Inactive", "On Hiatus", todayStr_());
+  return { success: true, name: memberName };
+}
+
+/**
+ * ADMIN — bring a hiatus member back. Straight to Active, no probation, because
+ * they never lost standing — they only paused. (For removed/failed members use
+ * adminReinstateMember, which offers the probation path.)
+ */
+function adminReactivateFromHiatus(memberName) {
+  requireManagement_();
+  var ss = getSpreadsheet_();
+  var detail = getMemberDetailStatus_(ss, memberName);
+  if (detail && detail !== "On Hiatus") {
+    throw new Error("This member is not on hiatus (status: " + detail + "). Use Reinstate instead.");
+  }
+  reinstateMemberActive_(ss, memberName);  // clears probation flags, sets Active/Active
   return { success: true, name: memberName };
 }
 
@@ -5405,6 +5532,9 @@ function getMyApologies() {
       date: formatSheetDate_(data[i][0]),
       type: rType,
       isRequest: isReq,
+      kind: isReq ? "request"
+            : ((!isReq && col9) ? "longterm"
+               : (/late/i.test(rType) ? "late" : "absent")),
       reason: data[i][4].toString(),
       submittedAt: data[i][5].toString(),
       onTime: data[i][7].toString() === "Yes",
@@ -5484,6 +5614,11 @@ function getApologyQueue() {
       email: data[i][2].toString(),
       type: rType,
       isRequest: isReq,
+      // Explicit classification so the UI never has to guess:
+      //   "request" | "longterm" (Absent + a real end date) | "late" | "absent"
+      kind: isReq ? "request"
+            : ((!isReq && col9) ? "longterm"
+               : (/late/i.test(rType) ? "late" : "absent")),
       reason: data[i][4].toString(),
       submittedAt: data[i][5].toString(),
       onTime: data[i][7].toString() === "Yes",

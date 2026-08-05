@@ -890,6 +890,36 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .rejoin-pending-card .badge { width: 46px; height: 46px; border-radius: 999px; background: var(--gold); color: #fff; display: flex; align-items: center; justify-content: center; font-family: var(--f-display); font-size: 24px; line-height: 1; margin: 0 auto 12px; }
 .rejoin-pending-card .ttl { font-family: var(--f-display); font-style: italic; font-size: 22px; color: var(--ink); line-height: 1.1; margin-top: 6px; }
 .rejoin-pending-card .bd { font-size: 12.5px; color: var(--ink-700); line-height: 1.55; margin-top: 10px; }
+.rejoin-hiatus-card { margin: 26px auto 0; max-width: 400px; background: #fff; border: 1px solid var(--paper-200); border-radius: 14px; padding: 22px 22px 20px; }
+.rejoin-hiatus-card .ttl { font-family: var(--f-display); font-style: italic; font-size: 24px; color: var(--ink); line-height: 1.1; margin-top: 6px; }
+.rejoin-hiatus-card .bd { font-size: 12.5px; color: var(--ink-700); line-height: 1.55; margin-top: 10px; }
+.rejoin-hiatus-card .bd b { color: var(--ink); font-weight: 600; }
+.rejoin-recipient { margin-top: 16px; padding: 13px 15px; background: var(--paper-100); border: 1px solid var(--paper-200); border-radius: 10px; display: flex; flex-direction: column; gap: 3px; text-align: left; }
+.rejoin-recipient .rl { font-family: var(--f-mono); font-size: 8.5px; font-weight: 700; letter-spacing: .14em; color: var(--ink-500); }
+.rejoin-recipient .rn { font-size: 13px; font-weight: 600; color: var(--ink); margin-top: 2px; }
+.rejoin-recipient .re { font-family: var(--f-mono); font-size: 11.5px; color: var(--gold-700); word-break: break-all; }
+.rejoin-recipient .rd { font-size: 11px; color: var(--ink-600); line-height: 1.45; margin-top: 3px; }
+.rejoin-mail-alt { font-size: 11px; color: var(--ink-500); margin-top: 9px; line-height: 1.5; }
+.rejoin-mail-alt a { color: var(--ink-700); text-decoration: underline; }
+/* failedProbation reads warmer/greener than the crimson failure card in-app */
+.rejoin-screen.is-failed .mark .rejoin-badge { background: var(--ink); letter-spacing: 0; }
+
+/* Edit Profile · membership status — intent-based actions, acts immediately (not part of Save) */
+.ep-ms { margin-top: 18px; border: 1px solid var(--paper-200); border-radius: 12px; padding: 16px 18px; background: var(--paper-100); }
+.ep-ms .ms-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ep-ms .ms-now { display: flex; align-items: center; gap: 8px; }
+.ep-ms .ms-now .lbl { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: .12em; color: var(--ink-500); }
+.ep-ms .ms-hint { font-size: 11.5px; color: var(--ink-600); line-height: 1.5; margin-top: 10px; }
+.ep-ms textarea { min-height: 54px; resize: vertical; margin-top: 10px; background: #fff; font-size: 12px; }
+.ep-ms .ms-acts { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.ep-ms .ms-acts .btn { flex: 1; min-width: 150px; padding: 9px 14px; font-size: 12.5px; }
+.ep-ms .ms-modes { display: flex; flex-direction: column; gap: 1px; margin-top: 12px; border: 1px solid var(--paper-200); border-radius: 10px; overflow: hidden; }
+.ep-ms .ms-modes label { display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px; background: #fff; cursor: pointer; }
+.ep-ms .ms-modes label:hover { background: var(--paper-100); }
+.ep-ms .ms-modes input { margin-top: 2px; flex-shrink: 0; }
+.ep-ms .ms-modes .mt { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.ep-ms .ms-modes .md { font-size: 11px; color: var(--ink-600); line-height: 1.45; margin-top: 2px; }
+.ep-ms .ms-foot { font-size: 10.5px; color: var(--ink-500); margin-top: 10px; font-style: italic; }
 
 /* Splash */
 #authScreen { padding: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
@@ -1310,12 +1340,12 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
   <div class="access-screen rejoin-screen">
     <div class="mark">
       <img src="https://drive.google.com/thumbnail?id=1_mYJ9YIiaaTmiBc5MhxMhddihLACoquj&sz=w400" alt="" style="height:76px" onerror="this.style.display='none'">
-      <span class="rejoin-badge">II</span>
+      <span class="rejoin-badge" id="rejoinBadge">II</span>
     </div>
-    <div class="eyebrow" style="color: var(--gold-700); font-size: 10px">Membership paused</div>
+    <div class="eyebrow" id="rejoinEyebrow" style="color: var(--gold-700); font-size: 10px">Membership paused</div>
     <span class="gold-rule" style="margin: 16px auto;"></span>
-    <h1>Welcome back,<br><span id="rejoinFirstName">friend</span>.</h1>
-    <p class="desc">Your membership is on pause after three unexcused absences in a row. Nothing is lost — and you’re welcome back whenever you’re ready.</p>
+    <h1 id="rejoinHeading">Welcome back.</h1>
+    <p class="desc" id="rejoinDesc"></p>
 
     <div class="rejoin-kept">
       <div class="row"><span class="ic">✓</span><span class="tx">Your full <b>attendance history</b> is safe on file — nothing was deleted.</span></div>
@@ -1324,12 +1354,12 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 
     <div id="rejoinFormState">
       <div class="rejoin-form-card">
-        <div class="eyebrow">Ask to rejoin</div>
-        <p>A short note to the team helps — no need to explain everything.</p>
+        <div class="eyebrow" id="rejoinFormTitle">Ask to rejoin</div>
+        <p id="rejoinFormHint">A short note to the team helps — no need to explain everything.</p>
         <textarea id="rejoinReason" placeholder="I’d love to come back — things have settled and I’m ready to commit to rehearsals again."></textarea>
         <button class="btn btn-primary btn-block" id="btnRejoin" onclick="submitRejoin()">Send rejoin request</button>
       </div>
-      <p class="rejoin-note">An admin reviews each request personally. Once you’re approved you’ll return on a short re-entry probation, and your record continues right where it left off.</p>
+      <p class="rejoin-note" id="rejoinNote"></p>
     </div>
 
     <div id="rejoinPendingState" style="display:none">
@@ -1338,6 +1368,22 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
         <div class="eyebrow" style="color: var(--gold-700)">Awaiting review</div>
         <div class="ttl">Your request is in.</div>
         <div class="bd">An admin will review it shortly. We’ll email you the moment your place is restored — no need to check back here.</div>
+      </div>
+    </div>
+
+    <div id="rejoinHiatusState" style="display:none">
+      <div class="rejoin-hiatus-card">
+        <div class="eyebrow" style="color: var(--gold-700)">Coming back?</div>
+        <div class="ttl">Just say the word.</div>
+        <div class="bd">Your break was planned, so there’s nothing to apply for. Message an admin whenever you’re ready and they’ll switch you back on — <b>straight to active, no probation</b>.</div>
+        <div class="rejoin-recipient">
+          <span class="rl">YOUR MESSAGE GOES TO</span>
+          <span class="rn">The chorale admin team</span>
+          <span class="re" id="rejoinAdminAddr">—</span>
+          <span class="rd">They handle membership changes and can reactivate you.</span>
+        </div>
+        <a class="btn btn-primary btn-block" id="rejoinAdminMail" href="#" target="_blank" rel="noopener" style="margin-top:14px;text-decoration:none">Email an admin</a>
+        <div class="rejoin-mail-alt">Prefer another mail app? <a id="rejoinAdminMailto" href="#">Use your default instead</a>.</div>
       </div>
     </div>
 

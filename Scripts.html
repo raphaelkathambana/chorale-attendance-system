@@ -136,6 +136,33 @@ function renderSectionColumns(rgs, ensembleName) {
   return h;
 }
 
+// ── Apology labelling ──────────────────────────────────────────
+// Every apology label is driven by the backend `kind` field ("longterm" | "late"
+// | "absent" | "request") so the UI never re-derives it. A long-term absence used
+// to fall through to "Late" because its submission "on time" flag is N/A.
+function apologyKindLabel(a) {
+  var k = a && a.kind;
+  if (k === 'longterm') return 'Long-term absence';
+  if (k === 'late') return 'Lateness';
+  if (k === 'absent') return 'Absence';
+  if (k === 'request') return (a && a.type) || 'Request';
+  if (a && a.endDate) return 'Long-term absence';               // legacy rows (no kind)
+  if (a && /late/i.test(a.type || '')) return 'Lateness';
+  if (a && /absent/i.test(a.type || '')) return 'Absence';
+  return (a && a.type) ? a.type : '';
+}
+// Late submission = a single-day apology that arrived after the cut-off. Never a
+// long-term absence or an admin request (their "on time" is N/A, not late).
+function apologyIsLateSubmission(a) {
+  return !!a && (a.kind === 'late' || a.kind === 'absent') && !a.onTime;
+}
+// Record-rail apologies come from getApologiesForDate (no `kind`, but a longTerm flag).
+function apologyForDateLabel(a) {
+  if (a && a.longTerm) return 'Long-term absence';
+  if (a && /late/i.test(a.type || '')) return 'Lateness';
+  return 'Absence';
+}
+
 function renderRecordRail() {
   var h = '<div class="eyebrow" style="margin-bottom:8px">TALLY</div>';
   h += '<span class="gold-rule" style="margin:0 0 12px"></span>';
@@ -156,7 +183,7 @@ function renderRecordRail() {
         +      '<span style="font-size:12.5px;font-weight:600;color:var(--ink)">' + esc(apolNames[i]) + '</span>'
         +      stLabel
         +    '</div>'
-        +    '<div style="font-size:11px;color:var(--ink-500)">' + esc(a.type || '') + (a.reason ? ' \u00b7 "' + esc(a.reason) + '"' : '') + '</div>'
+        +    '<div style="font-size:11px;color:var(--ink-500)">' + esc(apologyForDateLabel(a)) + (a.reason ? ' \u00b7 "' + esc(a.reason) + '"' : '') + '</div>'
         + '</div>';
     }
   }
@@ -1057,10 +1084,13 @@ function renderApologyList() {
     var stColor = a.status === "Applied" || a.status === "Approved" ? "var(--present)"
                 : a.status === "Rejected" || a.status === "Revoked" ? "var(--crimson-600)"
                 : "var(--gold-700)";
-    var ltTag    = a.endDate ? ' <span class="prob-tag" style="background:var(--paper-100);color:var(--ink-700)">LONG-TERM</span>' : '';
-    var timeTag  = a.endDate ? '' :
-                   (a.onTime ? ' <span class="prob-tag" style="background:var(--present-bg);color:var(--present)">ON TIME</span>'
-                             : ' <span class="prob-tag" style="background:var(--crimson-100);color:var(--crimson-600)">LATE</span>');
+    // LATE / ON TIME reflect *submission timing* and apply only to single-day apologies;
+    // long-term absences and admin requests carry their meaning in the kind label instead.
+    var timeTag  = apologyIsLateSubmission(a)
+                   ? ' <span class="prob-tag" style="background:var(--crimson-100);color:var(--crimson-600)">LATE</span>'
+                   : (((a.kind === 'late' || a.kind === 'absent') && a.onTime)
+                       ? ' <span class="prob-tag" style="background:var(--present-bg);color:var(--present)">ON TIME</span>'
+                       : '');
 
     if (isDesktop) {
       var sel = (selectedApologyIdx === i) ? ' selected' : '';
@@ -1070,7 +1100,7 @@ function renderApologyList() {
         +      '<span style="font-family:var(--f-mono);font-size:9px;font-weight:700;letter-spacing:.12em;padding:3px 6px;border-radius:3px;background:' + (a.status === "Pending" ? (a.onTime ? 'var(--present-bg)' : 'var(--gold-100)') : 'var(--paper-100)') + ';color:' + stColor + '">' + (a.status === "Pending" ? (a.onTime ? "ON TIME" : "REVIEW") : a.status.toUpperCase()) + '</span>'
         +    '</div>'
         +    '<div style="font-family:var(--f-mono);font-size:10px;color:var(--ink-500);letter-spacing:.08em;margin-top:4px">'
-        +      a.type.toUpperCase() + ' \u00b7 ' + apologySubLine(a)
+        +      apologyKindLabel(a).toUpperCase() + ' \u00b7 ' + apologySubLine(a)
         +    '</div>'
         +    '<div style="font-size:11.5px;color:var(--ink-600);font-style:italic;margin-top:6px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">"' + esc(pr.cleanReason || a.reason) + '"</div>'
         + '</div>';
@@ -1079,10 +1109,10 @@ function renderApologyList() {
       h += '<div class="stat-card" style="padding:14px 16px">'
         +    '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px">'
         +      '<div style="flex:1;min-width:0">'
-        +        '<div style="font-weight:600;font-size:13px;color:var(--ink)">' + esc(a.name) + ltTag + timeTag + '</div>'
+        +        '<div style="font-weight:600;font-size:13px;color:var(--ink)">' + esc(a.name) + timeTag + '</div>'
         +        '<div style="font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;color:var(--ink-500);margin-top:4px">'
         +          apologySubLine(a)
-        +          ' \u00b7 ' + a.type.toUpperCase()
+        +          ' \u00b7 ' + apologyKindLabel(a).toUpperCase()
         +        '</div>'
         +        '<div style="font-size:12.5px;color:var(--ink-700);margin-top:6px;font-style:italic">"' + esc(pr.cleanReason || a.reason) + '"</div>'
         +        (a.reviewNote ? '<div style="font-size:11.5px;color:var(--ink-500);margin-top:6px">Admin note: ' + esc(a.reviewNote) + '</div>' : '')
@@ -1156,7 +1186,15 @@ function renderApologyDetail() {
   var stColor = a.status === "Applied" || a.status === "Approved" ? "var(--present)"
               : a.status === "Rejected" || a.status === "Revoked" ? "var(--crimson-600)"
               : "var(--gold-700)";
-  var statusLabel = a.status === "Pending" ? (a.onTime ? "ON TIME" : "PENDING \u00b7 LATE SUBMISSION") : a.status.toUpperCase();
+  var statusLabel;
+  if (a.status === "Pending") {
+    if (apologyIsLateSubmission(a))    statusLabel = "PENDING \u00b7 LATE SUBMISSION";
+    else if (a.kind === "longterm")    statusLabel = "PENDING \u00b7 LONG-TERM ABSENCE";
+    else if (a.onTime)                 statusLabel = "ON TIME";
+    else                               statusLabel = "PENDING \u00b7 REVIEW";
+  } else {
+    statusLabel = a.status.toUpperCase();
+  }
   if (a.status === "Pending" && a.type === "Section Transfer") statusLabel = "PENDING \u00b7 TRANSFER REQUEST";
   if (a.status === "Pending" && a.type === "Name Change")      statusLabel = "PENDING \u00b7 NAME CHANGE";
   if (a.status === "Pending" && a.type === "Course Details")   statusLabel = "PENDING \u00b7 ACADEMIC DETAILS";
@@ -1164,7 +1202,7 @@ function renderApologyDetail() {
 
   var h = '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:20px">'
         +   '<div>'
-        +     '<div class="eyebrow">' + a.type.toUpperCase() + ' \u00b7 ' + apologySubLine(a) + '</div>'
+        +     '<div class="eyebrow">' + apologyKindLabel(a).toUpperCase() + ' \u00b7 ' + apologySubLine(a) + '</div>'
         +     '<h2 style="margin-top:4px">' + esc(a.name) + '</h2>'
         +   '</div>'
         +   '<span style="font-family:var(--f-mono);font-size:10px;font-weight:700;letter-spacing:.14em;padding:6px 10px;border-radius:4px;background:' + (a.onTime ? 'var(--present-bg)' : 'var(--gold-100)') + ';color:' + stColor + ';white-space:nowrap">' + statusLabel + '</span>'
@@ -1215,9 +1253,9 @@ function renderApologyDetail() {
       +    '<span class="prob-tag" style="font-size:11px;padding:4px 9px">REJOINING \u00b7 RE-ENTRY PROBATION</span>'
       + '</div>'
       +  '<p style="font-size:12.5px;color:var(--ink-600);line-height:1.55;margin-top:12px">' + esc(rjFirst) + ' re-enters a <b>fresh probation period</b>. Their banked attendance history and points are restored, and the new re-entry probation builds on top.</p>';
-  } else if (a.status === "Pending" && (a.type === "Late" || a.type === "Absent" || a.type === "Long-term")) {
-    var fromStatus = a.type === "Late" ? "Late Unexcused" : "Absent Unexcused";
-    var toStatus   = a.type === "Late" ? "Late Excused"   : "Absent Excused";
+  } else if (a.status === "Pending" && (a.kind === "late" || a.kind === "absent" || a.kind === "longterm")) {
+    var fromStatus = a.kind === "late" ? "Late Unexcused" : "Absent Unexcused";
+    var toStatus   = a.kind === "late" ? "Late Excused"   : "Absent Excused";
     h += '<div class="eyebrow" style="margin-bottom:8px">If you approve</div>'
       +  '<div class="consequence-preview">'
       +    '<span class="status-badge Absent">' + fromStatus + '</span>'
@@ -1853,6 +1891,8 @@ function renderEditProfile(m) {
 
   h += '</div>'; // close epDetailSection
 
+  h += epMembershipSection(m, d);
+
   // ── Actions
   h += '<div style="display:flex;gap:8px;margin-top:18px">'
     +    '<button class="btn btn-primary" id="btnSaveProfile" style="flex:1;padding:10px 16px;font-size:13px" onclick="submitEditProfile()">Save changes</button>'
@@ -1861,6 +1901,104 @@ function renderEditProfile(m) {
     + '</div>'; // close card
 
   c.innerHTML = h;
+}
+
+// ── Membership status (Edit Profile) ──
+// Intent-based only: no raw status dropdown, because a direct status write would
+// bypass the removal/rejoin machinery (probation reset, notices, request rows).
+// Current state comes from the edit payload — Member Details status + Members.active.
+function epMembershipSection(m, d) {
+  var detail = ((d && d.memberStatus) || '').trim();
+  var dl = detail.toLowerCase();
+  var onHiatus = dl === 'on hiatus';
+  var isRejoining = dl === 'rejoining';
+  var isActive = !!m.active && !onHiatus;
+  var nm = esc(m.name).replace(/'/g, "\\'");
+
+  var badge = onHiatus
+    ? '<span class="prob-tag" style="background:var(--gold-100);color:var(--gold-700)">ON HIATUS</span>'
+    : !m.active
+      ? '<span class="inactive-tag">' + esc(detail || 'INACTIVE').toUpperCase() + '</span>'
+      : isRejoining
+        ? '<span class="prob-tag" style="background:var(--gold-100);color:var(--gold-700)">REJOINING</span>'
+        : '<span class="prob-tag" style="background:var(--present-bg);color:var(--present)">ACTIVE</span>';
+
+  var h = '<div class="ep-ms">'
+    +   '<div class="ms-head">'
+    +     '<div><div class="eyebrow">Membership status</div>'
+    +     '<span class="gold-rule" style="margin:6px 0 0;width:20px"></span></div>'
+    +     '<div class="ms-now"><span class="lbl">CURRENTLY</span>' + badge + '</div>'
+    +   '</div>';
+
+  if (onHiatus) {
+    h += '<div class="ms-hint">On an approved break — absences aren’t counted against them. Reactivating returns them straight to active, <b>no probation</b>.</div>'
+      +  '<div class="ms-acts">'
+      +    '<button class="btn btn-primary" onclick="epReactivate(\'' + nm + '\')">Reactivate</button>'
+      +  '</div>';
+  } else if (!m.active) {
+    h += '<div class="ms-hint">Membership is inactive. Reinstating restores their banked history and points — choose whether a re-entry probation applies.</div>'
+      +  '<div class="ms-modes">'
+      +    '<label><input type="radio" name="epReinstateMode" value="probation" checked>'
+      +      '<span><span class="mt">Fresh probation</span><span class="md">Returns as Rejoining, serving a re-entry probation period.</span></span></label>'
+      +    '<label><input type="radio" name="epReinstateMode" value="active">'
+      +      '<span><span class="mt">Straight to active</span><span class="md">No probation — for correcting an accidental removal.</span></span></label>'
+      +  '</div>'
+      +  '<div class="ms-acts">'
+      +    '<button class="btn btn-primary" onclick="epReinstate(\'' + nm + '\')">Reinstate</button>'
+      +  '</div>';
+  } else {
+    h += '<div class="ms-hint">'
+      +    (isRejoining ? 'Active and serving a re-entry probation. ' : '')
+      +    'A hiatus is an approved break — absences stop counting. Removal sets the membership inactive; history and points are kept.'
+      +  '</div>'
+      +  '<textarea id="epMsReason" placeholder="Reason (optional) — recorded with this change"></textarea>'
+      +  '<div class="ms-acts">'
+      +    '<button class="btn btn-secondary" onclick="epSetHiatus(\'' + nm + '\')">Set on hiatus</button>'
+      +    '<button class="btn btn-crimson" onclick="epSetInactive(\'' + nm + '\')">Remove / set inactive</button>'
+      +  '</div>';
+  }
+
+  return h + '<div class="ms-foot">Takes effect immediately — separate from Save changes.</div></div>';
+}
+
+function epMsReason() {
+  var t = document.getElementById('epMsReason');
+  return t ? t.value.trim() : '';
+}
+// After any membership change, reload the edit screen so the status block reflects
+// the new state, and refresh the roster behind it.
+function epMsDone(name, msg) {
+  showToast(msg, 'success');
+  refreshMemberList();
+  showEditProfile(name);
+}
+function epMsFail(e) { showToast('Failed: ' + ((e && e.message) || 'unknown error'), 'error'); }
+
+function epSetHiatus(name) {
+  if (!confirm('Set ' + name + ' on hiatus? Absences stop counting while they\'re on an approved break.')) return;
+  google.script.run.withSuccessHandler(function () { epMsDone(name, name + ' set on hiatus.'); })
+    .withFailureHandler(epMsFail).adminSetMemberOnHiatus(name, epMsReason());
+}
+function epReactivate(name) {
+  if (!confirm('Reactivate ' + name + '? They return straight to active with no probation.')) return;
+  google.script.run.withSuccessHandler(function () { epMsDone(name, name + ' reactivated.'); })
+    .withFailureHandler(epMsFail).adminReactivateFromHiatus(name);
+}
+function epSetInactive(name) {
+  if (!confirm('Set ' + name + ' inactive? They lose access and must rejoin to return. History and points are kept.')) return;
+  google.script.run.withSuccessHandler(function () { epMsDone(name, name + ' set inactive.'); })
+    .withFailureHandler(epMsFail).adminSetMemberInactive(name, epMsReason());
+}
+function epReinstate(name) {
+  var sel = document.querySelector('input[name="epReinstateMode"]:checked');
+  var mode = sel ? sel.value : 'probation';
+  var msg = mode === 'active'
+    ? 'Reinstate ' + name + ' straight to active, with no probation?'
+    : 'Reinstate ' + name + ' on a fresh re-entry probation?';
+  if (!confirm(msg)) return;
+  google.script.run.withSuccessHandler(function () {
+    epMsDone(name, name + (mode === 'active' ? ' reinstated as active.' : ' reinstated \u2014 re-entry probation started.'));
+  }).withFailureHandler(epMsFail).adminReinstateMember(name, mode);
 }
 
 // ─── ADD-MEMBER PREVIEW ───────────────────────────────────────────────────
@@ -2794,9 +2932,10 @@ function renderMyApologies(apols) {
              : (st === "Pending")
                  ? { bg: "var(--gold-100)",    c: "var(--gold-700)" }
              : { bg: "var(--paper-200)", c: "var(--ink-500)" };
-    var typeLabel = a.endDate
-      ? ('LONG-TERM · ' + fmtDayMonUpper(a.date) + ' → ' + fmtDayMonUpper(a.endDate))
-      : esc(String(a.type || "")).toUpperCase();
+    var isLong = a.kind === 'longterm' || (!a.kind && a.endDate);
+    var typeLabel = isLong
+      ? ('LONG-TERM ABSENCE · ' + fmtDayMonUpper(a.date) + ' → ' + fmtDayMonUpper(a.endDate))
+      : apologyKindLabel(a).toUpperCase();
     var line = a.reason ? esc(a.reason) : (a.reviewNote ? esc(a.reviewNote) : "");
     h += '<div style="padding:' + (i === 0 ? '12px' : '13px') + ' 0 13px;border-top:' + (i === 0 ? 'none' : '1px solid var(--paper-200)') + '">'
       +    '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:5px">'
@@ -3169,15 +3308,106 @@ google.script.run.withSuccessHandler(function (r) {
 // ── Rejoin screen (role "removed": a known member whose membership is inactive) ──
 // Calm, member-facing re-entry: explains the pause, reassures history + points are
 // kept, and offers a rejoin request form (or the awaiting-review state if pending).
+// Copy is keyed off subrole. All three states share the shell (mark, kept-history
+// reassurance, email pill); the two rejoin subroles share one form and endpoint and
+// differ only in tone. "hiatus" gets no form at all — admins reactivate directly.
+var REJOIN_COPY = {
+  failedProbation: {
+    badge: "\u00b7", cls: "is-failed",
+    eyebrow: "Probation \u00b7 not completed",
+    heading: function (f) { return "Let\u2019s try<br>again, " + f + "."; },
+    desc: "You didn\u2019t quite reach the attendance mark this probation round, so your membership is paused for now. It happens \u2014 and it isn\u2019t the end of the road.",
+    formTitle: "Ask for another round",
+    formHint: "Tell us what got in the way, if you\u2019d like \u2014 it helps the team support you better.",
+    placeholder: "Clinicals ran over most Thursdays last term. My rotation has changed and I can make every rehearsal now.",
+    note: "An admin reviews each request personally. If approved you\u2019ll start a fresh probation round, and everything you\u2019ve already earned stays on your record."
+  },
+  removed: {
+    badge: "II", cls: "",
+    eyebrow: "Membership lapsed",
+    heading: function (f) { return "Welcome back,<br>" + f + "."; },
+    desc: "Your membership lapsed after an extended stretch away. Nothing is lost \u2014 and you\u2019re welcome back whenever you\u2019re ready.",
+    formTitle: "Ask to rejoin",
+    formHint: "A short note to the team helps \u2014 no need to explain everything.",
+    placeholder: "I\u2019d love to come back \u2014 things have settled and I\u2019m ready to commit to rehearsals again.",
+    note: "An admin reviews each request personally. Once you\u2019re approved you\u2019ll return on a short re-entry probation, and your record continues right where it left off."
+  },
+  hiatus: {
+    badge: "II", cls: "",
+    eyebrow: "Membership paused",
+    heading: function (f) { return "See you<br>soon, " + f + "."; },
+    desc: "You\u2019re on an approved break, so your place is being held. Rehearsals carry on without you marked absent."
+  }
+};
+
 function showRejoinScreen(r) {
   var scr = document.getElementById("rejoinScreen");
   if (!scr) return;
   hideAppShell_();
   scr.style.display = "block";
+
+  var sub = r.subrole || "removed";
+  var cfg = REJOIN_COPY[sub] || REJOIN_COPY.removed;
   var first = ((r.name || "").trim().split(/\s+/)[0]) || "there";
-  var fn = document.getElementById("rejoinFirstName"); if (fn) fn.textContent = first;
-  var em = document.getElementById("rejoinEmail"); if (em) em.textContent = r.email || "—";
-  setRejoinState(!!r.rejoinPending);
+
+  var card = scr.querySelector(".rejoin-screen");
+  if (card) card.className = "access-screen rejoin-screen " + (cfg.cls || "");
+  function set(id, val, html) {
+    var el = document.getElementById(id); if (!el) return;
+    if (html) el.innerHTML = val; else el.textContent = val;
+  }
+  set("rejoinBadge", cfg.badge);
+  set("rejoinEyebrow", cfg.eyebrow);
+  set("rejoinHeading", cfg.heading(esc(first)), true);
+  set("rejoinDesc", cfg.desc);
+  set("rejoinEmail", r.email || "\u2014");
+
+  if (sub === "hiatus") {
+    setRejoinMode("hiatus");
+    // The address comes from the server (ADMIN_CONTACT_EMAIL). Primary button opens
+    // Gmail's web composer — everyone here signs in with a Google account — with a
+    // mailto fallback for anyone whose default mail app isn't Gmail.
+    var admin = r.adminContact || r.adminEmail || "";
+    var subj = "Returning from hiatus \u2014 " + (r.name || "");
+    var body = "Hi,\n\nI\u2019ve been on hiatus and I\u2019d like to come back to rehearsals. "
+             + "Could you reactivate my membership?\n\nThank you,\n" + (r.name || "");
+    var btn = document.getElementById("rejoinAdminMail");
+    var alt = document.getElementById("rejoinAdminMailto");
+    var addr = document.getElementById("rejoinAdminAddr");
+    if (addr) addr.textContent = admin || "ask any committee member";
+    if (btn) {
+      btn.style.display = admin ? "" : "none";
+      if (admin) {
+        btn.href = "https://mail.google.com/mail/?view=cm&fs=1&to=" + encodeURIComponent(admin)
+                 + "&su=" + encodeURIComponent(subj) + "&body=" + encodeURIComponent(body);
+      }
+    }
+    if (alt) {
+      if (alt.parentNode) alt.parentNode.style.display = admin ? "" : "none";
+      if (admin) alt.href = "mailto:" + admin + "?subject=" + encodeURIComponent(subj)
+                          + "&body=" + encodeURIComponent(body);
+    }
+    return;
+  }
+  set("rejoinFormTitle", cfg.formTitle);
+  set("rejoinFormHint", cfg.formHint);
+  set("rejoinNote", cfg.note);
+  var ta = document.getElementById("rejoinReason");
+  if (ta) ta.placeholder = cfg.placeholder;
+  setRejoinMode(r.rejoinPending ? "pending" : "form");
+}
+
+// One of "form" | "pending" | "hiatus"
+function setRejoinMode(mode) {
+  var map = { form: "rejoinFormState", pending: "rejoinPendingState", hiatus: "rejoinHiatusState" };
+  var kept = document.querySelector("#rejoinScreen .rejoin-kept");
+  for (var k in map) {
+    var el = document.getElementById(map[k]);
+    if (el) el.style.display = (k === mode) ? "block" : "none";
+  }
+  // The history/points reassurance is about a lapsed record — a hiatus member never
+  // lost standing, so it would read as faintly ominous there.
+  if (kept) kept.style.display = (mode === "hiatus") ? "none" : "flex";
 }
 // The desktop shell rule sets #appContainer { display:flex !important }, which would
 // otherwise override the inline display:none and bleed the empty app in behind the
@@ -3186,19 +3416,14 @@ function hideAppShell_() {
   var app = document.getElementById("appContainer");
   if (app) app.style.setProperty("display", "none", "important");
 }
-function setRejoinState(pending) {
-  var form = document.getElementById("rejoinFormState");
-  var pend = document.getElementById("rejoinPendingState");
-  if (form) form.style.display = pending ? "none" : "block";
-  if (pend) pend.style.display = pending ? "block" : "none";
-}
+function setRejoinState(pending) { setRejoinMode(pending ? "pending" : "form"); }
 function submitRejoin() {
   var ta = document.getElementById("rejoinReason");
   var reason = ta ? ta.value.trim() : "";
   var btn = document.getElementById("btnRejoin");
   if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
   google.script.run.withSuccessHandler(function () {
-    setRejoinState(true);
+    setRejoinMode("pending");
     showToast("Rejoin request sent.", "success");
   }).withFailureHandler(function (e) {
     if (btn) { btn.disabled = false; btn.textContent = "Send rejoin request"; }
@@ -4855,13 +5080,14 @@ function approveRejoin(rowIndex, memberName) {
 }
 
 // Reinstate: the direct admin route from the Members tab (no request needed).
+// Mode is explicit — this route always applies a fresh re-entry probation.
 function adminReinstateMember(memberName) {
   if (!confirm("Reinstate " + memberName + "? They return on a fresh re-entry probation.")) return;
   google.script.run.withSuccessHandler(function () {
     showToast(memberName + " reinstated \u2014 re-entry probation started.", "success");
     refreshMemberList();
   }).withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
-    .adminReinstateMember(memberName);
+    .adminReinstateMember(memberName, "probation");
 }
 
 
