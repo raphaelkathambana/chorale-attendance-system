@@ -13,7 +13,7 @@ var SCHEDULE_SHEET   = "Schedule";
 var MEETINGS_SHEET   = "Meetings";
 var APOLOGIES_SHEET  = "Apologies";
 var SCHEDULED_SHEET  = "Scheduled Emails";
-var REQUEST_TYPES = ["Name Change", "Section Transfer", "Course Details", "Restart Probation"];
+var REQUEST_TYPES = ["Name Change", "Section Transfer", "Course Details", "Restart Probation", "Rejoin Request"];
 function isRequestType_(type) {
   return REQUEST_TYPES.indexOf(String(type || "").trim()) !== -1;
 }
@@ -99,7 +99,8 @@ var SHEET_SCHEMAS = {
   "Offenses": { order: true, headers: ["Date","Name","Description","Recorded By","Timestamp"] },
   "Meetings": { order: true, headers: ["Date","Time","Groups","Title","Created By","Timestamp"] },
   "Members": { order: false, headers: ["Name","Email","Phone","Groups","Choir Part","Band Role","Orchestra Role","Adm. No.","Status","Profile Photo"] },
-  "Admins": { order: false, headers: ["Email","Role","Section","Rep Group"] } // Email may sit anywhere, but the header MUST exist
+  "Admins": { order: false, headers: ["Email","Role","Section","Rep Group"] },
+  "Probation History": { order: false, headers: ["Name","Probation Start","Outcome","Attended","Required"] } // Email may sit anywhere, but the header MUST exist
 };
 
 /**
@@ -266,13 +267,28 @@ function getAccess_(ss, emailOverride) {
       // Scoped roles need their scope; without it they can't be safely applied
       if (role === "sectionAdmin" && !section) role = "member";
       if (role === "elevated" && (!section || !repGroup)) role = "member";
+
+      // MEMBERSHIP STATUS vs ADMIN ROLE.
+      // Full admins are system operators and SUPERSEDE their own membership state
+      // (an emeritus/alumnus admin still administers, and it prevents lockout if an
+      // admin is ever auto-removed). Section admins and elevated reps are MEMBER
+      // roles with added responsibility, so their powers SUSPEND while their own
+      // membership is inactive - they fall through to the member/removed branches
+      // below and regain powers automatically on reactivation.
+      var membershipInactive = !!(memberInfo && !memberInfo.active);
+      if (membershipInactive && (role === "sectionAdmin" || role === "elevated")) break;
+
       return {
         role: role, level: ROLE_LEVELS[role],
         email: email, name: memberInfo ? memberInfo.name : email,
         groups: memberInfo ? memberInfo.groups : [],
         section: (role === "admin") ? "" : section,
         repGroup: (role === "elevated") ? repGroup : "",
-        allowedSections: (role === "admin") ? GROUPS.slice() : [section]
+        allowedSections: (role === "admin") ? GROUPS.slice() : [section],
+        // Surfaced so the UI can show a banner when an admin is signed in while
+        // their own membership is paused/inactive.
+        membershipInactive: membershipInactive,
+        detailStatus: membershipInactive ? getMemberDetailStatus_(ss, memberInfo.name) : ""
       };
     }
   }
@@ -445,6 +461,11 @@ function getUserRole() {
     section: a.section, repGroup: a.repGroup, allowedSections: a.allowedSections,
     isAdminLike: a.level >= ROLE_LEVELS.elevated
   };
+  // Admin signed in while their OWN membership is inactive/on hiatus -> banner.
+  if (a.membershipInactive) {
+    out.membershipInactive = true;
+    out.detailStatus = a.detailStatus || "";
+  }
   // Removed members need to know whether a rejoin request is already pending,
   // so the UI can show "awaiting review" instead of the submit form.
   if (a.role === "removed") {
@@ -902,6 +923,123 @@ function calculateProbationStats_(member, attData) {
  * If a member has reached PROBATION_SESSIONS, sets Passed/Failed and updates sheet.
  * Returns array of evaluation results for the UI.
  */
+/**
+ * Ensures the Probation History sheet exists. This is an EVENT LOG: one row per
+ * completed probation outcome. The Members sheet only holds CURRENT probation
+ * state (flags get overwritten when someone restarts probation or rejoins), so
+ * without this log the pass/fail trend is not reconstructible.
+ */
+function ensureProbationHistorySheet_(ss) {
+  var sheet = ss.getSheetByName(PROBATION_HISTORY_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(PROBATION_HISTORY_SHEET);
+    sheet.appendRow(["Name","Groups","Probation Start","Probation End","Outcome",
+                     "Attended","Required","Total Sessions","Rate","Penalty","Logged At"]);
+    sheet.getRange(1, 1, 1, 11).setFontWeight("bold");
+    sheet.setFrozenRows(1);
+    return sheet;
+  }
+  if (sheet.getLastRow() === 0 || sheet.getLastColumn() === 0) {
+    sheet.getRange(1, 1, 1, 11).setValues([["Name","Groups","Probation Start","Probation End","Outcome",
+                     "Attended","Required","Total Sessions","Rate","Penalty","Logged At"]]);
+    sheet.getRange(1, 1, 1, 11).setFontWeight("bold");
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+/**
+ * Logs one completed probation outcome. Idempotent per RUN: a member can serve
+ * probation more than once (rejoin/restart), so runs are keyed by name +
+ * probation start date rather than name alone.
+ * outcome: "passed_clean" | "passed_conditional" | "failed"
+ */
+function logProbationOutcome_(ss, member, stats, outcome, penalty) {
+  var sheet = ensureProbationHistorySheet_(ss);
+  var startStr = String(member.probationStart || "");
+  // Dedupe on (name + start) so a re-evaluation cannot double-log the same run.
+  if (sheet.getLastRow() > 1) {
+    var existing = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues();
+    for (var i = 0; i < existing.length; i++) {
+      if (existing[i][0].toString().trim() === member.name &&
+          formatSheetDate_(existing[i][2]) === formatSheetDate_(startStr)) return false;
+    }
+  }
+  var label = outcome === "passed_clean" ? "Passed"
+            : (outcome === "passed_conditional" ? "Conditional" : "Failed");
+  sheet.appendRow([
+    member.name,
+    (member.groups || []).join(", "),
+    startStr,
+    stats.lastSessionDate || "",
+    label,
+    stats.attended,
+    stats.required,
+    stats.totalSessions,
+    stats.rate,
+    penalty ? -Math.abs(penalty) : 0,
+    new Date()
+  ]);
+  return true;
+}
+
+/**
+ * Returns the probation event log (newest first). Data source for the v3
+ * probation-performance panel; also useful to verify logging is working.
+ */
+function getProbationHistory() {
+  requireManagement_();
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(PROBATION_HISTORY_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var data = sheet.getDataRange().getValues();
+  var h = data[0].map(function (x) { return x.toString().trim().toLowerCase(); });
+  function col(n) { return h.indexOf(n); }
+  var out = [];
+  for (var i = 1; i < data.length; i++) {
+    out.push({
+      name: data[i][col("name")] ? data[i][col("name")].toString() : "",
+      groups: data[i][col("groups")] ? data[i][col("groups")].toString().split(",").map(function(x){return x.trim();}).filter(Boolean) : [],
+      start: formatSheetDate_(data[i][col("probation start")]),
+      end: formatSheetDate_(data[i][col("probation end")]),
+      outcome: data[i][col("outcome")] ? data[i][col("outcome")].toString() : "",
+      attended: Number(data[i][col("attended")]) || 0,
+      required: Number(data[i][col("required")]) || 0,
+      totalSessions: Number(data[i][col("total sessions")]) || 0,
+      rate: Number(data[i][col("rate")]) || 0
+    });
+  }
+  out.sort(function (a, b) { return (b.end || "").localeCompare(a.end || ""); });
+  return out;
+}
+
+/**
+ * ONE-TIME — backfills the history log from members whose probation has already
+ * concluded, so the pass/fail trend does not start empty. Recomputes stats from
+ * attendance. Safe to re-run: logProbationOutcome_ dedupes on name + start date.
+ * Run from the editor.
+ */
+function backfillProbationHistory() {
+  var ss = getSpreadsheet_();
+  var members = readAllMembers_(ss);
+  var attData = readAllAttendance_(ss);
+  var added = 0, skipped = 0;
+  members.forEach(function (m) {
+    if (!m.probationStart) return;
+    if (!m.probationPassed && !m.probationFailed) return;  // still in progress
+    var stats;
+    try { stats = calculateProbationStats_(m, attData); } catch (e) { return; }
+    var required = Math.ceil(PROBATION_SESSIONS * PROBATION_THRESHOLD);
+    var minRequired = Math.ceil(PROBATION_SESSIONS * PROBATION_CONDITIONAL);
+    var outcome = m.probationFailed ? "failed"
+                : (stats.attended >= required ? "passed_clean" : "passed_conditional");
+    var penalty = (outcome === "passed_conditional") ? (required - stats.attended) * PROBATION_PENALTY_MULTIPLIER : 0;
+    if (logProbationOutcome_(ss, m, stats, outcome, penalty)) added++; else skipped++;
+  });
+  Logger.log("Probation history backfill — added " + added + ", already logged " + skipped + ".");
+  return { added: added, skipped: skipped };
+}
+
 function evaluateProbation_(ss) {
   var allMembers = readAllMembers_(ss);
   var attData = readAllAttendance_(ss);
@@ -962,6 +1100,10 @@ function evaluateProbation_(ss) {
       if (statusIdx !== -1) sheet.getRange(row, statusIdx + 1).setValue("Inactive");
       try { setMembershipState_(ss, m.name, null, "Left", todayStr_()); } catch(e) {}
     }
+
+    // Log the outcome as a permanent event BEFORE the flags move on — the Members
+    // sheet only keeps current state, so this log is the only record of the run.
+    try { logProbationOutcome_(ss, m, stats, outcome, penalty); } catch (e) { Logger.log("probation log: " + e); }
 
     // Reset acknowledged flag for new outcome
     sheet.getRange(row, ackedIdx + 1).setValue("");

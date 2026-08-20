@@ -3291,6 +3291,7 @@ google.script.run.withSuccessHandler(function (r) {
   document.getElementById("appContainer").style.display = "";
 
   renderUser(r.name, r.email);
+  renderMembershipNotice(r);
   renderTabNav();
   renderBirthdayBanner();
   var firstTab = activeTabs()[0].id;
@@ -3429,6 +3430,21 @@ function submitRejoin() {
     if (btn) { btn.disabled = false; btn.textContent = "Send rejoin request"; }
     showToast(e.message || "Could not send your request.", "error");
   }).requestRejoin(reason);
+}
+
+// Membership notice — a full admin signed in while their OWN membership is paused.
+// getUserRole() only sets membershipInactive/detailStatus on the full-admin branch:
+// section admins and elevated reps lose their powers while inactive and land on the
+// member-facing rejoin/hiatus screens instead, so they never see this.
+function renderMembershipNotice(r) {
+  var mount = document.getElementById("membershipNotice");
+  if (!mount) return;
+  if (!r || !r.membershipInactive || !userAccess.isAdminLike) { mount.innerHTML = ""; return; }
+  var state = ((r.detailStatus || "") + "").trim() || "inactive";
+  mount.innerHTML = '<div class="mstat-card">'
+    + '<span class="mstat-badge" aria-hidden="true">II</span>'
+    + '<span class="mstat-text">Your membership is currently <b>' + esc(state) + '</b> \u2014 you\u2019re signed in with admin access.</span>'
+    + '</div>';
 }
 
 // Birthday banner — runs for every role, fails silent (decorative)
