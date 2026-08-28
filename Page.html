@@ -193,6 +193,8 @@ body { padding-bottom: env(safe-area-inset-bottom); }
 .btn-export:hover { border-color: var(--ink); color: var(--ink); }
 .btn-export:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-block { width: 100%; }
+.submit-row { display: flex; gap: 10px; align-items: stretch; }
+.submit-row .btn-primary { flex: 1; }
 
 /* Chips */
 .chip {
@@ -568,6 +570,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--g
 .apol-cell .num.gold { color: var(--gold-300); }
 .apol-cell .num.ok { color: #A6D7B4; }
 .apol-cell .num.bad { color: #E8A6AB; }
+.apol-cell .num.muted { color: var(--ink-300); }
 .apol-cell .num .sep { font-size: 15px; color: var(--ink-300); margin: 0 2px; }
 .apol-cell .lab { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.1em; color: var(--ink-300); text-transform: uppercase; }
 .apol-div { width: 1px; height: 30px; background: rgba(243,233,206,0.18); }
@@ -601,6 +604,126 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--g
 .prob-seg span { flex: 1; height: 6px; border-radius: 2px; background: var(--paper-200); }
 .prob-seg span.fill { background: var(--crimson); }
 
+/* Dashboard busy state — blurred body under a floating pill */
+#dashboardBody { transition: opacity .16s ease, filter .16s ease; }
+#dashboardBody.is-busy { opacity: .5; filter: blur(1.5px); pointer-events: none; }
+.dash-busy { position: sticky; top: 96px; z-index: 30; height: 0; display: flex; align-items: flex-start; justify-content: center; pointer-events: none; }
+.dash-busy[hidden] { display: none; }
+.dash-busy-pill { display: flex; align-items: center; gap: 9px; padding: 9px 16px; border-radius: 999px; background: var(--ink); color: var(--paper); font-family: var(--f-mono); font-size: 9.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; box-shadow: 0 10px 26px rgba(43, 38, 32, 0.22); animation: dashBusyIn .18s ease both; }
+.dash-busy-spin { width: 12px; height: 12px; border-radius: 999px; border: 2px solid rgba(251, 247, 238, 0.26); border-top-color: var(--gold); animation: spin .7s linear infinite; }
+.dash-busy-pill.dash-busy-wait { background: var(--paper-100); color: var(--ink-500); border: 1px solid var(--paper-300); box-shadow: 0 6px 18px rgba(43, 38, 32, 0.1); }
+@keyframes dashBusyIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+
+/* ── DASHBOARD v3 · grouped analytical panels ──
+   Groups: Where · Shape · When · Org state · Change. Lower groups carry
+   .collapsed on load (dashGroupToggle) so the top stays scannable. */
+.dash-group { margin-top: 22px; }
+.dash-group-bar { display: flex; align-items: center; gap: 10px; width: 100%; background: transparent; border: none; padding: 6px 0 12px; cursor: pointer; text-align: left; font-family: var(--f-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-500); }
+.dash-group-bar .chev { font-size: 10px; color: var(--ink-400); transition: transform .18s ease; }
+.dash-group-bar .rule { flex: 1; height: 1px; background: var(--paper-300); }
+.dash-group-bar .dash-group-hint { font-family: var(--f-sans); font-size: 11.5px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink-400); }
+.dash-group.collapsed .dash-group-bar .chev { transform: rotate(-90deg); }
+.dash-group.collapsed .dash-group-body { display: none; }
+/* [data-solo-flow] with one surviving card: drop the header, let the card join the flow */
+.dash-group.solo { margin-top: 0; margin-bottom: 20px; }
+.dash-group.solo > .dash-group-bar { display: none; }
+.dash-group.solo .dash-group-body { display: grid; }
+.dash-group-body { display: grid; grid-template-columns: 1fr; gap: 14px; align-items: start; }
+.dash-card { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 16px; padding: 16px 18px; }
+.dash-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.dash-card-note { font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.08em; color: var(--ink-400); white-space: nowrap; }
+.dash-card-foot { font-size: 11px; color: var(--ink-400); margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--paper-200); text-wrap: pretty; }
+
+/* Part breakdown — stacked composition bar per part, worst rate first */
+.pb-row { display: grid; grid-template-columns: 1fr 54px; gap: 7px 12px; padding: 11px 0; border-bottom: 1px solid var(--paper-200); }
+.pb-row:last-child { border-bottom: none; }
+.pb-name { font-size: 13px; font-weight: 600; color: var(--ink); }
+.pb-sec { font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.1em; color: var(--ink-400); margin-top: 2px; }
+.pb-rate { font-family: var(--f-mono); font-size: 13px; font-weight: 700; color: var(--ink); text-align: right; }
+.pb-rate.warn { color: var(--crimson-600); }
+.pb-bar { grid-column: 1 / -1; display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--paper-200); }
+.pb-meta { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.06em; color: var(--ink-400); }
+.skew-tag { font-family: var(--f-mono); font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; }
+.skew-tag.late-leaning { background: var(--gold-100); color: var(--gold-700); }
+.skew-tag.absence-leaning { background: var(--crimson-100); color: var(--crimson-600); }
+.skew-tag.even { background: var(--paper-100); color: var(--ink-500); }
+.skew-tag.clean { background: var(--present-bg); color: var(--present); }
+
+/* Reusable measure bar (section comparison · weekday · session type) */
+.mbar-row { display: grid; grid-template-columns: 74px 1fr 38px 52px; gap: 10px; align-items: center; padding: 8px 0; }
+.mbar-lab { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-500); }
+.mbar-track { height: 10px; border-radius: 5px; background: var(--paper-100); overflow: hidden; }
+.mbar-fill { display: block; height: 100%; background: var(--gold); border-radius: 5px; }
+.mbar-fill.low { background: var(--crimson-500); }
+.mbar-val { font-family: var(--f-mono); font-size: 11.5px; font-weight: 700; color: var(--ink); text-align: right; }
+.mbar-sub { font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.06em; color: var(--ink-400); text-align: right; }
+.mbar-key { display: flex; gap: 14px; margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--paper-200); font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-400); }
+.mbar-key .k { display: inline-flex; align-items: center; gap: 5px; }
+.mbar-key i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.mbar-key i.ok { background: var(--gold); }
+.mbar-key i.low { background: var(--crimson-500); }
+
+/* Distribution histogram */
+.hist { display: flex; align-items: flex-end; gap: 10px; }
+.hist-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.hist-n { font-family: var(--f-mono); font-size: 11px; font-weight: 700; color: var(--ink); }
+.hist-area { width: 100%; height: 96px; display: flex; align-items: flex-end; }
+.hist-bar { width: 100%; background: var(--gold-300); border-radius: 4px 4px 0 0; min-height: 11px; }
+.hist-bar.zero { min-height: 0; }
+.hist-bar.bad { background: var(--crimson-500); }
+.hist-bar.good { background: var(--present); }
+.hist-lab { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.06em; color: var(--ink-400); }
+
+/* Behaviour · named individuals — pattern in range, never a disciplinary record */
+.beh-cols { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.beh-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding-bottom: 7px; border-bottom: 1px solid var(--paper-200); font-family: var(--f-mono); font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-500); }
+.beh-item { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+.beh-name { flex: 1; min-width: 0; font-size: 12.5px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.beh-count { font-family: var(--f-mono); font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em; padding: 2px 6px; border-radius: 3px; white-space: nowrap; }
+.beh-count.late { background: var(--gold-100); color: var(--gold-700); }
+.beh-count.abs { background: var(--crimson-100); color: var(--crimson-600); }
+.beh-count.ok { background: var(--present-bg); color: var(--present); }
+.beh-rate { font-family: var(--f-mono); font-size: 10.5px; color: var(--ink-400); width: 34px; text-align: right; }
+.beh-more { font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.06em; color: var(--ink-400); padding-top: 6px; }
+.beh-mix { display: flex; gap: 8px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--paper-200); }
+.beh-mix .cell { flex: 1; background: var(--paper-100); border-radius: 10px; padding: 9px 10px; }
+.beh-mix .num { font-family: var(--f-display); font-size: 22px; line-height: 0.9; color: var(--ink); }
+.beh-mix .lab { font-family: var(--f-mono); font-size: 8px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-500); margin-top: 5px; }
+.beh-mix .sub { font-size: 10px; line-height: 1.3; color: var(--ink-400); margin-top: 4px; text-wrap: pretty; }
+
+/* Membership health */
+.mh-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.mh-cell { background: var(--paper-100); border-radius: 12px; padding: 10px 12px; }
+.mh-cell .num { font-family: var(--f-display); font-size: 26px; line-height: 0.9; color: var(--ink); }
+.mh-cell .lab { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-500); margin-top: 5px; }
+.mh-flow { display: flex; gap: 16px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--paper-200); font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-400); }
+.mh-flow .in { color: var(--present); font-weight: 700; }
+.mh-flow .out { color: var(--crimson-600); font-weight: 700; }
+
+/* Probation outcomes · by month */
+.pp-months { display: flex; gap: 5px; margin-top: 12px; }
+.pp-month { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.pp-n { font-family: var(--f-mono); font-size: 10px; font-weight: 700; color: var(--ink); }
+.pp-stack { width: 100%; height: 62px; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; }
+.pp-seg { border-radius: 2px; min-height: 9px; display: flex; align-items: center; justify-content: center; font-family: var(--f-mono); font-size: 8.5px; font-weight: 700; color: rgba(251,247,238,0.92); }
+.pp-legend { display: flex; gap: 12px; margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--paper-200); font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-400); }
+.pp-legend span.k { display: inline-flex; align-items: center; gap: 5px; }
+.pp-legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.pp-seg.pass { background: var(--present); }
+.pp-seg.cond { background: var(--gold-500); }
+.pp-seg.fail { background: var(--crimson-500); }
+.pp-lab { font-family: var(--f-mono); font-size: 8px; letter-spacing: 0.06em; color: var(--ink-400); }
+
+/* Change · period-over-period */
+.cmp-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.cmp-cell { background: var(--paper-100); border-radius: 12px; padding: 12px 14px; }
+.cmp-now { font-family: var(--f-display); font-size: 28px; line-height: 0.9; color: var(--ink); }
+.cmp-lab { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-500); }
+.cmp-prev { font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.06em; color: var(--ink-400); margin-top: 7px; }
+.cmp-delta { display: inline-block; font-family: var(--f-mono); font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em; padding: 2px 6px; border-radius: 3px; background: var(--paper-200); color: var(--ink-500); margin-top: 8px; }
+.cmp-delta.up { background: var(--present-bg); color: var(--present); }
+.cmp-delta.down { background: var(--crimson-100); color: var(--crimson-600); }
+
 @media (min-width: 1024px) {
   .sess-toolbar { flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; }
   .session-card { grid-template-columns: 100px 1fr 230px 110px; }
@@ -615,6 +738,13 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--g
   .dash-hero-num { font-size: 60px; }
   .dash-stat-num { font-size: 44px; }
   .dash-panels { grid-template-columns: 1.4fr 1fr; }
+  .dash-group-body.g2 { grid-template-columns: 1.5fr 1fr; }
+  .dash-group-body.g3 { grid-template-columns: 1fr 1fr 1fr; }
+  .dash-group-body .span2 { grid-column: span 2; }
+  .dash-group.solo .dash-group-body { grid-template-columns: 1fr; }
+  .beh-cols { grid-template-columns: 1fr 1fr; }
+  .mh-grid { grid-template-columns: repeat(5, 1fr); }
+  .cmp-grid { grid-template-columns: repeat(4, 1fr); }
 }
 
 /* ── 6. OVERLAYS ────────────────────────────────────────────────────────── */
@@ -1531,7 +1661,7 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 
       <div class="quick-actions" id="quickActions" style="display:none">
         <button onclick="setAll('Present')">All present</button>
-        <button onclick="setAll('Absent Unexcused')">Clear</button>
+        <button onclick="setAll('Absent Unexcused')">All absent</button>
         <div style="flex:1"></div>
         <span style="font-family:var(--f-mono);font-size:10px;letter-spacing:.08em;color:var(--ink-400)" id="memberCount"></span>
       </div>
@@ -1545,7 +1675,10 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 
       <div class="submit-area" id="submitArea" style="display:none">
         <div class="summary-bar" id="summaryBar"></div>
-        <button class="btn btn-primary btn-block" id="btnSubmit" onclick="handleSubmit()">Submit attendance</button>
+        <div class="submit-row">
+          <button class="btn btn-secondary" id="btnCancelRecord" onclick="cancelRecording()">Cancel</button>
+          <button class="btn btn-primary" id="btnSubmit" onclick="handleSubmit()">Submit attendance</button>
+        </div>
       </div>
     </section>
 
@@ -1702,6 +1835,10 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
         </div>
       </div>
 
+      <!-- Busy indicator. Sticky + zero-height so the pill floats over the blurred
+           body and stays in view while scrolled. loadGroupDashboard() toggles [hidden]. -->
+      <div class="dash-busy" id="dashBusy" hidden><span class="dash-busy-pill"><span class="dash-busy-spin"></span>Loading</span></div>
+
       <!-- Dashboard body mount. loadGroupDashboard() replaces #dashboardBody.
            Markup below is the canonical contract + graceful demo. -->
       <div id="dashboardBody">
@@ -1722,6 +1859,31 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
           </div>
         </div>
 
+        <!-- ─── v3 ANALYTICAL GROUPS ────────────────────────────────────────
+             Order is "what makes you act today → what helps you understand → what
+             you report at a meeting": Change (next to the current state) · trend ·
+             Where · at-risk · Shape · When · Org state. Every card is a MOUNT and
+             every v3 field is OPTIONAL: renderDash*() hides a card whose slice of
+             the payload is empty, and dashSyncGroups_() hides a whole group when
+             nothing inside it survived. Where carries [data-solo-flow]: on a single
+             section its comparison card hides, and the group drops its header so
+             the part breakdown sits in the top flow as a plain card. -->
+
+        <div class="dash-group" id="dashGroupChange">
+          <button class="dash-group-bar" onclick="dashGroupToggle(this)"><span class="chev">▾</span>Change<span class="dash-group-hint">against the previous period</span><span class="rule"></span></button>
+          <div class="dash-group-body">
+            <!-- comparison · null on custom/all ranges → the whole card (and group) hides -->
+            <div class="dash-card" id="dashComparison">
+              <div class="dash-card-head"><div class="eyebrow">This month vs last</div><span class="dash-card-note">PREVIOUS · 1 APR → 30 APR</span></div>
+              <div class="cmp-grid">
+                <div class="cmp-cell"><div class="cmp-lab">Attendance rate</div><div class="cmp-now">86%</div><div class="cmp-prev">WAS 80%</div><div><span class="cmp-delta up">▲ +6 PTS</span></div></div>
+                <div class="cmp-cell"><div class="cmp-lab">Sessions held</div><div class="cmp-now">12</div><div class="cmp-prev">WAS 10</div><div><span class="cmp-delta up">▲ +2</span></div></div>
+                <div class="cmp-cell"><div class="cmp-lab">Avg attended</div><div class="cmp-now">23.9</div><div class="cmp-prev">WAS 21.4</div><div><span class="cmp-delta up">▲ +2.5</span></div></div>
+                <div class="cmp-cell"><div class="cmp-lab">Unexcused rate</div><div class="cmp-now">8%</div><div class="cmp-prev">WAS 11%</div><div><span class="cmp-delta up">▼ −3 PTS</span></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
         <!-- Trend chart. drawTrendChart(d.trend) replaces #dashTrend's <svg> and wires the hover tooltip.
              trend points: [{date, rate, attended, total, present, late, ae, au}]. -->
         <div class="trend-card">
@@ -1745,19 +1907,46 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
           </div>
         </div>
 
-        <!-- Apology analytics · renderDashApologies() fills this dark card -->
-        <div class="apol-strip" id="dashApologies">
-          <div class="apol-head">APOLOGIES · IN RANGE</div>
-          <div class="apol-row">
-            <div class="apol-cell lead"><span class="num gold">14</span><span class="lab">Total received</span></div>
-            <span class="apol-div"></span>
-            <div class="apol-cell"><span class="num">11<span class="sep">/</span>3</span><span class="lab">Absence · lateness</span></div>
-            <span class="apol-div"></span>
-            <div class="apol-cell"><span class="num">12<span class="sep">/</span>2</span><span class="lab">On time · late subm.</span></div>
-            <span class="apol-div"></span>
-            <div class="apol-cell"><span class="num ok">9</span><span class="lab">Approved</span></div>
-            <div class="apol-cell"><span class="num">3</span><span class="lab">Pending</span></div>
-            <div class="apol-cell"><span class="num bad">2</span><span class="lab">Rejected</span></div>
+        <div class="dash-group" id="dashGroupWhere" data-solo-flow>
+          <button class="dash-group-bar" onclick="dashGroupToggle(this)"><span class="chev">▾</span>Where<span class="dash-group-hint">which part is slipping</span><span class="rule"></span></button>
+          <div class="dash-group-body g2">
+            <!-- partBreakdown[] · sorted worst-rate first -->
+            <div class="dash-card" id="dashParts">
+              <div class="dash-card-head"><div class="eyebrow">Part breakdown · worst first</div><span class="dash-card-note">4 PARTS · % PRESENT + LATE</span></div>
+              <div class="pb-row">
+                <div><div class="pb-name">Tenor</div><div class="pb-sec">CHOIR · 68 RECORDS</div></div>
+                <div class="pb-rate warn">71%</div>
+                <div class="pb-bar"><span style="width:60%;background:var(--present)"></span><span style="width:11%;background:var(--late-exc)"></span><span style="width:12%;background:var(--ink-300)"></span><span style="width:17%;background:var(--absent-unexc)"></span></div>
+                <div class="pb-meta"><span class="skew-tag absence-leaning">absence-leaning</span><span>41 P · 7 L · 8 AE · 12 AU</span><span>26% OF MISSES WERE LATENESS</span></div>
+              </div>
+              <div class="pb-row">
+                <div><div class="pb-name">Bass</div><div class="pb-sec">CHOIR · 74 RECORDS</div></div>
+                <div class="pb-rate warn">74%</div>
+                <div class="pb-bar"><span style="width:62%;background:var(--present)"></span><span style="width:12%;background:var(--late-exc)"></span><span style="width:11%;background:var(--ink-300)"></span><span style="width:15%;background:var(--absent-unexc)"></span></div>
+                <div class="pb-meta"><span class="skew-tag absence-leaning">absence-leaning</span><span>46 P · 9 L · 8 AE · 11 AU</span><span>32% OF MISSES WERE LATENESS</span></div>
+              </div>
+              <div class="pb-row">
+                <div><div class="pb-name">Alto</div><div class="pb-sec">CHOIR · 91 RECORDS</div></div>
+                <div class="pb-rate">88%</div>
+                <div class="pb-bar"><span style="width:76%;background:var(--present)"></span><span style="width:12%;background:var(--late-exc)"></span><span style="width:6%;background:var(--ink-300)"></span><span style="width:6%;background:var(--absent-unexc)"></span></div>
+                <div class="pb-meta"><span class="skew-tag late-leaning">late-leaning</span><span>69 P · 11 L · 5 AE · 6 AU</span><span>50% OF MISSES WERE LATENESS</span></div>
+              </div>
+              <div class="pb-row">
+                <div><div class="pb-name">Soprano</div><div class="pb-sec">CHOIR · 99 RECORDS</div></div>
+                <div class="pb-rate">93%</div>
+                <div class="pb-bar"><span style="width:84%;background:var(--present)"></span><span style="width:9%;background:var(--late-exc)"></span><span style="width:4%;background:var(--ink-300)"></span><span style="width:3%;background:var(--absent-unexc)"></span></div>
+                <div class="pb-meta"><span class="skew-tag late-leaning">late-leaning</span><span>83 P · 9 L · 4 AE · 3 AU</span><span>56% OF MISSES WERE LATENESS</span></div>
+              </div>
+              <div class="dash-card-foot">Rate is present + late over every record in range. The bar is the mix behind it.</div>
+            </div>
+            <!-- sectionComparison[] · rendered only when more than one section is in range (the All view) -->
+            <div class="dash-card" id="dashSections">
+              <div class="dash-card-head"><div class="eyebrow">Section comparison</div><span class="dash-card-note">ALL VIEW</span></div>
+              <div class="mbar-row"><span class="mbar-lab">Orchestra</span><span class="mbar-track"><span class="mbar-fill" style="width:91%"></span></span><span class="mbar-val">91%</span><span class="mbar-sub">108 REC</span></div>
+              <div class="mbar-row"><span class="mbar-lab">Choir</span><span class="mbar-track"><span class="mbar-fill" style="width:86%"></span></span><span class="mbar-val">86%</span><span class="mbar-sub">332 REC</span></div>
+              <div class="mbar-row"><span class="mbar-lab">Band</span><span class="mbar-track"><span class="mbar-fill low" style="width:67%"></span></span><span class="mbar-val">67%</span><span class="mbar-sub">110 REC</span></div>
+              <div class="mbar-key"><span class="k"><i class="ok"></i>75% and above</span><span class="k"><i class="low"></i>Below 75%</span></div>
+            </div>
           </div>
         </div>
 
@@ -1813,6 +2002,137 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
             </div>
           </div>
         </div>
+
+        <div class="dash-group" id="dashGroupShape">
+          <button class="dash-group-bar" onclick="dashGroupToggle(this)"><span class="chev">▾</span>Shape<span class="dash-group-hint">how the average is made up</span><span class="rule"></span></button>
+          <div class="dash-group-body g3">
+            <!-- distribution · buckets[] + memberCount -->
+            <div class="dash-card span2" id="dashDistribution">
+              <div class="dash-card-head"><div class="eyebrow">Attendance distribution</div><span class="dash-card-note">37 MEMBERS WITH RECORDS</span></div>
+              <div class="hist">
+                <div class="hist-col"><span class="hist-n">2</span><span class="hist-area"><span class="hist-bar bad" style="height:9%"></span></span><span class="hist-lab">0-25%</span></div>
+                <div class="hist-col"><span class="hist-n">3</span><span class="hist-area"><span class="hist-bar" style="height:14%"></span></span><span class="hist-lab">26-50%</span></div>
+                <div class="hist-col"><span class="hist-n">10</span><span class="hist-area"><span class="hist-bar" style="height:45%"></span></span><span class="hist-lab">51-75%</span></div>
+                <div class="hist-col"><span class="hist-n">22</span><span class="hist-area"><span class="hist-bar good" style="height:100%"></span></span><span class="hist-lab">76-100%</span></div>
+              </div>
+              <div class="dash-card-foot">Each column counts members whose own rate falls in that band — a devoted core plus a tail reads very differently from everyone slightly absent.</div>
+            </div>
+            <!-- apologyStats.complianceRate -->
+            <div class="dash-card" id="dashCompliance">
+              <div class="dash-card-head"><div class="eyebrow">Excused share</div><span class="dash-card-note">OF ALL ABSENCES</span></div>
+              <div class="dash-stat-num">45%</div>
+              <div class="dash-stat-sub">23 AE · 28 AU</div>
+              <div class="dash-card-foot">Absences that were excused. Separately, 12 apologies were filed in range — one apology can cover several sessions, so the two don’t match.</div>
+            </div>
+            <!-- behaviour · chronicLate[] / chronicAbsent[] (capped at 10) + the counts -->
+            <div class="dash-card span2" id="dashBehaviour">
+              <div class="dash-card-head"><div class="eyebrow">Lateness vs absence</div><span class="dash-card-note">PATTERN IN THIS RANGE</span></div>
+              <div class="beh-cols">
+                <div>
+                  <div class="beh-head"><span>Lateness-leaning</span><span>3</span></div>
+                  <div class="beh-item"><span class="beh-name">Mary Mumbi</span><span class="beh-count late">5 LATE</span><span class="beh-rate">88%</span></div>
+                  <div class="beh-item"><span class="beh-name">Kevin Otieno</span><span class="beh-count late">4 LATE</span><span class="beh-rate">92%</span></div>
+                  <div class="beh-item"><span class="beh-name">Faith Kerubo</span><span class="beh-count late">3 LATE</span><span class="beh-rate">85%</span></div>
+                </div>
+                <div>
+                  <div class="beh-head"><span>Absence-leaning</span><span>4</span></div>
+                  <div class="beh-item"><span class="beh-name">Brian Mwendwa</span><span class="beh-count abs">6 ABSENT</span><span class="beh-rate">54%</span></div>
+                  <div class="beh-item"><span class="beh-name">Susan Nyokabi</span><span class="beh-count abs">4 ABSENT</span><span class="beh-rate">67%</span></div>
+                  <div class="beh-item"><span class="beh-name">Dennis Ouma</span><span class="beh-count abs">3 ABSENT</span><span class="beh-rate">72%</span></div>
+                  <div class="beh-item"><span class="beh-name">Grace Akinyi</span><span class="beh-count abs">3 ABSENT</span><span class="beh-rate">75%</span></div>
+                </div>
+              </div>
+              <div class="beh-mix">
+                <div class="cell"><div class="num">1</div><div class="lab">Both kinds</div><div class="sub">Hit 3+ of each — neither dominant</div></div>
+                <div class="cell"><div class="num">8</div><div class="lab">Below the threshold</div><div class="sub">Missed something, under 3</div></div>
+                <div class="cell"><div class="num">21</div><div class="lab">No incidents</div><div class="sub">Never late, never absent</div></div>
+              </div>
+              <div class="dash-card-foot">Counted from this range only, and only where the dominant kind reached 3 incidents. Every member sits in exactly one of the five — the two lists above, or one of the three counts here. A pattern to talk about, not a disciplinary record.</div>
+            </div>
+            <!-- topAttenders[] + minSessionsForTop footnote -->
+            <div class="dash-card" id="dashTop">
+              <div class="dash-card-head"><div class="eyebrow">Most consistent</div><span class="dash-card-note">MIN 6 SESSIONS</span></div>
+              <div class="beh-item"><span class="beh-name">Achieng Otieno</span><span class="beh-count ok">100%</span><span class="beh-rate">12/12</span></div>
+              <div class="beh-item"><span class="beh-name">Wanjirũ Mwangi</span><span class="beh-count ok">100%</span><span class="beh-rate">11/11</span></div>
+              <div class="beh-item"><span class="beh-name">James Kariũki</span><span class="beh-count ok">96%</span><span class="beh-rate">11/12</span></div>
+              <div class="beh-item"><span class="beh-name">Peter Njoroge</span><span class="beh-count ok">92%</span><span class="beh-rate">11/12</span></div>
+              <div class="beh-item"><span class="beh-name">Naomi Chebet</span><span class="beh-count ok">90%</span><span class="beh-rate">9/10</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dash-group collapsed" id="dashGroupWhen">
+          <button class="dash-group-bar" onclick="dashGroupToggle(this)"><span class="chev">▾</span>When<span class="dash-group-hint">day and session type</span><span class="rule"></span></button>
+          <div class="dash-group-body g2">
+            <!-- weekdayStats[] -->
+            <div class="dash-card" id="dashWeekday">
+              <div class="dash-card-head"><div class="eyebrow">Day of week</div><span class="dash-card-note">RATE · RECORDS</span></div>
+              <div class="mbar-row"><span class="mbar-lab">Mon</span><span class="mbar-track"><span class="mbar-fill" style="width:88%"></span></span><span class="mbar-val">88%</span><span class="mbar-sub">74 REC</span></div>
+              <div class="mbar-row"><span class="mbar-lab">Wed</span><span class="mbar-track"><span class="mbar-fill" style="width:84%"></span></span><span class="mbar-val">84%</span><span class="mbar-sub">148 REC</span></div>
+              <div class="mbar-row"><span class="mbar-lab">Fri</span><span class="mbar-track"><span class="mbar-fill low" style="width:74%"></span></span><span class="mbar-val">74%</span><span class="mbar-sub">72 REC</span></div>
+              <div class="mbar-row"><span class="mbar-lab">Sat</span><span class="mbar-track"><span class="mbar-fill" style="width:81%"></span></span><span class="mbar-val">81%</span><span class="mbar-sub">72 REC</span></div>
+              <div class="mbar-key"><span class="k"><i class="ok"></i>75% and above</span><span class="k"><i class="low"></i>Below 75%</span></div>
+            </div>
+            <!-- sessionTypeStats[] -->
+            <div class="dash-card" id="dashTypes">
+              <div class="dash-card-head"><div class="eyebrow">Session type</div><span class="dash-card-note">RATE · RECORDS</span></div>
+              <div class="mbar-row"><span class="mbar-lab">Practice</span><span class="mbar-track"><span class="mbar-fill" style="width:87%"></span></span><span class="mbar-val">87%</span><span class="mbar-sub">258 REC</span></div>
+              <div class="mbar-row"><span class="mbar-lab">Meeting</span><span class="mbar-track"><span class="mbar-fill low" style="width:69%"></span></span><span class="mbar-val">69%</span><span class="mbar-sub">35 REC</span></div>
+              <div class="mbar-key"><span class="k"><i class="ok"></i>75% and above</span><span class="k"><i class="low"></i>Below 75%</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dash-group collapsed" id="dashGroupOrg">
+          <button class="dash-group-bar" onclick="dashGroupToggle(this)"><span class="chev">▾</span>Org state<span class="dash-group-hint">roster and probation outcomes</span><span class="rule"></span></button>
+          <div class="dash-group-body g2">
+            <!-- membershipHealth -->
+            <div class="dash-card" id="dashHealth">
+              <div class="dash-card-head"><div class="eyebrow">Membership health</div><span class="dash-card-note">CHOIR</span></div>
+              <div class="mh-grid">
+                <div class="mh-cell"><div class="num">37</div><div class="lab">Active</div></div>
+                <div class="mh-cell"><div class="num">2</div><div class="lab">Rejoining</div></div>
+                <div class="mh-cell"><div class="num">3</div><div class="lab">On hiatus</div></div>
+                <div class="mh-cell"><div class="num">4</div><div class="lab">Inactive</div></div>
+                <div class="mh-cell"><div class="num">6</div><div class="lab">Alumni</div></div>
+              </div>
+              <div class="mh-flow"><span><span class="in">+3</span> joined in range</span><span><span class="out">−1</span> removed in range</span></div>
+            </div>
+            <!-- probationPerformance · inRange + byMonth[] -->
+            <div class="dash-card" id="dashProbPerf">
+              <div class="dash-card-head"><div class="eyebrow">Probation outcomes</div><span class="dash-card-note">4 ENDED IN RANGE</span></div>
+              <div class="prob-summary">
+                <div class="prob-mini ok"><div class="num">2</div><div class="lab">Passed</div></div>
+                <div class="prob-mini gold"><div class="num">1</div><div class="lab">Conditional</div></div>
+                <div class="prob-mini bad"><div class="num">1</div><div class="lab">Failed</div></div>
+              </div>
+              <div class="dash-card-note">75% CLEARED · BY MONTH</div>
+              <div class="pp-months">
+                <div class="pp-month"><span class="pp-n">3</span><div class="pp-stack"><div class="pp-seg pass" style="height:50%">2</div><div class="pp-seg fail" style="height:25%">1</div></div><div class="pp-lab">MAR</div></div>
+                <div class="pp-month"><span class="pp-n">3</span><div class="pp-stack"><div class="pp-seg pass" style="height:75%">3</div></div><div class="pp-lab">APR</div></div>
+                <div class="pp-month"><span class="pp-n">3</span><div class="pp-stack"><div class="pp-seg pass" style="height:50%">2</div><div class="pp-seg cond" style="height:25%">1</div></div><div class="pp-lab">MAY</div></div>
+                <div class="pp-month"><span class="pp-n">4</span><div class="pp-stack"><div class="pp-seg pass" style="height:50%">2</div><div class="pp-seg cond" style="height:25%">1</div><div class="pp-seg fail" style="height:25%">1</div></div><div class="pp-lab">JUN</div></div>
+              </div>
+              <div class="pp-legend"><span class="k"><i style="background:var(--present)"></i>Passed</span><span class="k"><i style="background:var(--gold-500)"></i>Conditional</span><span class="k"><i style="background:var(--crimson-500)"></i>Failed</span></div>
+            </div>
+          <!-- Apology analytics · renderDashApologies() fills this dark card -->
+          <div class="apol-strip span2" id="dashApologies">
+            <div class="apol-head">APOLOGIES · IN RANGE</div>
+            <div class="apol-row">
+              <div class="apol-cell lead"><span class="num gold">14</span><span class="lab">Total received</span></div>
+              <span class="apol-div"></span>
+              <div class="apol-cell"><span class="num">11<span class="sep">/</span>3</span><span class="lab">Absence · lateness</span></div>
+              <span class="apol-div"></span>
+              <div class="apol-cell"><span class="num">12<span class="sep">/</span>2</span><span class="lab">On time · late subm.</span></div>
+              <span class="apol-div"></span>
+              <div class="apol-cell"><span class="num ok">9</span><span class="lab">Approved</span></div>
+              <div class="apol-cell"><span class="num">3</span><span class="lab">Pending</span></div>
+              <div class="apol-cell"><span class="num bad">2</span><span class="lab">Rejected</span></div>
+            </div>
+          </div>
+          </div>
+        </div>
+
       </div>
     </section>
 
@@ -2200,8 +2520,21 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
     </div>
     <div id="postSubmitBody"></div>
     <div class="dialog-actions" style="margin-top:20px">
-      <button class="btn btn-secondary" onclick="closePostSubmit()">View attendance</button>
-      <button class="btn btn-primary" onclick="closePostSubmit()">Done</button>
+      <button class="btn btn-secondary" onclick="viewRecordedAttendance()">View attendance</button>
+      <button class="btn btn-primary" onclick="finishPostSubmit()">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── CANCEL RECORDING DIALOG ─── -->
+<div id="cancelRecordDialog" class="overlay" style="display:none">
+  <div class="dialog" style="max-width:430px">
+    <div class="eyebrow" style="margin-bottom:8px">Cancel recording</div>
+    <h3>Discard this register?</h3>
+    <p id="cancelRecordMsg">The marks you’ve made won’t be saved. The Record tab goes back to its starting state.</p>
+    <div class="dialog-actions">
+      <button class="btn btn-secondary" onclick="closeCancelRecordDialog()">Keep marking</button>
+      <button class="btn btn-danger" onclick="confirmCancelRecording()">Discard</button>
     </div>
   </div>
 </div>

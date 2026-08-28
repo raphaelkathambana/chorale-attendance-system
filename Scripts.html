@@ -978,7 +978,8 @@ function renderPodiumHero(top3) {
 function renderApologiesView() {
   var isDesktop = window.matchMedia && window.matchMedia('(min-width: 1024px)').matches;
   // Level 1 — request type · Level 2 — status within that type
-  var head = '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">'
+  var head = '<div id="reinstateFlagsPanel"></div>'
+           + '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">'
            +   requestTypeChips()
            +   '<button class="btn-export" onclick="loadApologyQueue()">Refresh \u27f3</button>'
            + '</div>'
@@ -1019,7 +1020,7 @@ function setRequestTypeFilter(t) { requestTypeFilter = t; selectedApologyIdx = n
 
 var apologyFilter = "Pending";
 function apologyFilterChips() {
-  var filters = ["Pending", "Approved", "Rejected", "All"];
+  var filters = ["Pending", "Approved", "Not needed", "Rejected", "All"];
   var chips = '<div style="display:flex;gap:8px;flex-wrap:wrap">';
   for (var fi = 0; fi < filters.length; fi++) {
     chips += '<button class="chip' + (apologyFilter === filters[fi] ? " active" : "") + '" style="padding:5px 12px;font-size:11.5px" onclick="setApologyFilter(&#39;' + filters[fi] + '&#39;)">' + filters[fi] + '</button>';
@@ -1032,6 +1033,7 @@ function apologyMatchesFilter(a) {
   if (apologyFilter === "All") return true;
   if (apologyFilter === "Pending")  return a.status === "Pending";
   if (apologyFilter === "Approved") return a.status === "Approved" || a.status === "Applied";
+  if (apologyFilter === "Not needed") return a.status === "Not needed";
   if (apologyFilter === "Rejected") return a.status === "Rejected" || a.status === "Revoked";
   return true;
 }
@@ -1065,6 +1067,15 @@ function selectApology(idx) {
   renderApologyQueueContent();
 }
 
+// Status pill colours. "Not needed" is deliberately muted, not red: the apology was
+// auto-closed because the member turned up — nobody rejected anything.
+function apologyStatusStyle(status, onTime) {
+  if (status === "Applied" || status === "Approved") return { bg: "var(--present-bg)",  c: "var(--present)" };
+  if (status === "Rejected" || status === "Revoked")  return { bg: "var(--crimson-100)", c: "var(--crimson-600)" };
+  if (status === "Not needed")                        return { bg: "var(--paper-200)",   c: "var(--ink-500)" };
+  return { bg: onTime ? "var(--present-bg)" : "var(--gold-100)", c: "var(--gold-700)" };
+}
+
 function renderApologyList() {
   if (apologyQueue.length === 0) return '<p class="loading">No requests yet.</p>';
   var isDesktop = window.matchMedia && window.matchMedia('(min-width: 1024px)').matches;
@@ -1076,14 +1087,13 @@ function renderApologyList() {
     var pr = parseRequest(a);
     var section = a.status === "Pending" ? "Pending review"
                 : (a.status === "Applied" || a.status === "Approved") ? "Active"
+                : a.status === "Not needed" ? "No longer needed"
                 : "Resolved";
     if (section !== currentStatus) {
       currentStatus = section;
       h += '<div class="ensemble-header" style="margin-top:14px"><span>' + section + '</span></div>';
     }
-    var stColor = a.status === "Applied" || a.status === "Approved" ? "var(--present)"
-                : a.status === "Rejected" || a.status === "Revoked" ? "var(--crimson-600)"
-                : "var(--gold-700)";
+    var stColor = apologyStatusStyle(a.status, a.onTime).c;
     // LATE / ON TIME reflect *submission timing* and apply only to single-day apologies;
     // long-term absences and admin requests carry their meaning in the kind label instead.
     var timeTag  = apologyIsLateSubmission(a)
@@ -1183,9 +1193,7 @@ function renderApologyDetail() {
     return;
   }
   var a = apologyQueue[selectedApologyIdx];
-  var stColor = a.status === "Applied" || a.status === "Approved" ? "var(--present)"
-              : a.status === "Rejected" || a.status === "Revoked" ? "var(--crimson-600)"
-              : "var(--gold-700)";
+  var stColor = apologyStatusStyle(a.status, a.onTime).c;
   var statusLabel;
   if (a.status === "Pending") {
     if (apologyIsLateSubmission(a))    statusLabel = "PENDING \u00b7 LATE SUBMISSION";
@@ -1205,7 +1213,7 @@ function renderApologyDetail() {
         +     '<div class="eyebrow">' + apologyKindLabel(a).toUpperCase() + ' \u00b7 ' + apologySubLine(a) + '</div>'
         +     '<h2 style="margin-top:4px">' + esc(a.name) + '</h2>'
         +   '</div>'
-        +   '<span style="font-family:var(--f-mono);font-size:10px;font-weight:700;letter-spacing:.14em;padding:6px 10px;border-radius:4px;background:' + (a.onTime ? 'var(--present-bg)' : 'var(--gold-100)') + ';color:' + stColor + ';white-space:nowrap">' + statusLabel + '</span>'
+        +   '<span style="font-family:var(--f-mono);font-size:10px;font-weight:700;letter-spacing:.14em;padding:6px 10px;border-radius:4px;background:' + (a.status === "Not needed" ? 'var(--paper-200)' : (a.onTime ? 'var(--present-bg)' : 'var(--gold-100)')) + ';color:' + stColor + ';white-space:nowrap">' + statusLabel + '</span>'
         + '</div>';
 
   var pr = parseRequest(a);
@@ -1493,6 +1501,11 @@ var selectedMemberName = null;
 function isRejoining(m) {
   return !!(m && (m.rejoining || (m.status && String(m.status).toLowerCase() === "rejoining")));
 }
+function isOnHiatus(m) {
+  if (!m) return false;
+  var d = String(m.detailStatus || m.memberStatus || "").toLowerCase();
+  return !!m.onHiatus || d === "on hiatus";
+}
 // Single source of truth for the membership-status badge, used by the roster table,
 // the mobile cards and the detail pane. `sty` is an optional base style string.
 function memberStatusBadges(m, sty) {
@@ -1500,8 +1513,12 @@ function memberStatusBadges(m, sty) {
     var s = [sty || "", extra || ""].filter(Boolean).join(";");
     return '<span class="' + cls + '"' + (s ? ' style="' + s + '"' : "") + '>' + label + '</span>';
   }
+  var gold = "background:var(--gold-100);color:var(--gold-700)";
+  // On Hiatus is inactive in Members but is a planned break, not a removal — it must
+  // never read as INACTIVE, since those two states return by different routes.
+  if (isOnHiatus(m)) return tag("prob-tag", gold, "ON HIATUS");
   if (!m.active) return tag("inactive-tag", "", "INACTIVE");
-  if (isRejoining(m)) return tag("prob-tag", "background:var(--gold-100);color:var(--gold-700)", "REJOINING");
+  if (isRejoining(m)) return tag("prob-tag", gold, "REJOINING");
   if (m.probation) return tag("prob-tag", "", "PROBATION");
   if (m.probationPassed) return tag("prob-tag", "background:var(--present-bg);color:var(--present)", "PASSED");
   if (m.probationFailed) return tag("inactive-tag", "", "FAILED");
@@ -1661,7 +1678,11 @@ function renderMemberDetail() {
   var canReinstate = (userRole === "admin" || userRole === "sectionAdmin");
   var actions = "";
   if (!m.active && canReinstate) {
-    actions += '<button class="btn btn-primary" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="adminReinstateMember(\'' + safeNm + '\')">Reinstate member</button>';
+    // Hiatus is a planned break — reactivation returns them to active with no
+    // probation, so it must not use the returning-member reinstate route.
+    actions += isOnHiatus(m)
+      ? '<button class="btn btn-primary" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="epReactivate(\'' + safeNm + '\')">Reactivate</button>'
+      : '<button class="btn btn-primary" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="adminReinstateMember(\'' + safeNm + '\')">Reinstate member</button>';
   }
   if (isFullAdmin()) {
     actions += '<button class="btn btn-secondary" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="showEditProfile(\'' + safeNm + '\')">Edit profile</button>';
@@ -1908,20 +1929,28 @@ function renderEditProfile(m) {
 // bypass the removal/rejoin machinery (probation reset, notices, request rows).
 // Current state comes from the edit payload — Member Details status + Members.active.
 function epMembershipSection(m, d) {
-  var detail = ((d && d.memberStatus) || '').trim();
-  var dl = detail.toLowerCase();
-  var onHiatus = dl === 'on hiatus';
-  var isRejoining = dl === 'rejoining';
-  var isActive = !!m.active && !onHiatus;
+  // Driven entirely by the server's membership.availableActions — never inferred from
+  // `active` or details.memberStatus. Inferring is what previously offered on-hiatus
+  // members the returning-member probation choice; a hiatus is a planned break, so
+  // reactivation always returns them straight to Active with no probation.
+  var ms = m.membership || {};
+  var state = ms.state || (m.active ? 'active' : 'removed');
+  var acts = ms.availableActions || [];
+  var can = {};
+  for (var i = 0; i < acts.length; i++) can[acts[i]] = true;
+  var detail = (ms.detailStatus || (d && d.memberStatus) || '').trim();
   var nm = esc(m.name).replace(/'/g, "\\'");
 
-  var badge = onHiatus
-    ? '<span class="prob-tag" style="background:var(--gold-100);color:var(--gold-700)">ON HIATUS</span>'
-    : !m.active
-      ? '<span class="inactive-tag">' + esc(detail || 'INACTIVE').toUpperCase() + '</span>'
-      : isRejoining
-        ? '<span class="prob-tag" style="background:var(--gold-100);color:var(--gold-700)">REJOINING</span>'
-        : '<span class="prob-tag" style="background:var(--present-bg);color:var(--present)">ACTIVE</span>';
+  var BADGE = {
+    active:          ['prob-tag', 'background:var(--present-bg);color:var(--present)', 'ACTIVE'],
+    rejoining:       ['prob-tag', 'background:var(--gold-100);color:var(--gold-700)', 'REJOINING'],
+    hiatus:          ['prob-tag', 'background:var(--gold-100);color:var(--gold-700)', 'ON HIATUS'],
+    failedProbation: ['inactive-tag', '', 'PROBATION FAILED'],
+    removed:         ['inactive-tag', '', 'INACTIVE']
+  };
+  var b = BADGE[state] || BADGE.removed;
+  var badge = '<span class="' + b[0] + '"' + (b[1] ? ' style="' + b[1] + '"' : '') + '>'
+            + (state === 'removed' && detail ? esc(detail).toUpperCase() : b[2]) + '</span>';
 
   var h = '<div class="ep-ms">'
     +   '<div class="ms-head">'
@@ -1930,33 +1959,40 @@ function epMembershipSection(m, d) {
     +     '<div class="ms-now"><span class="lbl">CURRENTLY</span>' + badge + '</div>'
     +   '</div>';
 
-  if (onHiatus) {
-    h += '<div class="ms-hint">On an approved break — absences aren’t counted against them. Reactivating returns them straight to active, <b>no probation</b>.</div>'
-      +  '<div class="ms-acts">'
-      +    '<button class="btn btn-primary" onclick="epReactivate(\'' + nm + '\')">Reactivate</button>'
-      +  '</div>';
-  } else if (!m.active) {
-    h += '<div class="ms-hint">Membership is inactive. Reinstating restores their banked history and points — choose whether a re-entry probation applies.</div>'
-      +  '<div class="ms-modes">'
+  var hint = state === 'hiatus'
+    ? 'On an approved break — absences aren’t counted against them. Reactivating returns them to active, <b>no probation</b>.'
+    : (can.reinstateProbation || can.reinstateActive)
+      ? (state === 'failedProbation'
+          ? 'They didn’t complete their last probation round. Reinstating restores their banked history and points — choose whether a fresh probation applies.'
+          : 'Membership is inactive. Reinstating restores their banked history and points — choose whether a re-entry probation applies.')
+      : (state === 'rejoining' ? 'Active and serving a re-entry probation. ' : '')
+        + 'A hiatus is an approved break — absences stop counting. Removal sets the membership inactive; history and points are kept.';
+  h += '<div class="ms-hint">' + hint + '</div>';
+
+  // A reason is only recorded on the two outgoing transitions.
+  if (can.setHiatus || can.remove) {
+    h += '<textarea id="epMsReason" placeholder="Reason (optional) — recorded with this change"></textarea>';
+  }
+  // The probation/active choice belongs to reinstatement only — a hiatus member has
+  // exactly one action, so no radio group is rendered for them at all.
+  if (can.reinstateProbation && can.reinstateActive) {
+    h += '<div class="ms-modes">'
       +    '<label><input type="radio" name="epReinstateMode" value="probation" checked>'
       +      '<span><span class="mt">Fresh probation</span><span class="md">Returns as Rejoining, serving a re-entry probation period.</span></span></label>'
       +    '<label><input type="radio" name="epReinstateMode" value="active">'
       +      '<span><span class="mt">Straight to active</span><span class="md">No probation — for correcting an accidental removal.</span></span></label>'
-      +  '</div>'
-      +  '<div class="ms-acts">'
-      +    '<button class="btn btn-primary" onclick="epReinstate(\'' + nm + '\')">Reinstate</button>'
-      +  '</div>';
-  } else {
-    h += '<div class="ms-hint">'
-      +    (isRejoining ? 'Active and serving a re-entry probation. ' : '')
-      +    'A hiatus is an approved break — absences stop counting. Removal sets the membership inactive; history and points are kept.'
-      +  '</div>'
-      +  '<textarea id="epMsReason" placeholder="Reason (optional) — recorded with this change"></textarea>'
-      +  '<div class="ms-acts">'
-      +    '<button class="btn btn-secondary" onclick="epSetHiatus(\'' + nm + '\')">Set on hiatus</button>'
-      +    '<button class="btn btn-crimson" onclick="epSetInactive(\'' + nm + '\')">Remove / set inactive</button>'
       +  '</div>';
   }
+
+  var btns = '';
+  if (can.setHiatus)            btns += '<button class="btn btn-secondary" onclick="epSetHiatus(\'' + nm + '\')">Set on hiatus</button>';
+  if (can.remove)               btns += '<button class="btn btn-crimson" onclick="epSetInactive(\'' + nm + '\')">Remove / set inactive</button>';
+  if (can.reactivateFromHiatus) btns += '<button class="btn btn-primary" onclick="epReactivate(\'' + nm + '\')">Reactivate</button>';
+  if (can.reinstateProbation || can.reinstateActive) {
+    var only = (can.reinstateProbation && can.reinstateActive) ? '' : (can.reinstateActive ? 'active' : 'probation');
+    btns += '<button class="btn btn-primary" onclick="epReinstate(\'' + nm + '\'' + (only ? ",'" + only + "'" : '') + ')">Reinstate</button>';
+  }
+  if (btns) h += '<div class="ms-acts">' + btns + '</div>';
 
   return h + '<div class="ms-foot">Takes effect immediately — separate from Save changes.</div></div>';
 }
@@ -1980,7 +2016,7 @@ function epSetHiatus(name) {
     .withFailureHandler(epMsFail).adminSetMemberOnHiatus(name, epMsReason());
 }
 function epReactivate(name) {
-  if (!confirm('Reactivate ' + name + '? They return straight to active with no probation.')) return;
+  if (!confirm('Reactivate ' + name + '? They return to active with no probation.')) return;
   google.script.run.withSuccessHandler(function () { epMsDone(name, name + ' reactivated.'); })
     .withFailureHandler(epMsFail).adminReactivateFromHiatus(name);
 }
@@ -1989,9 +2025,9 @@ function epSetInactive(name) {
   google.script.run.withSuccessHandler(function () { epMsDone(name, name + ' set inactive.'); })
     .withFailureHandler(epMsFail).adminSetMemberInactive(name, epMsReason());
 }
-function epReinstate(name) {
+function epReinstate(name, forced) {
   var sel = document.querySelector('input[name="epReinstateMode"]:checked');
-  var mode = sel ? sel.value : 'probation';
+  var mode = forced || (sel ? sel.value : 'probation');
   var msg = mode === 'active'
     ? 'Reinstate ' + name + ' straight to active, with no probation?'
     : 'Reinstate ' + name + ' on a fresh re-entry probation?';
@@ -3574,10 +3610,12 @@ function initProbationTab() {
 function renderRequestsTab() {
   var root = document.getElementById("requestsRoot");
   if (root && typeof renderApologiesView === "function") root.innerHTML = renderApologiesView();
+  renderReinstateFlags();
 }
 function initRequestsTab() {
   requestsTabLoaded = true;
   renderRequestsTab();
+  loadReinstatementFlags();
   if (typeof loadApologyQueue === "function") loadApologyQueue();
 }
 // When the Requests tab is live, refresh its chrome there; else fall back to the legacy view shell.
@@ -3820,10 +3858,26 @@ function exportSessionsList() {
 function loadGroupDashboard() {
   var opts = (typeof dashGetOpts === "function") ? dashGetOpts() : { section: "All", range: "month" };
   var body = document.getElementById("dashboardBody");
-  if (body) body.style.opacity = "0.5";
+  var busy = document.getElementById("dashBusy");
+  function setBusy(on) {
+    if (body) body.classList.toggle("is-busy", on);
+    if (busy) busy.hidden = !on;
+  }
+  setBusy(true);
+  // Custom needs both ends before it means anything — hold the last-rendered view
+  // and wait rather than firing a half-specified range.
+  if (opts.range === "custom" && (!opts.start || !opts.end)) {
+    setBusy(false);
+    if (busy) {
+      busy.hidden = false;
+      busy.innerHTML = '<span class="dash-busy-pill dash-busy-wait">Pick a start and end date</span>';
+    }
+    return;
+  }
+  if (busy) busy.innerHTML = '<span class="dash-busy-pill"><span class="dash-busy-spin"></span>Loading</span>';
   google.script.run
-    .withSuccessHandler(function (d) { if (body) body.style.opacity = "1"; renderGroupDashboard(d); })
-    .withFailureHandler(function (e) { if (body) body.style.opacity = "1"; showToast("Dashboard error: " + e.message, "error"); })
+    .withSuccessHandler(function (d) { setBusy(false); renderGroupDashboard(d); })
+    .withFailureHandler(function (e) { setBusy(false); showToast("Dashboard error: " + e.message, "error"); })
     .getGroupDashboard(opts);
 }
 function dashFiltersChanged() { loadGroupDashboard(); }
@@ -3899,6 +3953,19 @@ function renderGroupDashboard(d) {
   renderDashAverages(d);
   renderDashMomentum(d);
   renderDashApologies(d);
+
+  // v3 panels — Where · Shape · When · Org state · Change
+  renderDashParts(d);
+  renderDashSections(d);
+  renderDashDistribution(d);
+  renderDashCompliance(d);
+  renderDashBehaviour(d);
+  renderDashTop(d);
+  renderDashWhen(d);
+  renderDashHealth(d);
+  renderDashProbPerf(d);
+  renderDashComparison(d);
+  dashSyncGroups_();
 }
 
 // green=Present, yellow=Late(both), grey=Absent Excused, red=Absent Unexcused → my CSS modifiers
@@ -3943,8 +4010,12 @@ function renderDashMomentum(d) {
 // Apology analytics for the range — dark card with a header (matches the tally-strip design).
 function renderDashApologies(d) {
   var el = document.getElementById("dashApologies");
-  if (!el || !d.apologyStats) return;
+  if (!el) return;
   var s = d.apologyStats;
+  // No apologies in range → hide, so an empty Org state group can collapse away
+  // (dashSyncGroups_ counts this strip). Only innerHTML changes, so .span2 survives.
+  if (!s || !s.total) { el.style.display = "none"; return; }
+  el.style.display = "";
   el.innerHTML =
       '<div class="apol-head">APOLOGIES \u00b7 IN RANGE</div>'
     + '<div class="apol-row">'
@@ -3957,7 +4028,265 @@ function renderDashApologies(d) {
     +   '<div class="apol-cell"><span class="num ok">' + s.approved + '</span><span class="lab">Approved</span></div>'
     +   '<div class="apol-cell"><span class="num">' + s.pending + '</span><span class="lab">Pending</span></div>'
     +   '<div class="apol-cell"><span class="num bad">' + s.rejected + '</span><span class="lab">Rejected</span></div>'
+    +   (s.notNeeded ? '<div class="apol-cell"><span class="num muted">' + s.notNeeded + '</span><span class="lab">Not needed</span></div>' : '')
     + '</div>';
+}
+
+// ---------- v3: grouped analytical panels ----------
+// Contract: every v3 field is OPTIONAL. A panel with nothing to say hides itself,
+// and dashSyncGroups_() hides a whole group once every card inside it is hidden —
+// so a thin range degrades to the v2 dashboard instead of showing empty boxes.
+function dashCard_(id, html) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  if (!html) { el.style.display = "none"; el.innerHTML = ""; return; }
+  el.style.display = ""; el.innerHTML = html;
+}
+function dashHead_(title, note) {
+  return '<div class="dash-card-head"><div class="eyebrow">' + title + '</div>'
+    + (note ? '<span class="dash-card-note">' + note + '</span>' : '') + '</div>';
+}
+function dashFoot_(text) { return '<div class="dash-card-foot">' + text + '</div>'; }
+function dashSyncGroups_() {
+  var groups = document.querySelectorAll(".dash-group");
+  for (var i = 0; i < groups.length; i++) {
+    var cards = groups[i].querySelectorAll(".dash-card, .apol-strip"), shown = 0;
+    for (var c = 0; c < cards.length; c++) { if (cards[c].style.display !== "none") shown++; }
+    groups[i].style.display = shown ? "" : "none";
+    // A [data-solo-flow] group down to one card drops its header and joins the flow,
+    // so a single-section view doesn't pay a whole group header for one panel.
+    if (groups[i].hasAttribute("data-solo-flow")) {
+      var solo = shown === 1;
+      groups[i].classList.toggle("solo", solo);
+      if (solo) groups[i].classList.remove("collapsed");
+    }
+  }
+}
+function dashGroupToggle(btn) {
+  var g = btn.parentNode;
+  if (g && g.classList) g.classList.toggle("collapsed");
+}
+
+var DASH_MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+function dashDayMon_(ds) {
+  var p = String(ds).split("-");
+  if (p.length !== 3) return String(ds).toUpperCase();
+  return parseInt(p[2], 10) + " " + (DASH_MON[parseInt(p[1], 10) - 1] || "");
+}
+function dashRangeLabel_(r) { return r ? (dashDayMon_(r.start) + " \u2192 " + dashDayMon_(r.end)) : ""; }
+function dashMonLabel_(ym) {
+  var p = String(ym).split("-");
+  return DASH_MON[parseInt(p[1], 10) - 1] || String(ym).toUpperCase();
+}
+
+// WHERE · partBreakdown[] — worst rate first; the bar is the P/L/AE/AU mix behind the rate.
+var DASH_MIX_C = { present: "var(--present)", late: "var(--late-exc)", ae: "var(--ink-300)", au: "var(--absent-unexc)" };
+function dashMixBar_(r) {
+  var t = r.total || 1, keys = ["present", "late", "ae", "au"], out = "";
+  for (var i = 0; i < keys.length; i++) {
+    var v = r[keys[i]] || 0;
+    if (v) out += '<span style="width:' + (v / t * 100) + '%;background:' + DASH_MIX_C[keys[i]] + '"></span>';
+  }
+  return out;
+}
+function renderDashParts(d) {
+  var rows = d.partBreakdown || [];
+  if (!rows.length) return dashCard_("dashParts", "");
+  var body = rows.map(function (r) {
+    var skew = String(r.skew || "even").toLowerCase();
+    return '<div class="pb-row"><div><div class="pb-name">' + esc(r.part || "\u2014") + '</div>'
+      +    '<div class="pb-sec">' + esc(String(r.section || "").toUpperCase()) + ' \u00b7 ' + (r.total || 0) + ' RECORDS</div></div>'
+      +  '<div class="pb-rate' + (r.rate < 75 ? ' warn' : '') + '">' + r.rate + '%</div>'
+      +  '<div class="pb-bar">' + dashMixBar_(r) + '</div>'
+      +  '<div class="pb-meta"><span class="skew-tag ' + esc(skew) + '">' + esc(skew) + '</span>'
+      +    '<span>' + (r.present || 0) + ' P \u00b7 ' + (r.late || 0) + ' L \u00b7 ' + (r.ae || 0) + ' AE \u00b7 ' + (r.au || 0) + ' AU</span>'
+      +    (skew === "clean" ? '' : '<span>' + (r.lateShare || 0) + '% OF MISSES WERE LATENESS</span>')
+      +  '</div></div>';
+  }).join("");
+  dashCard_("dashParts", dashHead_("Part breakdown \u00b7 worst first", rows.length + ' PARTS \u00b7 % PRESENT + LATE') + body
+    + dashFoot_("Rate is present + late over every record in range. The bar is the mix behind it."));
+}
+
+// Reusable measure row (section comparison · weekday · session type)
+function dashMbars_(items, key) {
+  return items.map(function (i) {
+    var r = i.rate || 0;
+    return '<div class="mbar-row"><span class="mbar-lab">' + esc(String(i[key])) + '</span>'
+      + '<span class="mbar-track"><span class="mbar-fill' + (r < 75 ? ' low' : '') + '" style="width:' + Math.max(2, r) + '%"></span></span>'
+      + '<span class="mbar-val">' + r + '%</span><span class="mbar-sub">' + (i.total || 0) + ' REC</span></div>';
+  }).join("");
+}
+// Only worth showing when there is something to compare against (the All view).
+function renderDashSections(d) {
+  var s = d.sectionComparison || [];
+  if (s.length < 2) return dashCard_("dashSections", "");
+  dashCard_("dashSections", dashHead_("Section comparison", "RATE \u00b7 RECORDS") + dashMbars_(s, "section") + DASH_RATE_KEY);
+}
+
+// SHAPE · distribution — the shape a single average hides
+function renderDashDistribution(d) {
+  var dist = d.distribution;
+  if (!dist || !dist.buckets || !dist.buckets.length || !dist.memberCount) return dashCard_("dashDistribution", "");
+  var max = 1;
+  dist.buckets.forEach(function (b) { if (b.count > max) max = b.count; });
+  var cols = dist.buckets.map(function (b, i) {
+    var cls = i === 0 ? " bad" : (i === dist.buckets.length - 1 ? " good" : "");
+    var share = Math.round((b.count / dist.memberCount) * 100);
+    // min-height in CSS keeps a count of 1 readable; a true zero gets no bar at all
+    return '<div class="hist-col"><span class="hist-n">' + b.count + '</span>'
+      + '<span class="hist-area"><span class="hist-bar' + cls + (b.count ? '' : ' zero') + '" style="height:' + Math.round(b.count / max * 100) + '%" title="' + share + '% of members"></span></span>'
+      + '<span class="hist-lab">' + esc(b.label) + '</span></div>';
+  }).join("");
+  dashCard_("dashDistribution", dashHead_("Attendance distribution", dist.memberCount + " MEMBERS WITH RECORDS")
+    + '<div class="hist">' + cols + '</div>'
+    + dashFoot_("Each column counts members whose own rate falls in that band \u2014 a devoted core plus a tail reads very differently from everyone slightly absent."));
+}
+
+// SHAPE · apologyStats.complianceRate — the excused share of absences (AE / (AE + AU)).
+// NOT the same as apologies filed: one long-term apology can cover several sessions,
+// so the two numbers legitimately differ and the card says so.
+function renderDashCompliance(d) {
+  var s = d.apologyStats;
+  if (!s || s.complianceRate == null) return dashCard_("dashCompliance", "");
+  var sc = d.statusCounts || {}, ae = sc["Absent Excused"] || 0, au = sc["Absent Unexcused"] || 0;
+  dashCard_("dashCompliance", dashHead_("Excused share", "OF ALL ABSENCES")
+    + '<div class="dash-stat-num">' + s.complianceRate + '%</div>'
+    + '<div class="dash-stat-sub">' + ae + ' AE \u00b7 ' + au + ' AU</div>'
+    + dashFoot_("Absences that were excused." + (s.absentType
+        ? " Separately, " + s.absentType + " " + (s.absentType === 1 ? "apology was" : "apologies were")
+          + " filed in range \u2014 one apology can cover several sessions, so the two don\u2019t match."
+        : "")));
+}
+
+// SHAPE · behaviour — this panel NAMES people, so the copy stays descriptive:
+// a pattern inside one range, above a floor of chronicMin incidents. Never a verdict.
+function dashBehItems_(list, kind, total) {
+  if (!list.length) return '<div class="beh-item"><span class="beh-name" style="color:var(--ink-400)">None in this range.</span></div>';
+  var out = list.map(function (m) {
+    var n = kind === "late" ? m.late : m.absent;
+    return '<div class="beh-item"><span class="beh-name">' + esc(m.name) + '</span>'
+      + '<span class="beh-count ' + (kind === "late" ? "late" : "abs") + '">' + n + (kind === "late" ? " LATE" : " ABSENT") + '</span>'
+      + '<span class="beh-rate">' + (m.rate != null ? m.rate + "%" : "") + '</span></div>';
+  }).join("");
+  if (total > list.length) out += '<div class="beh-more">+ ' + (total - list.length) + ' MORE</div>';
+  return out;
+}
+function renderDashBehaviour(d) {
+  var b = d.behaviour;
+  if (!b) return dashCard_("dashBehaviour", "");
+  var late = b.chronicLate || [], abs = b.chronicAbsent || [];
+  var lateN = b.chronicLateCount != null ? b.chronicLateCount : late.length;
+  var absN = b.chronicAbsentCount != null ? b.chronicAbsentCount : abs.length;
+  if (!lateN && !absN && !b.mixed && !b.occasional && !b.spotless) return dashCard_("dashBehaviour", "");
+  var cols = '<div class="beh-cols"><div><div class="beh-head"><span>Lateness-leaning</span><span>' + lateN + '</span></div>'
+    + dashBehItems_(late, "late", lateN) + '</div>'
+    + '<div><div class="beh-head"><span>Absence-leaning</span><span>' + absN + '</span></div>'
+    + dashBehItems_(abs, "absent", absN) + '</div></div>';
+  var min = b.chronicMin || 2;
+  var mix = '<div class="beh-mix">'
+    + '<div class="cell"><div class="num">' + (b.mixed || 0) + '</div><div class="lab">Both kinds</div>'
+    +   '<div class="sub">Hit ' + min + '+ of each \u2014 neither dominant</div></div>'
+    + '<div class="cell"><div class="num">' + (b.occasional || 0) + '</div><div class="lab">Below the threshold</div>'
+    +   '<div class="sub">Missed something, under ' + min + '</div></div>'
+    + '<div class="cell"><div class="num">' + (b.spotless || 0) + '</div><div class="lab">No incidents</div>'
+    +   '<div class="sub">Never late, never absent</div></div></div>';
+  dashCard_("dashBehaviour", dashHead_("Lateness vs absence", "PATTERN IN THIS RANGE") + cols + mix
+    + dashFoot_("Counted from this range only, and only where the dominant kind reached " + min
+      + " incidents. Every member sits in exactly one of the five \u2014 the two lists above, or one of the three counts here. A pattern to talk about, not a disciplinary record."));
+}
+
+// SHAPE · topAttenders[] — the floor is a footnote, not fine print
+function renderDashTop(d) {
+  var t = d.topAttenders || [];
+  if (!t.length) return dashCard_("dashTop", "");
+  var rows = t.map(function (m) {
+    return '<div class="beh-item"><span class="beh-name">' + esc(m.name) + '</span>'
+      + '<span class="beh-count ok">' + m.rate + '%</span>'
+      + '<span class="beh-rate">' + (m.attended || 0) + '/' + (m.total || 0) + '</span></div>';
+  }).join("");
+  dashCard_("dashTop", dashHead_("Most consistent", d.minSessionsForTop ? ("MIN " + d.minSessionsForTop + " SESSIONS") : "") + rows);
+}
+
+// WHEN · weekdayStats[] + sessionTypeStats[]
+// WHEN · weekdayStats[] + sessionTypeStats[]. Bars carry one threshold — crimson
+// under 75%, gold at or above — so the legend states it rather than leaving the
+// colour to be guessed at.
+var DASH_RATE_KEY = '<div class="mbar-key"><span class="k"><i class="ok"></i>75% and above</span>'
+  + '<span class="k"><i class="low"></i>Below 75%</span></div>';
+function renderDashWhen(d) {
+  var wd = d.weekdayStats || [], ty = d.sessionTypeStats || [];
+  dashCard_("dashWeekday", wd.length ? (dashHead_("Day of week", "RATE \u00b7 RECORDS") + dashMbars_(wd, "day") + DASH_RATE_KEY) : "");
+  dashCard_("dashTypes", ty.length ? (dashHead_("Session type", "RATE \u00b7 RECORDS") + dashMbars_(ty, "type") + DASH_RATE_KEY) : "");
+}
+
+// ORG STATE · membershipHealth
+function renderDashHealth(d) {
+  var h = d.membershipHealth;
+  if (!h) return dashCard_("dashHealth", "");
+  var cells = [["Active", h.active], ["Rejoining", h.rejoining], ["On hiatus", h.hiatus], ["Inactive", h.inactive], ["Alumni", h.alumnus]];
+  var sum = 0;
+  cells.forEach(function (c) { sum += (c[1] || 0); });
+  if (!sum) return dashCard_("dashHealth", "");
+  var grid = '<div class="mh-grid">' + cells.map(function (c) {
+    return '<div class="mh-cell"><div class="num">' + (c[1] || 0) + '</div><div class="lab">' + c[0] + '</div></div>';
+  }).join("") + '</div>';
+  var flow = '<div class="mh-flow"><span><span class="in">+' + (h.joinedInRange || 0) + '</span> joined in range</span>'
+    + '<span><span class="out">\u2212' + (h.removedInRange || 0) + '</span> removed in range</span></div>';
+  dashCard_("dashHealth", dashHead_("Membership health", esc(String(d.section || "ALL").toUpperCase())) + grid + flow);
+}
+
+// ORG STATE · probationPerformance
+function renderDashProbPerf(d) {
+  var p = d.probationPerformance;
+  if (!p) return dashCard_("dashProbPerf", "");
+  var ir = p.inRange || {}, months = p.byMonth || [];
+  if (!ir.total && !months.length) return dashCard_("dashProbPerf", "");
+  var minis = '<div class="prob-summary">'
+    + '<div class="prob-mini ok"><div class="num">' + (ir.passed || 0) + '</div><div class="lab">Passed</div></div>'
+    + '<div class="prob-mini gold"><div class="num">' + (ir.conditional || 0) + '</div><div class="lab">Conditional</div></div>'
+    + '<div class="prob-mini bad"><div class="num">' + (ir.failed || 0) + '</div><div class="lab">Failed</div></div></div>';
+  var byMonth = "";
+  if (months.length) {
+    var max = 1;
+    months.forEach(function (m) { if ((m.total || 0) > max) max = m.total; });
+    byMonth = '<div class="dash-card-note">' + (ir.total ? (ir.passRate || 0) + '% CLEARED \u00b7 ' : '') + 'BY MONTH</div><div class="pp-months">'
+      + months.map(function (m) {
+        // Counts sit inside the segments so the by-month composition reads without hovering
+        function seg(cls, n, lab) { return n ? '<div class="pp-seg ' + cls + '" style="height:' + (n / max * 100) + '%" title="' + n + ' ' + lab + '">' + n + '</div>' : ''; }
+        return '<div class="pp-month"><span class="pp-n">' + (m.total || 0) + '</span><div class="pp-stack">'
+          + seg("pass", m.passed, "passed") + seg("cond", m.conditional, "conditional") + seg("fail", m.failed, "failed")
+          + '</div><div class="pp-lab">' + dashMonLabel_(m.month) + '</div></div>';
+      }).join("") + '</div>'
+      + '<div class="pp-legend"><span class="k"><i style="background:var(--present)"></i>Passed</span>'
+      + '<span class="k"><i style="background:var(--gold-500)"></i>Conditional</span>'
+      + '<span class="k"><i style="background:var(--crimson-500)"></i>Failed</span></div>';
+  }
+  dashCard_("dashProbPerf", dashHead_("Probation outcomes", ir.total ? (ir.total + " ENDED IN RANGE") : "") + minis + byMonth);
+}
+
+// CHANGE · comparison — null on custom/all ranges, and then the card (and its group) goes away.
+// direction comes from the backend field verbatim; the client never re-derives it (the
+// backend owns the threshold). Per-cell colour is just the sign of that cell's delta.
+function dashCmpCell_(lab, now, prev, delta, suffix, goodUp) {
+  var good = goodUp === false ? (delta < 0) : (delta > 0);
+  var cls = !delta ? "" : (good ? " up" : " down");
+  var arrow = !delta ? "\u25ac" : (delta > 0 ? "\u25b2" : "\u25bc");
+  var mag = (delta > 0 ? "+" : (delta < 0 ? "\u2212" : "")) + Math.abs(delta) + (suffix === "%" ? " PTS" : "");
+  return '<div class="cmp-cell"><div class="cmp-lab">' + lab + '</div><div class="cmp-now">' + now + suffix + '</div>'
+    + '<div class="cmp-prev">WAS ' + prev + suffix + '</div><div><span class="cmp-delta' + cls + '">' + arrow + ' ' + mag + '</span></div></div>';
+}
+function renderDashComparison(d) {
+  var c = d.comparison;
+  if (!c) return dashCard_("dashComparison", "");
+  var a = d.avgPerSession || {};
+  var grid = '<div class="cmp-grid">'
+    + dashCmpCell_("Attendance rate", d.overallRate, c.previousRate, c.rateDelta, "%", true)
+    + dashCmpCell_("Sessions held", d.sessionsCount, c.previousSessions, c.sessionsDelta, "", true)
+    + dashCmpCell_("Avg attended", (a.attended != null ? a.attended : "\u2014"), c.previousAvgAttended, c.avgAttendedDelta, "", true)
+    + dashCmpCell_("Unexcused rate", d.auRate, c.previousAuRate, c.auRateDelta, "%", false)
+    + '</div>';
+  dashCard_("dashComparison", dashHead_("This period vs last",
+    (c.direction ? String(c.direction).toUpperCase() + " \u00b7 " : "") + "PREVIOUS \u00b7 " + dashRangeLabel_(c.previousRange)) + grid);
 }
 
 // SVG area+line chart into #dashTrend (v2: hover any point for that session's full tally).
@@ -4315,7 +4644,7 @@ function applyApologyDefaults() {
       changed = true;
     }
   }
-  if (changed) { renderMembers(); updateSummary(); }
+  if (changed) { renderMembers(); updateSummary(); snapshotRecordBaseline(); }
 }
 
 function onMembersLoaded(data) {
@@ -4327,6 +4656,7 @@ function onMembersLoaded(data) {
   document.getElementById("quickActions").style.display = "flex";
   document.getElementById("searchArea").style.display = "block";
   document.getElementById("memberCount").textContent = members.length + " MEMBERS";
+  snapshotRecordBaseline();
   updateSummary();
 }
 
@@ -4340,6 +4670,61 @@ function setSub(name, status) { attendance[name] = status; renderMembers(); upda
 function setAll(status) {
   for (var i = 0; i < members.length; i++) attendance[members[i].name] = status;
   renderMembers(); updateSummary();
+}
+
+// ── Cancelling a recording ────────────────────────────────────────────────
+// Snapshot of the roster as loaded (after apology defaults) so Cancel only asks
+// to confirm when the admin has actually changed something.
+var recordBaseline = {};
+function snapshotRecordBaseline() {
+  recordBaseline = {};
+  for (var i = 0; i < members.length; i++) recordBaseline[members[i].name] = attendance[members[i].name];
+}
+function recordHasMarks() {
+  for (var i = 0; i < members.length; i++) {
+    var n = members[i].name;
+    if (attendance[n] !== recordBaseline[n]) return true;
+  }
+  return false;
+}
+
+function cancelRecording() {
+  if (members.length && recordHasMarks()) {
+    document.getElementById("cancelRecordDialog").style.display = "flex";
+    return;
+  }
+  resetRecordTab();
+  showToast("Recording cancelled.", "success");
+}
+function closeCancelRecordDialog() { document.getElementById("cancelRecordDialog").style.display = "none"; }
+function confirmCancelRecording() {
+  closeCancelRecordDialog();
+  resetRecordTab();
+  showToast("Recording cancelled — nothing was saved.", "success");
+}
+
+// Put the Record tab back to its starting state: no roster, nothing marked,
+// date back to today, groups back to the role's default scope.
+function resetRecordTab() {
+  members = []; attendance = {}; sessionApologies = {}; selectedGroups = []; recordBaseline = {};
+  var boxes = ["grpChoir", "grpBand", "grpOrchestra"];
+  for (var i = 0; i < boxes.length; i++) { var cb = document.getElementById(boxes[i]); if (cb && !cb.disabled) cb.checked = false; }
+  if (typeof applyRoleScopeUI === "function") applyRoleScopeUI();
+  var d = document.getElementById("attendanceDate"); if (d) d.value = todayStr();
+  var st = document.getElementById("sessionType"); if (st) st.value = "practice";
+  var mpw = document.getElementById("meetingPickerWrap"); if (mpw) mpw.style.display = "none";
+  var mp = document.getElementById("meetingPicker"); if (mp) mp.value = "";
+  var t = document.getElementById("sessionTime"); if (t) t.value = "";
+  var tn = document.getElementById("timeNote"); if (tn) tn.textContent = "";
+  var si = document.getElementById("searchInput"); if (si) si.value = "";
+  var ml = document.getElementById("memberList"); if (ml) ml.innerHTML = '<p class="loading">Select groups and tap Load members.</p>';
+  var pc = document.getElementById("probationCard"); if (pc) pc.innerHTML = "";
+  var mc = document.getElementById("memberCount"); if (mc) mc.textContent = "";
+  var qa = document.getElementById("quickActions"); if (qa) qa.style.display = "none";
+  var sr = document.getElementById("searchArea"); if (sr) sr.style.display = "none";
+  var sa = document.getElementById("submitArea"); if (sa) sa.style.display = "none";
+  var sb = document.getElementById("summaryBar"); if (sb) sb.innerHTML = "";
+  setBusy(false);
 }
 
 function handleSubmit() {
@@ -4370,6 +4755,8 @@ function submitAttendance(ow) {
   });
   google.script.run.withSuccessHandler(function (r) {
     setBusy(false);
+    // Remember what was just written so “View attendance” can open that register.
+    lastRecorded = { date: ds, sessionKey: selectedGroups.slice().sort().join(",") };
     showPostSubmit(r);
     loadProbationCard();
   }).withFailureHandler(function (e) { setBusy(false); showToast("Failed: " + e.message, "error"); })
@@ -4422,6 +4809,30 @@ function showPostSubmit(r) {
 
 function closePostSubmit() {
   document.getElementById("postSubmitDialog").style.display = "none";
+}
+
+// The register just submitted — { date, sessionKey } — so we can jump to it.
+var lastRecorded = null;
+
+// “Done”: clear the dialog AND the recording state, so the tab is ready for the
+// next session rather than still holding the register that was just saved.
+function finishPostSubmit() {
+  closePostSubmit();
+  resetRecordTab();
+  sessionsLoaded = false;   // Sessions + Dashboard reload with the new register
+  dashboardLoaded = false;
+}
+
+// “View attendance”: same reset, then open the saved session in the Sessions tab.
+function viewRecordedAttendance() {
+  var rec = lastRecorded;
+  closePostSubmit();
+  resetRecordTab();
+  dashboardLoaded = false;
+  sessionsLoaded = true;    // we load the list ourselves, below
+  switchTab("sessions");
+  if (typeof loadSessions === "function") loadSessions();
+  if (rec && rec.date && typeof openSession === "function") openSession(rec.date, rec.sessionKey);
 }
 
 function setBusy(b) {
@@ -5046,7 +5457,20 @@ function loadApologyQueue() {
 function adminApprove(rowIndex) {
   var note = getReviewNote("Optional note (leave blank for none):");
   if (note === null) return;
-  google.script.run.withSuccessHandler(function () { showToast("Apology approved.", "success"); selectedApologyIdx = null; loadApologyQueue(); })
+  google.script.run.withSuccessHandler(function (r) {
+    r = r || {};
+    // Approval now cascades backwards: past registers get excused, the automatic
+    // 3-AU offenses they caused are re-checked, and a removal that no longer holds
+    // is flagged for an admin. Say all of it in the toast.
+    var parts = ["Approved"];
+    if (r.backfilled)      parts.push(r.backfilled + " past record" + (r.backfilled === 1 ? "" : "s") + " updated");
+    if (r.offensesRemoved) parts.push(r.offensesRemoved + " offense" + (r.offensesRemoved === 1 ? "" : "s") + " removed");
+    if (r.reinstatementFlagged) parts.push("flagged for reinstatement");
+    showToast(parts.join(" \u00b7 ") + ".", "success");
+    selectedApologyIdx = null;
+    loadApologyQueue();
+    loadReinstatementFlags();
+  })
     .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
     .approveApology(rowIndex, note || "");
 }
@@ -5093,6 +5517,58 @@ function approveRejoin(rowIndex, memberName) {
     loadApologyQueue();
   }).withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
     .approveRejoin(rowIndex, memberName);
+}
+
+// ─── REINSTATEMENT FLAGS ──────────────────────────────────────────────────
+// Members still marked inactive whose removal no longer holds, because the
+// absences behind it were excused retroactively. The backend only flags; the
+// admin decides, so every row carries both reinstatement modes explicitly.
+var reinstateFlags = [];
+
+function loadReinstatementFlags() {
+  if (!google.script.run || typeof google.script.run.getReinstatementFlags !== "function") return;
+  google.script.run.withSuccessHandler(function (f) { reinstateFlags = f || []; renderReinstateFlags(); })
+    .withFailureHandler(function () { reinstateFlags = []; renderReinstateFlags(); })
+    .getReinstatementFlags();
+}
+
+function renderReinstateFlags() {
+  var el = document.getElementById("reinstateFlagsPanel");
+  if (!el) return;
+  if (!reinstateFlags.length) { el.style.display = "none"; el.innerHTML = ""; return; }
+  el.style.display = "";
+  var h = '<div class="stat-card" style="padding:16px 18px;margin-bottom:18px">'
+        +   '<div class="eyebrow">FLAGGED FOR REINSTATEMENT \u00b7 ' + reinstateFlags.length + '</div>'
+        +   '<p style="font-size:12.5px;color:var(--ink-600);line-height:1.5;margin:6px 0 4px">Their removal no longer holds \u2014 the absences behind it have since been excused. Reinstating stays your call.</p>';
+  for (var i = 0; i < reinstateFlags.length; i++) {
+    var f = reinstateFlags[i], safe = String(f.name).replace(/'/g, "\\'");
+    h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:12px 0 0;margin-top:11px;border-top:1px solid var(--paper-200)">'
+      +    '<div style="flex:1;min-width:180px">'
+      +      '<div style="font-size:13px;font-weight:600;color:var(--ink)">' + esc(f.name) + '</div>'
+      +      '<div style="font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;color:var(--ink-500);margin-top:4px">'
+      +        esc((f.groups || []).join(" \u00b7 ")) + ' \u00b7 STREAK NOW ' + f.currentStreak
+      +      '</div>'
+      +      '<div style="font-size:12px;color:var(--ink-600);line-height:1.45;margin-top:6px">' + esc(f.reason || "") + '</div>'
+      +    '</div>'
+      +    '<div style="display:flex;gap:6px;flex-wrap:wrap">'
+      +      '<button class="btn-export" onclick="reinstateFlagged(\'' + safe + '\',\'probation\')">Reinstate \u00b7 probation</button>'
+      +      '<button class="btn-export" onclick="reinstateFlagged(\'' + safe + '\',\'active\')">Reinstate \u00b7 active</button>'
+      +    '</div>'
+      + '</div>';
+  }
+  el.innerHTML = h + '</div>';
+}
+
+function reinstateFlagged(name, mode) {
+  if (!confirm("Reinstate " + name + (mode === "active"
+      ? " as active, with no probation?"
+      : " on a fresh re-entry probation?"))) return;
+  google.script.run.withSuccessHandler(function () {
+    showToast(name + (mode === "active" ? " reinstated as active." : " reinstated \u2014 re-entry probation started."), "success");
+    loadReinstatementFlags();
+    if (activeTab === "members" && typeof refreshMemberList === "function") refreshMemberList();
+  }).withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
+    .adminReinstateMember(name, mode);
 }
 
 // Reinstate: the direct admin route from the Members tab (no request needed).

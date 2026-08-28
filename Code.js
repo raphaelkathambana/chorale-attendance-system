@@ -18,6 +18,7 @@ function isRequestType_(type) {
   return REQUEST_TYPES.indexOf(String(type || "").trim()) !== -1;
 }
 var MEMBER_DETAILS_SHEET = "Member Details";
+var PROBATION_HISTORY_SHEET = "Probation History";
 var CONFIG_SHEET     = "Config";
 var SIGNATURES_SHEET = "Signatures";
 var PHOTO_FOLDER_ID  = "1-HhDK1DNADta_zoqSlkcRJLZqXOl4WNlixQinheteKcc0Sf-whvREBR81ABgAIuzgHHAvBgk";
@@ -358,8 +359,11 @@ function scopeMemberPredicate_(access, ss) {
       var role = (m.roles && m.roles[section]) ? m.roles[section].toString().trim() : "";
       if (!role) return false;
       if (section === "Choir") return role.toLowerCase() === rep.toLowerCase();
-      var fam = famMap[role.toLowerCase()] || "";
-      return fam.toLowerCase() === rep.toLowerCase();
+      // A member's Band/Orchestra role is normally ALREADY a family. The old
+      // famMap-only lookup returned "" in that case, so a Strings rep matched
+      // nobody. normalizeToFamily_ handles family, instrument and legacy values.
+      var fam = normalizeToFamily_(role, famMap);
+      return !!fam && fam.toLowerCase() === rep.toLowerCase();
     };
   }
   return function(){ return false; };
@@ -396,23 +400,6 @@ function deleteAllTriggers() {
   Logger.log("Deleted " + n + " trigger(s).");
   return n;
 }
-
-function listUnmappedInstruments() {
-  var ss = getSpreadsheet_();
-  var famMap = getInstrumentFamilyMap_(ss);
-  var members = readAllMembers_(ss);
-  var missing = {};
-  members.forEach(function(m) {
-    ["Band", "Orchestra"].forEach(function(sec) {
-      var role = (m.roles && m.roles[sec]) ? m.roles[sec].toString().trim() : "";
-      if (role && !famMap[role.toLowerCase()]) missing[role] = true;
-    });
-  });
-  var list = Object.keys(missing).sort();
-  Logger.log(list.length ? "Unmapped instruments:\n" + list.join("\n") : "All instruments mapped.");
-  return list;
-}
-
 
 /**
  * DIAGNOSTIC — run from the editor (or call from the client) to see exactly what
@@ -927,7 +914,7 @@ function calculateProbationStats_(member, attData) {
  * Ensures the Probation History sheet exists. This is an EVENT LOG: one row per
  * completed probation outcome. The Members sheet only holds CURRENT probation
  * state (flags get overwritten when someone restarts probation or rejoins), so
- * without this log the pass/fail trend is not reconstructible.
+ * without this log the pass/fail trend is not reconstructable.
  */
 function ensureProbationHistorySheet_(ss) {
   var sheet = ss.getSheetByName(PROBATION_HISTORY_SHEET);
@@ -1576,7 +1563,6 @@ function runConsecutiveAuSweep() {
   return { success: true, added: r.added, removed: r.removed };
 }
 
-
 // =======================================================
 //  PHASE 4 — SESSIONS TAB + GROUP DASHBOARD (admin-level)
 // =======================================================
@@ -1697,7 +1683,7 @@ function countApologiesForSession_(ss, dateStr, groups) {
     if (isRequestType_(data[i][3])) continue; // requests aren't apologies
     var rowDate = formatSheetDate_(data[i][0]);
     var status = data[i][8] ? data[i][8].toString() : "";
-    if (status === "Rejected" || status === "Revoked") continue;
+    if (status === "Rejected" || status === "Revoked" || status === "Not needed") continue;
     // Single-day: exact date match. Long-term (approved, real end date): session
     // date falls inside the range.
     var endDate = data[i][9] ? formatSheetDate_(data[i][9]) : "";
@@ -1718,6 +1704,784 @@ function countApologiesForSession_(ss, dateStr, groups) {
  *
  * @param {Object} opts — { section:"All"|group, range:"week"|"month"|"all"|"custom", start, end }
  */
+// -------------------------------------------------------
+//  DASHBOARD AGGREGATION HELPERS (v3)
+// -------------------------------------------------------
+function dashBucket_() { return { present: 0, late: 0, ae: 0, au: 0, total: 0, attended: 0 }; }
+function dashBump_(b, st) {
+  b.total++;
+  if (st === "Present") { b.present++; b.attended++; }
+  else if (st === "Late Excused" || st === "Late Unexcused") { b.late++; b.attended++; }
+  else if (st === "Absent Excused") b.ae++;
+  else if (st === "Absent Unexcused") b.au++;
+}
+function dashRate_(b) { return (b && b.total > 0) ? Math.round((b.attended / b.total) * 100) : 0; }
+
+/** Equal-length window immediately before `range` (for period-over-period). */
+function previousPeriod_(range) {
+  var s = new Date(range.start + "T00:00:00"), e = new Date(range.end + "T00:00:00");
+  var days = Math.max(1, Math.round((e - s) / 86400000) + 1);
+  var prevEnd = new Date(s.getTime() - 86400000);
+  var prevStart = new Date(prevEnd.getTime() - (days - 1) * 86400000);
+  var tz = Session.getScriptTimeZone();
+  return { start: Utilities.formatDate(prevStart, tz, "yyyy-MM-dd"),
+           end: Utilities.formatDate(prevEnd, tz, "yyyy-MM-dd") };
+}
+
+/** Choir -> choir part; Band/Orchestra -> instrument FAMILY (raw instrument if unmapped). */
+
+/** The canonical instrument families. Band/Orchestra ROLES are families, not instruments. */
+var INSTRUMENT_FAMILIES = ["Strings", "Brass", "Winds", "Woodwind", "Percussion", "Vocals", "Voice"];
+
+/**
+ * Resolves ANY Band/Orchestra role value to its instrument family.
+ * Handles three cases, because historic data is not uniform:
+ *   1. the value is already a family ("Strings")            -> returned as-is
+ *   2. the value is a mapped instrument ("Electric Guitar") -> mapped via Config
+ *   3. the value is a legacy spelling ("Guitarist_Electric") -> matched by tokens
+ * Returns "" when nothing matches, so callers can decide how to label it.
+ */
+function normalizeToFamily_(role, famMap) {
+  var r = String(role || "").trim();
+  if (!r) return "";
+  var lower = r.toLowerCase();
+
+  // 1. already a family
+  for (var f = 0; f < INSTRUMENT_FAMILIES.length; f++) {
+    if (INSTRUMENT_FAMILIES[f].toLowerCase() === lower) return INSTRUMENT_FAMILIES[f];
+  }
+  // 2. direct Config mapping
+  if (famMap[lower]) return famMap[lower];
+
+  // 3. legacy spellings: split multi-value roles, strip separators and agent suffixes,
+  //    then look for any known instrument inside the remaining token.
+  var firstPart = r.split(",")[0].trim().toLowerCase();
+  if (famMap[firstPart]) return famMap[firstPart];
+  var token = firstPart.replace(/[_\-]+/g, " ").trim();
+  if (famMap[token]) return famMap[token];
+
+  // Word-level stems so agent nouns and word order stop mattering:
+  //   "guitarist electric" -> [electric, guitar]  ==  "electric guitar"
+  //   "drummer"            -> [drumm]             ~=  "drums" -> [drum]
+  function stems(str) {
+    return str.split(/\s+/).filter(Boolean).map(function (w) {
+      return w.replace(/(ists|ist|ers|er|players|player|s)$/, "");
+    }).filter(Boolean).sort();
+  }
+  function stemsMatch(a, b) {
+    if (a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      var x = a[i], y = b[i];
+      if (x === y) continue;
+      var longer = x.length >= y.length ? x : y, shorter = x.length >= y.length ? y : x;
+      if (shorter.length >= 4 && longer.indexOf(shorter) === 0) continue; // drumm / drum
+      return false;
+    }
+    return true;
+  }
+  var tokenStems = stems(token);
+  for (var inst in famMap) {
+    var base = inst.replace(/[_\-]+/g, " ");
+    if (token.indexOf(base) !== -1 || base.indexOf(token) !== -1) return famMap[inst];
+    if (stemsMatch(tokenStems, stems(base))) return famMap[inst];
+  }
+  return "";
+}
+
+/**
+ * Role options for a section. Choir -> choir parts. Band/Orchestra -> instrument
+ * FAMILIES (the role a member holds), with the specific instrument captured
+ * separately at onboarding.
+ */
+
+/**
+ * Propagates a member's ROLE change into historic Attendance rows for that section.
+ * Roles are denormalised into Attendance at record time, so without this a
+ * correction (e.g. a probation member finally assigned a voice part) leaves every
+ * past row showing the old value - which is why such members kept showing as "Other".
+ * Scoped to one section so a Choir correction never touches Band rows.
+ */
+function cascadeMemberRoleChange_(ss, memberName, section, newRole) {
+  var sheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var data = sheet.getDataRange().getValues();
+  var changed = 0, firstRow = -1, lastRow = -1;
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][1].toString().trim() !== memberName) continue;
+    if (data[i][2].toString().trim() !== section) continue;
+    if (data[i][3].toString().trim() === newRole) continue;
+    data[i][3] = newRole;
+    changed++;
+    if (firstRow === -1) firstRow = i;
+    lastRow = i;
+  }
+  if (changed > 0) {
+    // Write back just the Role column across the affected span
+    var height = lastRow - firstRow + 1;
+    var col = [];
+    for (var r = firstRow; r <= lastRow; r++) col.push([data[r][3]]);
+    sheet.getRange(firstRow + 1, 4, height, 1).setValues(col);
+  }
+  return changed;
+}
+
+/**
+ * Sets or clears a column's data-validation dropdown.
+ * A "Reject input" rule makes Apps Script setValue THROW, and because writes flush
+ * lazily the failure can surface after a success message has already been logged.
+ * Rules written here use setAllowInvalid(true) ("show a warning"), so script writes
+ * can never be hard-blocked by validation again.
+ */
+function setColumnValidation_(sheet, col1Based, allowedValues) {
+  if (!sheet || sheet.getLastRow() < 2) return;
+  var range = sheet.getRange(2, col1Based, sheet.getLastRow() - 1, 1);
+  range.clearDataValidations();
+  if (allowedValues && allowedValues.length) {
+    range.setDataValidation(
+      SpreadsheetApp.newDataValidation()
+        .requireValueInList(allowedValues, true)
+        .setAllowInvalid(true)
+        .build());
+  }
+}
+
+/**
+ * Enforces the storage invariant for section roles:
+ *   Choir            -> the choir part, stored as given
+ *   Band / Orchestra -> the instrument FAMILY, never the specific instrument
+ * Accepts whatever a form sends (family, instrument or legacy spelling) so no UI
+ * can reintroduce instrument-level roles. The specific instrument is returned
+ * separately so callers can keep it in Member Details.
+ * Unresolvable values are passed through unchanged rather than guessed.
+ */
+function resolveRoleForStorage_(section, value, famMap) {
+  var v = String(value || "").trim();
+  if (!v) return { role: "", instrument: "" };
+  if (section === "Choir") return { role: v, instrument: "" };
+  famMap = famMap || getInstrumentFamilyMap_(getSpreadsheet_());
+  var fam = normalizeToFamily_(v, famMap);
+  if (!fam) return { role: v, instrument: "" };           // unmapped - leave alone
+  var wasFamily = (fam.toLowerCase() === v.toLowerCase());
+  return { role: fam, instrument: wasFamily ? "" : v };
+}
+
+/**
+ * Repoints the data-validation dropdowns on Members "Band Role"/"Orchestra Role"
+ * at the instrument FAMILIES. Those columns previously listed instruments, so a
+ * "Reject input" rule made the family migration fail with a validation error.
+ * Run this BEFORE migrateMemberRolesToFamilies(false).
+ */
+function setRoleColumnValidation() {
+  requireFullAdmin_();
+  var ss = getSpreadsheet_();
+  var famMap = getInstrumentFamilyMap_(ss);
+  var famSet = {};
+  for (var k in famMap) famSet[famMap[k]] = true;
+  var families = Object.keys(famSet).sort();
+  if (!families.length) throw new Error("No instrument families found in Config.");
+
+  var sheet = ss.getSheetByName(MEMBERS_SHEET);
+  var map = headerIndexMap_(sheet);
+  var lastRow = Math.max(sheet.getLastRow(), 2);
+  var rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(families, true).setAllowInvalid(true).build();
+  var applied = [];
+  ["band role", "orchestra role"].forEach(function (h) {
+    var c = map[h];
+    if (c == null) return;
+    sheet.getRange(2, c + 1, lastRow - 1, 1).setDataValidation(rule);
+    applied.push(h);
+  });
+  var msg = "Set family dropdown on: " + applied.join(", ") +
+            "\nFamilies: " + families.join(", ") +
+            "\nallowInvalid=true, so legacy values already in cells are kept (flagged, not rejected).";
+  Logger.log(msg);
+  return msg;
+}
+
+/** Removes data validation from the two role columns entirely (the app writes them). */
+function clearRoleColumnValidation() {
+  requireFullAdmin_();
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(MEMBERS_SHEET);
+  var map = headerIndexMap_(sheet);
+  var lastRow = Math.max(sheet.getLastRow(), 2);
+  var cleared = [];
+  ["band role", "orchestra role"].forEach(function (h) {
+    var c = map[h];
+    if (c == null) return;
+    sheet.getRange(2, c + 1, lastRow - 1, 1).clearDataValidations();
+    cleared.push(h);
+  });
+  Logger.log("Cleared validation on: " + cleared.join(", "));
+  return "Cleared validation on: " + cleared.join(", ");
+}
+
+/**
+ * DIAGNOSTIC - checks the Config sheet's two instrument structures agree.
+ * They serve DIFFERENT purposes and both are needed:
+ *   "Band Roles" / "Orchestra Roles" = the PICKER lists (which instruments a member
+ *      of that section may choose - Band has Drums, Orchestra has Violin, etc.)
+ *   "Instrument" / "Instrument Family" = the MAPPING (what family each belongs to)
+ * Every picker value must appear in the mapping, or that member's role will not
+ * resolve to a family. Writes nothing.
+ */
+function validateInstrumentConfig() {
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(CONFIG_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return "No Config sheet.";
+  var data = sheet.getDataRange().getValues();
+  var h = data[0].map(function (x) { return x.toString().trim().toLowerCase(); });
+  var bi = h.indexOf("band roles"), oi = h.indexOf("orchestra roles");
+  var famMap = getInstrumentFamilyMap_(ss);
+
+  function colValues(idx) {
+    var out = [];
+    if (idx === -1) return out;
+    for (var i = 1; i < data.length; i++) {
+      var v = data[i][idx] ? data[i][idx].toString().trim() : "";
+      if (v) out.push(v);
+    }
+    return out;
+  }
+  var problems = [], notes = [];
+  [["Band Roles", bi], ["Orchestra Roles", oi]].forEach(function (p) {
+    colValues(p[1]).forEach(function (v) {
+      if (!normalizeToFamily_(v, famMap)) problems.push(p[0] + ' value "' + v + '" has no instrument family.');
+    });
+  });
+
+  // duplicate instrument rows
+  var seen = {}, dupes = [];
+  var ii = h.indexOf("instrument");
+  colValues(ii).forEach(function (v) {
+    var k = v.toLowerCase();
+    if (seen[k]) { if (dupes.indexOf(v) === -1) dupes.push(v); } else seen[k] = true;
+  });
+  if (dupes.length) notes.push("Duplicate rows in Instrument column: " + dupes.join(", ") + " (harmless, but tidy up).");
+
+  var fams = {};
+  for (var k in famMap) fams[famMap[k]] = (fams[famMap[k]] || 0) + 1;
+  notes.push("Families in use: " + Object.keys(fams).sort().map(function (f) {
+    return f + " (" + fams[f] + " instruments)";
+  }).join(", "));
+
+  var msg = "INSTRUMENT CONFIG CHECK\n\n" +
+    (problems.length ? "PROBLEMS:\n  " + problems.join("\n  ") : "All picker values map to a family.") +
+    "\n\n" + notes.join("\n");
+  Logger.log(msg);
+  return msg;
+}
+
+/**
+ * DIAGNOSTIC - reports what is ACTUALLY stored in Members "Band Role"/"Orchestra Role"
+ * right now: families, specific instruments, or legacy spellings. Writes nothing.
+ * Run this before deciding on a migration.
+ */
+function auditMemberRoleValues() {
+  var ss = getSpreadsheet_();
+  var famMap = getInstrumentFamilyMap_(ss);
+  var report = {};
+  ["Band", "Orchestra"].forEach(function (sec) {
+    report[sec] = { asFamily: 0, asInstrument: 0, unmapped: 0, values: {} };
+  });
+  readAllMembers_(ss).forEach(function (m) {
+    ["Band", "Orchestra"].forEach(function (sec) {
+      if ((m.groups || []).indexOf(sec) === -1) return;
+      var role = (m.roles && m.roles[sec]) ? m.roles[sec].toString().trim() : "";
+      if (!role) return;
+      var r = report[sec];
+      r.values[role] = (r.values[role] || 0) + 1;
+      var isFamily = false;
+      for (var f = 0; f < INSTRUMENT_FAMILIES.length; f++) {
+        if (INSTRUMENT_FAMILIES[f].toLowerCase() === role.toLowerCase()) isFamily = true;
+      }
+      if (isFamily) r.asFamily++;
+      else if (normalizeToFamily_(role, famMap)) r.asInstrument++;
+      else r.unmapped++;
+    });
+  });
+  var lines = ["WHAT THE MEMBERS SHEET ACTUALLY STORES FOR BAND/ORCHESTRA ROLE\n"];
+  ["Band", "Orchestra"].forEach(function (sec) {
+    var r = report[sec];
+    lines.push(sec + ":  family=" + r.asFamily + "  instrument=" + r.asInstrument + "  unmapped=" + r.unmapped);
+    Object.keys(r.values).sort().forEach(function (v) {
+      var fam = normalizeToFamily_(v, famMap);
+      lines.push("   " + v + " (" + r.values[v] + ")  ->  " + (fam || "UNMAPPED"));
+    });
+    lines.push("");
+  });
+  var msg = lines.join("\n");
+  Logger.log(msg);
+  return msg;
+}
+
+/**
+ * Migrates Members "Band Role"/"Orchestra Role" to instrument FAMILIES, preserving
+ * the specific instrument in Member Details first so nothing is lost.
+ * Values that cannot be resolved to a family are LEFT ALONE.
+ * @param {boolean} dryRun - true (default) reports only; pass false to write.
+ */
+function migrateMemberRolesToFamilies(dryRun) {
+  requireFullAdmin_();
+  if (dryRun !== false) dryRun = true;
+  var ss = getSpreadsheet_();
+  var famMap = getInstrumentFamilyMap_(ss);
+  var mSheet = ss.getSheetByName(MEMBERS_SHEET);
+  if (!mSheet || mSheet.getLastRow() < 2) return "No members.";
+  var mmap = headerIndexMap_(mSheet);
+  var data = mSheet.getDataRange().getValues();
+
+  var dSheet = ss.getSheetByName(MEMBER_DETAILS_SHEET);
+  var dmap = dSheet ? headerIndexMap_(dSheet) : null;
+  var dData = dSheet ? dSheet.getDataRange().getValues() : null;
+  var instCol = dmap ? dmap["band/orchestra instruments"] : null;
+
+  var planned = [], skipped = [];
+  [["Band", "band role"], ["Orchestra", "orchestra role"]].forEach(function (pair) {
+    var sec = pair[0], header = pair[1];
+    var c = mmap[header];
+    if (c == null) return;
+    for (var i = 1; i < data.length; i++) {
+      var role = data[i][c] ? data[i][c].toString().trim() : "";
+      if (!role) continue;
+      var fam = normalizeToFamily_(role, famMap);
+      if (!fam) { skipped.push(sec + ": " + role + " (no family)"); continue; }
+      if (fam === role) continue;
+      planned.push({ row: i + 1, col: c + 1, name: data[i][mmap["name"]].toString().trim(),
+                     section: sec, from: role, to: fam });
+    }
+  });
+
+  var failed = [];
+  if (!dryRun) {
+    // Drop the instrument dropdowns BEFORE writing - a reject-input rule would
+    // otherwise throw on the first family value and abort the run.
+    var famList = getRepGroupOptions("Band");
+    ["band role", "orchestra role"].forEach(function (hdr) {
+      if (mmap[hdr] != null) { try { setColumnValidation_(mSheet, mmap[hdr] + 1, null); } catch (e) {} }
+    });
+    SpreadsheetApp.flush();
+
+    planned.forEach(function (p) {
+      if (dSheet && instCol != null) {
+        for (var r = 1; r < dData.length; r++) {
+          if (dData[r][0].toString().trim() !== p.name) continue;
+          var existing = dData[r][instCol] ? dData[r][instCol].toString().trim() : "";
+          if (!existing) dSheet.getRange(r + 1, instCol + 1).setValue(p.from);
+          else if (existing.toLowerCase().indexOf(p.from.toLowerCase()) === -1)
+            dSheet.getRange(r + 1, instCol + 1).setValue(existing + ", " + p.from);
+          break;
+        }
+      }
+      // A "Reject input" data-validation rule on the role column makes setValue THROW.
+      // Catch per row so one protected cell cannot abort the whole migration, and
+      // flush immediately so the failure is attributed to the right row.
+      try {
+        mSheet.getRange(p.row, p.col).setValue(p.to);
+        SpreadsheetApp.flush();
+      } catch (e) {
+        failed.push(p.name + " [" + p.section + "] row " + p.row + ": " + e.message);
+      }
+    });
+    // Repoint the dropdowns at families (warn-only) now the values are in place.
+    ["band role", "orchestra role"].forEach(function (hdr) {
+      if (mmap[hdr] != null) { try { setColumnValidation_(mSheet, mmap[hdr] + 1, famList); } catch (e) {} }
+    });
+    SpreadsheetApp.flush();
+  }
+
+  var msg = (dryRun ? "DRY RUN - nothing written.\n\n" : "APPLIED.\n\n") +
+    "Members role -> family (" + planned.length + "):\n" +
+    (planned.length ? planned.map(function (p) {
+      return "  " + p.name + " [" + p.section + "]  " + p.from + " -> " + p.to;
+    }).join("\n") : "  (nothing to change)") +
+    "\n\nLeft alone (" + skipped.length + "):\n" +
+    (skipped.length ? "  " + skipped.join("\n  ") : "  (none)") +
+    (!dryRun && failed.length
+      ? "\n\nFAILED (" + failed.length + ") - almost always a data-validation rule on the\n" +
+        "role column. Run setRoleColumnValidation() then re-run this migration:\n  " +
+        failed.join("\n  ")
+      : "") +
+    (dryRun ? "\n\nRun applyMemberRoleMigration() to apply."
+            : "\n\nRole dropdowns repointed to families (warn-only).");
+  Logger.log(msg);
+  return msg;
+}
+
+/** Editor wrapper - applies the member role migration (no args needed). */
+function applyMemberRoleMigration() { return migrateMemberRolesToFamilies(false); }
+
+/**
+ * DRY RUN - reports how historic Attendance roles would be normalised to instrument
+ * families for Band/Orchestra. Writes nothing. Run from the editor.
+ */
+function previewAttendanceRoleMigration() {
+  var ss = getSpreadsheet_();
+  var famMap = getInstrumentFamilyMap_(ss);
+  var sheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return "No attendance data.";
+  var data = sheet.getDataRange().getValues();
+  var wouldChange = {}, unmapped = {}, untouched = 0;
+  for (var i = 1; i < data.length; i++) {
+    var g = data[i][2].toString().trim();
+    if (g !== "Band" && g !== "Orchestra") continue;
+    var role = data[i][3].toString().trim();
+    if (!role) continue;
+    var fam = normalizeToFamily_(role, famMap);
+    if (!fam) { unmapped[role] = (unmapped[role] || 0) + 1; continue; }
+    if (fam === role) { untouched++; continue; }
+    var k = role + "  ->  " + fam;
+    wouldChange[k] = (wouldChange[k] || 0) + 1;
+  }
+  var msg = "ATTENDANCE ROLE MIGRATION - DRY RUN\n\nWould rewrite:\n" +
+    (Object.keys(wouldChange).length
+      ? Object.keys(wouldChange).sort().map(function (k) { return "  " + k + "   (" + wouldChange[k] + " rows)"; }).join("\n")
+      : "  (nothing)") +
+    "\n\nAlready a family: " + untouched + " rows" +
+    "\n\nUNMAPPED - add these to the Config Instrument/Instrument Family columns first:\n" +
+    (Object.keys(unmapped).length
+      ? Object.keys(unmapped).sort().map(function (k) { return "  " + k + "   (" + unmapped[k] + " rows)"; }).join("\n")
+      : "  (none)");
+  Logger.log(msg);
+  return msg;
+}
+
+/**
+ * Rewrites historic Band/Orchestra Attendance roles to instrument families so old
+ * records group with new ones. Values it cannot map are LEFT ALONE (never guessed).
+ * Run previewAttendanceRoleMigration() first.
+ */
+function migrateAttendanceRolesToFamilies() {
+  requireFullAdmin_();
+  var ss = getSpreadsheet_();
+  var famMap = getInstrumentFamilyMap_(ss);
+  var sheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return { changed: 0 };
+  var data = sheet.getDataRange().getValues();
+  var roleCol = [], changed = 0, skipped = 0;
+  for (var i = 1; i < data.length; i++) {
+    var g = data[i][2].toString().trim();
+    var role = data[i][3].toString().trim();
+    var out = role;
+    if ((g === "Band" || g === "Orchestra") && role) {
+      var fam = normalizeToFamily_(role, famMap);
+      if (fam && fam !== role) { out = fam; changed++; }
+      else if (!fam) skipped++;
+    }
+    roleCol.push([out]);
+  }
+  if (changed > 0) {
+    // Same lesson as the members migration: a reject-input validation rule would
+    // throw on this bulk write. Clear it first (Attendance roles are script-written,
+    // so a dropdown there serves no purpose).
+    try { setColumnValidation_(sheet, 4, null); SpreadsheetApp.flush(); } catch (e) {}
+    sheet.getRange(2, 4, roleCol.length, 1).setValues(roleCol);
+    SpreadsheetApp.flush();
+  }
+  var msg = "Migrated " + changed + " attendance role(s) to families. " +
+            skipped + " left unmapped (add them to Config, then re-run).";
+  Logger.log(msg);
+  return { changed: changed, skipped: skipped, message: msg };
+}
+
+/** Lists every Band/Orchestra role value in use (members AND attendance) with no family. */
+function listUnmappedInstruments() {
+  var ss = getSpreadsheet_();
+  var famMap = getInstrumentFamilyMap_(ss);
+  var missing = {};
+  readAllMembers_(ss).forEach(function (m) {
+    ["Band", "Orchestra"].forEach(function (sec) {
+      var role = (m.roles && m.roles[sec]) ? m.roles[sec].toString().trim() : "";
+      if (role && !normalizeToFamily_(role, famMap)) missing[role] = "members sheet";
+    });
+  });
+  var sheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (sheet && sheet.getLastRow() > 1) {
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      var g = data[i][2].toString().trim();
+      if (g !== "Band" && g !== "Orchestra") continue;
+      var r = data[i][3].toString().trim();
+      if (r && !normalizeToFamily_(r, famMap)) missing[r] = missing[r] ? "both" : "attendance history";
+    }
+  }
+  var list = Object.keys(missing).sort();
+  Logger.log(list.length
+    ? "Unmapped Band/Orchestra roles (add to Config Instrument/Instrument Family):\n" +
+      list.map(function (k) { return "  " + k + "   [" + missing[k] + "]"; }).join("\n")
+    : "All Band/Orchestra roles resolve to a family.");
+  return list;
+}
+
+function getRepGroupOptions(section) {
+  var ss = getSpreadsheet_();
+  if (section === "Choir") {
+    var opts = getConfigOptions();
+    return (opts && opts.choirParts) ? opts.choirParts : [];
+  }
+  var famMap = getInstrumentFamilyMap_(ss);
+  var fams = {};
+  for (var k in famMap) fams[famMap[k]] = true;
+  return Object.keys(fams).sort();
+}
+
+function partKeyFor_(section, role, famMap) {
+  if (!role) return "Unassigned";
+  if (section === "Choir") return role;
+  // Band/Orchestra group by FAMILY. Legacy rows may hold an instrument or an old
+  // spelling; normalise so a member does not appear as their own separate "part".
+  return normalizeToFamily_(role, famMap) || role;
+}
+
+/**
+ * GROUP DASHBOARD v3 — every panel derived from ONE pass over Attendance.
+ * All v2 fields are preserved (additive change), so existing rendering keeps working.
+ */
+
+/**
+ * DIAGNOSTIC — prints the SHAPE of the real dashboard payload (keys, types, array
+ * lengths) with no values, so it can be shared with the design side to validate a
+ * preview mock against the true contract. Values are deliberately omitted: the real
+ * payload contains member names, and the shape is what a mock needs to match.
+ * Run from the editor: dashboardContractReport("All", "month")
+ */
+function dashboardContractReport(section, rangeMode) {
+  var d = getGroupDashboard({ section: section || "All", range: rangeMode || "month" });
+  var out = "getGroupDashboard({section:\"" + (section || "All") + "\", range:\"" + (rangeMode || "month") + "\"}) =>\n" +
+            describeShape_(d, 0);
+  Logger.log(out);
+  return out;
+}
+
+/** Recursively renders a value as a type map (no actual values). */
+function describeShape_(val, indent) {
+  var pad = new Array(indent + 1).join("  ");
+  if (val === null || val === undefined) return String(val) + "   <-- absent/null";
+  if (Object.prototype.toString.call(val) === "[object Array]") {
+    if (!val.length) return "array (EMPTY - no data in this range)";
+    var first = val[0];
+    if (first && typeof first === "object") {
+      return "array[" + val.length + "] of {\n" +
+        Object.keys(first).map(function (k) {
+          return pad + "    " + k + ": " + describeShape_(first[k], indent + 2);
+        }).join("\n") + "\n" + pad + "  }";
+    }
+    return "array[" + val.length + "] of " + typeof first;
+  }
+  if (val instanceof Date) return "Date";
+  if (typeof val === "object") {
+    var keys = Object.keys(val);
+    if (!keys.length) return "{} (empty object)";
+    return "{\n" + keys.map(function (k) {
+      return pad + "  " + k + ": " + describeShape_(val[k], indent + 1);
+    }).join("\n") + "\n" + pad + "}";
+  }
+  return typeof val;
+}
+
+/**
+ * DIAGNOSTIC — sanity-checks the v3 payload for the mistakes that actually bite:
+ * missing keys, panels silently empty, and the null-vs-absent distinction.
+ * Run from the editor after deploying a dashboard change.
+ */
+function validateDashboardPayload(section, rangeMode) {
+  var d = getGroupDashboard({ section: section || "All", range: rangeMode || "month" });
+  var required = ["section","range","sessionsCount","overallRate","absenteeismRate","auRate",
+    "statusCounts","totalRecords","avgPerSession","momentum","apologyStats","trend","nearAU",
+    "probationCount","probationFallingBehind","probationOnTrack",
+    "partBreakdown","sectionComparison","distribution","weekdayStats","sessionTypeStats",
+    "behaviour","topAttenders","minSessionsForTop","membershipHealth","probationPerformance"];
+  var problems = [], empties = [];
+  required.forEach(function (k) {
+    if (!(k in d)) problems.push("MISSING key: " + k);
+    else if (d[k] === null || d[k] === undefined) problems.push("NULL key: " + k);
+  });
+  if (!("comparison" in d)) problems.push("MISSING key: comparison (may be null, but must exist)");
+  [["trend","no sessions in range"],["partBreakdown","no role data on attendance rows"],
+   ["sectionComparison","no attendance at all"],["weekdayStats","no sessions"],
+   ["topAttenders","nobody met the minimum-sessions floor"]].forEach(function (p) {
+    var v = d[p[0]];
+    if (v && v.length === 0) empties.push(p[0] + " is EMPTY - " + p[1]);
+  });
+  var msg = "Dashboard payload check (" + (section || "All") + " / " + (rangeMode || "month") + ")\n" +
+    (problems.length ? "PROBLEMS:\n  " + problems.join("\n  ") : "All required keys present.") +
+    (empties.length ? "\n\nEmpty panels (may be legitimate):\n  " + empties.join("\n  ") : "") +
+    "\n\nQuick numbers: sessions=" + d.sessionsCount + " records=" + d.totalRecords +
+    " rate=" + d.overallRate + "% parts=" + (d.partBreakdown || []).length +
+    " comparison=" + (d.comparison ? "present" : "null (expected for custom/all ranges)");
+  Logger.log(msg);
+  return msg;
+}
+
+/**
+ * DIAGNOSTIC — audits the dashboard NUMBERS for internal consistency.
+ * Every panel is derived from the same records, so a set of arithmetic identities
+ * must hold. If one fails, a panel is miscounting. Run from the editor:
+ *   auditDashboardNumbers("All", "month")
+ */
+
+// =======================================================
+//  EDITOR RUN WRAPPERS
+//  The Apps Script editor's Run button calls the selected function with NO
+//  arguments - there is no way to type parameters into the IDE. So every
+//  diagnostic that takes arguments gets a zero-arg wrapper here. Pick one from
+//  the dropdown and hit Run. (Functions ending in "_" are private and do not
+//  appear in the dropdown at all, which is why these are all public.)
+// =======================================================
+function audit_All_Month()        { return auditDashboardNumbers("All", "month"); }
+function audit_All_Week()         { return auditDashboardNumbers("All", "week"); }
+function audit_Choir_Month()      { return auditDashboardNumbers("Choir", "month"); }
+function audit_Choir_Week()       { return auditDashboardNumbers("Choir", "week"); }
+function audit_Band_Month()       { return auditDashboardNumbers("Band", "month"); }
+function audit_Orchestra_Month()  { return auditDashboardNumbers("Orchestra", "month"); }
+
+function contract_All_Month()     { return dashboardContractReport("All", "month"); }
+function contract_Choir_Month()   { return dashboardContractReport("Choir", "month"); }
+
+function payload_All_Month()      { return validateDashboardPayload("All", "month"); }
+function payload_Choir_Week()     { return validateDashboardPayload("Choir", "week"); }
+
+/** Runs the whole audit sweep across sections and ranges in one go. */
+function auditEverything() {
+  var combos = [["All","month"],["All","week"],["Choir","month"],["Choir","week"],
+                ["Band","month"],["Orchestra","month"]];
+  var out = [];
+  combos.forEach(function (c) {
+    try { out.push(auditDashboardNumbers(c[0], c[1])); }
+    catch (e) { out.push("ERROR " + c[0] + "/" + c[1] + ": " + e.message); }
+  });
+  var joined = out.join("\n\n" + new Array(70).join("=") + "\n\n");
+  Logger.log(joined);
+  return joined;
+}
+
+function auditDashboardNumbers(section, rangeMode) {
+  section = section || "All"; rangeMode = rangeMode || "month";
+  var d = getGroupDashboard({ section: section, range: rangeMode });
+  var pass = [], fail = [], notes = [];
+  function check(label, ok, detail) { (ok ? pass : fail).push(label + (detail ? "  [" + detail + "]" : "")); }
+  function sum(arr, key) { return (arr || []).reduce(function (s, x) { return s + (x[key] || 0); }, 0); }
+
+  var sc = d.statusCounts || {};
+  var attended = (sc["Present"]||0) + (sc["Late Excused"]||0) + (sc["Late Unexcused"]||0);
+  var absent = (sc["Absent Excused"]||0) + (sc["Absent Unexcused"]||0);
+
+  // 1. Every record has exactly one status
+  check("statusCounts sum = totalRecords", attended + absent === d.totalRecords,
+        attended + absent + " vs " + d.totalRecords);
+
+  // 2. Attended and absent partition all records, so the rates must complete each other
+  check("overallRate + absenteeismRate = 100", Math.abs((d.overallRate + d.absenteeismRate) - 100) <= 1,
+        d.overallRate + " + " + d.absenteeismRate);
+
+  // 3. Unexcused absence is a subset of all absence
+  check("auRate <= absenteeismRate", d.auRate <= d.absenteeismRate, d.auRate + " <= " + d.absenteeismRate);
+
+  // 4. One trend point per session
+  check("trend length = sessionsCount", (d.trend||[]).length === d.sessionsCount,
+        (d.trend||[]).length + " vs " + d.sessionsCount);
+
+  // 5. Each trend point internally balances, and they sum to the whole
+  var badPoint = null;
+  (d.trend||[]).forEach(function (t) {
+    if (t.present + t.late + t.ae + t.au !== t.total) badPoint = badPoint || (t.date + " parts!=total");
+    if (t.attended !== t.present + t.late) badPoint = badPoint || (t.date + " attended!=present+late");
+  });
+  check("every trend point balances", !badPoint, badPoint || "");
+  check("sum(trend.total) = totalRecords", sum(d.trend, "total") === d.totalRecords,
+        sum(d.trend, "total") + " vs " + d.totalRecords);
+
+  // 6. Averages are consistent with the totals they came from
+  var tol = Math.max(1, d.sessionsCount * 0.1);
+  check("avgPerSession.attended x sessions = attended",
+        Math.abs(((d.avgPerSession||{}).attended || 0) * d.sessionsCount - attended) <= tol,
+        ((d.avgPerSession||{}).attended||0) + " x " + d.sessionsCount + " vs " + attended);
+
+  // 7. Each record lands in exactly one part bucket
+  check("sum(partBreakdown.total) = totalRecords", sum(d.partBreakdown, "total") === d.totalRecords,
+        sum(d.partBreakdown, "total") + " vs " + d.totalRecords);
+
+  // 8. Section comparison covers ALL sections, so it only ties out on the All view
+  if (section === "All") {
+    check("sum(sectionComparison.total) = totalRecords", sum(d.sectionComparison, "total") === d.totalRecords,
+          sum(d.sectionComparison, "total") + " vs " + d.totalRecords);
+  } else {
+    notes.push("sectionComparison intentionally covers all sections, so it exceeds this section's totals.");
+  }
+
+  // 9. Weekday and session-type splits each re-partition the same records
+  check("sum(weekdayStats.total) = totalRecords", sum(d.weekdayStats, "total") === d.totalRecords,
+        sum(d.weekdayStats, "total") + " vs " + d.totalRecords);
+  check("sum(sessionTypeStats.total) = totalRecords", sum(d.sessionTypeStats, "total") === d.totalRecords,
+        sum(d.sessionTypeStats, "total") + " vs " + d.totalRecords);
+
+  // 10. Distribution and behaviour both classify every distinct member exactly once
+  var dist = d.distribution || { buckets: [] };
+  var bucketSum = sum(dist.buckets, "count");
+  check("distribution buckets = memberCount", bucketSum === dist.memberCount,
+        bucketSum + " vs " + dist.memberCount);
+  var b = d.behaviour || {};
+  var behaviourSum = (b.chronicLateCount||0) + (b.chronicAbsentCount||0) + (b.mixed||0) + (b.occasional||0) + (b.spotless||0);
+  check("behaviour categories = memberCount", behaviourSum === dist.memberCount,
+        behaviourSum + " vs " + dist.memberCount);
+
+  // 11. Top attenders respect the floor and are ordered
+  var topOk = true, prev = 101;
+  (d.topAttenders||[]).forEach(function (t) {
+    if (t.total < d.minSessionsForTop) topOk = false;
+    if (t.rate > prev) topOk = false;
+    prev = t.rate;
+  });
+  check("topAttenders respect floor & ordering", topOk, "floor=" + d.minSessionsForTop);
+
+  // 12. Apology compliance is the excused share of absences
+  var expectedCompliance = absent > 0 ? Math.round(((sc["Absent Excused"]||0) / absent) * 100) : 0;
+  check("apology complianceRate = AE/(AE+AU)", (d.apologyStats||{}).complianceRate === expectedCompliance,
+        (d.apologyStats||{}).complianceRate + " vs " + expectedCompliance);
+
+  // 13. Period-over-period delta matches its own inputs
+  if (d.comparison) {
+    check("comparison.rateDelta = overall - previous",
+          d.comparison.rateDelta === d.overallRate - d.comparison.previousRate,
+          d.comparison.rateDelta + " vs " + (d.overallRate - d.comparison.previousRate));
+  } else {
+    notes.push("comparison is null - expected only for 'custom' and 'all' ranges (this run: " + rangeMode + ").");
+  }
+
+  // 14. Probation outcomes partition
+  var pp = (d.probationPerformance||{}).inRange || {};
+  check("probation total = passed+conditional+failed",
+        (pp.passed||0) + (pp.conditional||0) + (pp.failed||0) === (pp.total||0),
+        (pp.passed||0) + "+" + (pp.conditional||0) + "+" + (pp.failed||0) + " vs " + (pp.total||0));
+
+  // --- Red flags that are not arithmetic errors but usually mean bad input data ---
+  var flags = [];
+  var unassigned = (d.partBreakdown||[]).filter(function (p) { return p.part === "Unassigned"; });
+  if (unassigned.length && sum(unassigned, "total") > d.totalRecords * 0.2)
+    flags.push("Over 20% of records have no role -> the Role column on Attendance is often blank.");
+  var rawInstruments = (d.partBreakdown||[]).filter(function (p) {
+    return p.section !== "Choir" && ["Brass","Strings","Winds","Voice","Percussion","Woodwind"].indexOf(p.part) === -1 && p.part !== "Unassigned";
+  });
+  if (rawInstruments.length)
+    flags.push("Unmapped instruments in partBreakdown (" + rawInstruments.map(function(p){return p.part;}).join(", ") +
+               ") -> add them to Config Instrument/Instrument Family, then run listUnmappedInstruments().");
+  if ((d.sessionTypeStats||[]).length === 1 && d.sessionTypeStats[0].type === "Practice")
+    flags.push("No Meeting sessions detected - fine if none were held, otherwise the Meetings groups may not match the recorded session groups.");
+  if (!(d.probationPerformance||{}).byMonth || !d.probationPerformance.byMonth.length)
+    flags.push("Probation History is empty - run backfillProbationHistory() once.");
+  if (dist.memberCount === 0) flags.push("No members with records in range - check the date filter.");
+
+  var msg = "DASHBOARD NUMBER AUDIT  (" + section + " / " + rangeMode + ")\n" +
+    "sessions=" + d.sessionsCount + "  records=" + d.totalRecords + "  rate=" + d.overallRate + "%  members=" + dist.memberCount + "\n\n" +
+    "PASSED (" + pass.length + "):\n  " + pass.join("\n  ") + "\n\n" +
+    (fail.length ? "FAILED (" + fail.length + "):\n  " + fail.join("\n  ") + "\n\n" : "FAILED: none\n\n") +
+    (flags.length ? "DATA RED FLAGS:\n  " + flags.join("\n  ") + "\n\n" : "") +
+    (notes.length ? "NOTES:\n  " + notes.join("\n  ") : "");
+  Logger.log(msg);
+  return msg;
+}
+
 function getGroupDashboard(opts) {
   opts = opts || {};
   var ss = getSpreadsheet_();
@@ -1727,123 +2491,360 @@ function getGroupDashboard(opts) {
   if (access.level < ROLE_LEVELS.admin) section = access.section; // forced scope
   var range = resolveDateRange_(opts.range, opts.start, opts.end);
 
-  var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  // Period-over-period only makes sense for a rolling window, not "all" or a custom span.
+  var prevRange = (opts.range === "custom" || opts.range === "all") ? null : previousPeriod_(range);
 
-  // --- Attendance aggregate + per-date trend ---
-  var statusCounts = {}, trend = {}, totalRecords = 0;
-  if (attSheet) {
+  var famMap = getInstrumentFamilyMap_(ss);
+
+  // Meeting lookup (date|sortedGroups) so sessions can be typed Practice vs Meeting.
+  var meetingKeys = {};
+  var mSheet = ss.getSheetByName(MEETINGS_SHEET);
+  if (mSheet && mSheet.getLastRow() > 1) {
+    var md = mSheet.getDataRange().getValues();
+    for (var mi = 1; mi < md.length; mi++) {
+      var mg = md[mi][2].toString().split(",").map(function (x) { return x.trim(); })
+                 .filter(Boolean).sort().join(",");
+      meetingKeys[formatSheetDate_(md[mi][0]) + "|" + mg] = true;
+    }
+  }
+
+  // ---------- SINGLE PASS ----------
+  var statusCounts = {}, totalRecords = 0;
+  var byDate = {}, byDateKey = {}, byMember = {}, byPart = {}, bySection = {};
+  var prevAgg = dashBucket_(), prevDates = {};
+  var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (attSheet && attSheet.getLastRow() > 1) {
     var data = attSheet.getDataRange().getValues();
     for (var i = 1; i < data.length; i++) {
       var ds = formatSheetDate_(data[i][0]);
-      if (ds < range.start || ds > range.end) continue;
+      var inCur = (ds >= range.start && ds <= range.end);
+      var inPrev = prevRange && ds >= prevRange.start && ds <= prevRange.end;
+      if (!inCur && !inPrev) continue;
+
+      var nm = data[i][1].toString();
       var g = data[i][2].toString();
-      if (section !== "All" && g !== section) continue;
+      var role = data[i][3] ? data[i][3].toString().trim() : "";
       var st = data[i][4].toString();
+      var sk = data[i][7] ? data[i][7].toString() : g;
+
+      // Section comparison covers ALL sections regardless of the current filter.
+      if (inCur) {
+        if (!bySection[g]) bySection[g] = dashBucket_();
+        dashBump_(bySection[g], st);
+      }
+
+      if (section !== "All" && g !== section) continue;
+
+      if (inPrev) { dashBump_(prevAgg, st); prevDates[ds] = 1; }
+      if (!inCur) continue;
+
       statusCounts[st] = (statusCounts[st] || 0) + 1;
       totalRecords++;
-      if (!trend[ds]) trend[ds] = { attended: 0, total: 0, present: 0, late: 0, ae: 0, au: 0 };
-      trend[ds].total++;
-      if (st === "Present" || st === "Late Excused" || st === "Late Unexcused") trend[ds].attended++;
-      if (st === "Present") trend[ds].present++;
-      else if (st === "Late Excused" || st === "Late Unexcused") trend[ds].late++;
-      else if (st === "Absent Excused") trend[ds].ae++;
-      else if (st === "Absent Unexcused") trend[ds].au++;
+
+      if (!byDate[ds]) byDate[ds] = dashBucket_();
+      dashBump_(byDate[ds], st);
+
+      var dk = ds + "|" + sk.split(",").map(function (x) { return x.trim(); }).filter(Boolean).sort().join(",");
+      if (!byDateKey[dk]) byDateKey[dk] = { date: ds, bucket: dashBucket_() };
+      dashBump_(byDateKey[dk].bucket, st);
+
+      if (!byMember[nm]) byMember[nm] = dashBucket_();
+      dashBump_(byMember[nm], st);
+
+      var pk = partKeyFor_(g, role, famMap);
+      if (!byPart[g]) byPart[g] = {};
+      if (!byPart[g][pk]) byPart[g][pk] = dashBucket_();
+      dashBump_(byPart[g][pk], st);
     }
   }
-  var attendedTotal = (statusCounts["Present"]||0) + (statusCounts["Late Excused"]||0) + (statusCounts["Late Unexcused"]||0);
-  var absentTotal = (statusCounts["Absent Excused"]||0) + (statusCounts["Absent Unexcused"]||0);
+
+  // ---------- v2 fields (unchanged contract) ----------
+  var attendedTotal = (statusCounts["Present"] || 0) + (statusCounts["Late Excused"] || 0) + (statusCounts["Late Unexcused"] || 0);
+  var absentTotal = (statusCounts["Absent Excused"] || 0) + (statusCounts["Absent Unexcused"] || 0);
   var overallRate = totalRecords > 0 ? Math.round((attendedTotal / totalRecords) * 100) : 0;
   var absenteeismRate = totalRecords > 0 ? Math.round((absentTotal / totalRecords) * 100) : 0;
-  var auRate = totalRecords > 0 ? Math.round(((statusCounts["Absent Unexcused"]||0) / totalRecords) * 100) : 0;
+  var auRate = totalRecords > 0 ? Math.round(((statusCounts["Absent Unexcused"] || 0) / totalRecords) * 100) : 0;
 
-  // Trend points enriched for hover tooltips: rate + headcounts per session date
-  var trendArr = Object.keys(trend).sort().map(function(d) {
-    var t = trend[d];
-    return { date: d, rate: t.total > 0 ? Math.round((t.attended / t.total) * 100) : 0,
-             attended: t.attended, total: t.total,
+  var trendArr = Object.keys(byDate).sort().map(function (d) {
+    var t = byDate[d];
+    return { date: d, rate: dashRate_(t), attended: t.attended, total: t.total,
              present: t.present, late: t.late, ae: t.ae, au: t.au };
   });
-
-  // --- Per-session AVERAGES (headcounts) — "on an average session, N attended" ---
-  var sessionsCount = trendArr.length; // one entry per recorded session date
+  var sessionsCount = trendArr.length;
   function avg(x) { return sessionsCount > 0 ? Math.round((x / sessionsCount) * 10) / 10 : 0; }
   var avgPerSession = {
-    total: avg(totalRecords),
-    attended: avg(attendedTotal),
-    present: avg(statusCounts["Present"]||0),
-    late: avg((statusCounts["Late Excused"]||0) + (statusCounts["Late Unexcused"]||0)),
-    absentExcused: avg(statusCounts["Absent Excused"]||0),
-    absentUnexcused: avg(statusCounts["Absent Unexcused"]||0)
+    total: avg(totalRecords), attended: avg(attendedTotal),
+    present: avg(statusCounts["Present"] || 0),
+    late: avg((statusCounts["Late Excused"] || 0) + (statusCounts["Late Unexcused"] || 0)),
+    absentExcused: avg(statusCounts["Absent Excused"] || 0),
+    absentUnexcused: avg(statusCounts["Absent Unexcused"] || 0)
   };
-
-  // --- Momentum: is attendance improving or declining across the range? ---
-  // Compare avg rate of the first half of sessions vs the second half.
   var momentum = { firstHalfRate: 0, secondHalfRate: 0, delta: 0, direction: "flat" };
   if (trendArr.length >= 2) {
     var mid = Math.floor(trendArr.length / 2);
     var fh = trendArr.slice(0, mid), sh = trendArr.slice(mid);
-    var fAvg = Math.round(fh.reduce(function(s,t){return s+t.rate;},0) / fh.length);
-    var sAvg = Math.round(sh.reduce(function(s,t){return s+t.rate;},0) / sh.length);
-    momentum.firstHalfRate = fAvg;
-    momentum.secondHalfRate = sAvg;
-    momentum.delta = sAvg - fAvg;
-    momentum.direction = momentum.delta > 2 ? "improving" : (momentum.delta < -2 ? "declining" : "flat");
+    var fAvg = Math.round(fh.reduce(function (s, t) { return s + t.rate; }, 0) / fh.length);
+    var sAvg = Math.round(sh.reduce(function (s, t) { return s + t.rate; }, 0) / sh.length);
+    momentum = { firstHalfRate: fAvg, secondHalfRate: sAvg, delta: sAvg - fAvg,
+                 direction: (sAvg - fAvg) > 2 ? "improving" : ((sAvg - fAvg) < -2 ? "declining" : "flat") };
   }
 
-  // --- Apology analytics for the range (real apologies only, never requests) ---
+  // Apologies (one pass) + compliance
   var apologyStats = { total: 0, absentType: 0, lateType: 0, onTime: 0, lateSubmission: 0,
-                       approved: 0, pending: 0, rejected: 0 };
+                       approved: 0, pending: 0, rejected: 0, notNeeded: 0, complianceRate: 0 };
   var apSheet = ss.getSheetByName(APOLOGIES_SHEET);
-  if (apSheet) {
+  if (apSheet && apSheet.getLastRow() > 1) {
     var ad = apSheet.getDataRange().getValues();
     for (var a = 1; a < ad.length; a++) {
-      var aType = ad[a][3].toString();
-      if (isRequestType_(aType)) continue;
+      if (isRequestType_(ad[a][3])) continue;
       var aDate = formatSheetDate_(ad[a][0]);
       if (aDate < range.start || aDate > range.end) continue;
-      // Section filter via Session Groups (col 12); empty groups = counts for any section
       if (section !== "All") {
-        var ag = ad[a][11] ? ad[a][11].toString().split(",").map(function(x){return x.trim();}).filter(Boolean) : [];
+        var ag = ad[a][11] ? ad[a][11].toString().split(",").map(function (x) { return x.trim(); }).filter(Boolean) : [];
         if (ag.length > 0 && ag.indexOf(section) === -1) continue;
       }
       apologyStats.total++;
-      if (/late/i.test(aType)) apologyStats.lateType++; else apologyStats.absentType++;
+      if (/late/i.test(ad[a][3].toString())) apologyStats.lateType++; else apologyStats.absentType++;
       if (ad[a][7].toString() === "Yes") apologyStats.onTime++; else apologyStats.lateSubmission++;
       var aStatus = ad[a][8].toString();
       if (aStatus === "Approved" || aStatus === "Applied") apologyStats.approved++;
       else if (aStatus === "Pending") apologyStats.pending++;
       else if (aStatus === "Rejected" || aStatus === "Revoked") apologyStats.rejected++;
+      else if (aStatus === "Not needed") apologyStats.notNeeded++;
     }
   }
+  // Compliance = share of absences that were EXCUSED (i.e. communicated in advance).
+  apologyStats.complianceRate = absentTotal > 0
+    ? Math.round(((statusCounts["Absent Excused"] || 0) / absentTotal) * 100) : 0;
 
-  // --- Near 3-consecutive-AU early warning (ACTIVE members only) ---
   var nearAU = getConsecutiveAuWarnings_(ss, section, 2);
-
-  // --- Probation summary: CURRENT probation members in this section.
-  //     (Probation state history isn't stored, so this is as-of-now, not range-based.)
   var probAll = getProbationDashboard();
-  var probInSection = probAll.filter(function(p) {
+  var probInSection = probAll.filter(function (p) {
     return section === "All" || (p.groups || []).indexOf(section) !== -1;
   });
-  var probFallingBehind = probInSection.filter(function(p) { return !p.onTrack; });
+  var probFallingBehind = probInSection.filter(function (p) { return !p.onTrack; });
+
+  // ---------- v3 PANELS ----------
+
+  // 1. Per-part / instrument-family breakdown (+ late-vs-absent skew per part)
+  var partBreakdown = [];
+  Object.keys(byPart).forEach(function (g) {
+    Object.keys(byPart[g]).forEach(function (pk) {
+      var b = byPart[g][pk];
+      var miss = b.late + b.ae + b.au;
+      partBreakdown.push({
+        section: g, part: pk, rate: dashRate_(b), total: b.total, attended: b.attended,
+        present: b.present, late: b.late, ae: b.ae, au: b.au,
+        lateShare: miss > 0 ? Math.round((b.late / miss) * 100) : 0,
+        // Leaning requires a CLEAR skew (2x), not a bare majority: 8 late vs 10
+        // absences is an even mix, not an absence problem.
+        skew: miss === 0 ? "clean"
+              : ((b.ae + b.au) >= 2 * b.late ? "absence-leaning"
+                 : (b.late >= 2 * (b.ae + b.au) ? "late-leaning" : "even"))
+      });
+    });
+  });
+  partBreakdown.sort(function (x, y) { return x.rate - y.rate; }); // worst first — that's the actionable end
+
+  // 2. Section comparison (always all three, for the "All" view)
+  var sectionComparison = Object.keys(bySection).map(function (g) {
+    var b = bySection[g];
+    return { section: g, rate: dashRate_(b), total: b.total, attended: b.attended,
+             present: b.present, late: b.late, ae: b.ae, au: b.au };
+  }).sort(function (x, y) { return y.rate - x.rate; });
+
+  // 3. Attendance distribution — the shape the average hides
+  var buckets = [
+    { label: "0-25%", min: 0, max: 25, count: 0 },
+    { label: "26-50%", min: 26, max: 50, count: 0 },
+    { label: "51-75%", min: 51, max: 75, count: 0 },
+    { label: "76-100%", min: 76, max: 100, count: 0 }
+  ];
+  var memberRates = [];
+  Object.keys(byMember).forEach(function (n) {
+    var r = dashRate_(byMember[n]);
+    memberRates.push({ name: n, rate: r, attended: byMember[n].attended, total: byMember[n].total });
+    for (var bi = 0; bi < buckets.length; bi++) {
+      if (r >= buckets[bi].min && r <= buckets[bi].max) { buckets[bi].count++; break; }
+    }
+  });
+  var distribution = { buckets: buckets, memberCount: memberRates.length };
+
+  // 4. Day-of-week + session type
+  var DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  var byWeekday = {}, byType = { Practice: dashBucket_(), Meeting: dashBucket_() };
+  Object.keys(byDate).forEach(function (d) {
+    var wd = DAY[new Date(d + "T00:00:00").getDay()];
+    if (!byWeekday[wd]) byWeekday[wd] = dashBucket_();
+    var b = byDate[d];
+    ["present", "late", "ae", "au", "total", "attended"].forEach(function (k) { byWeekday[wd][k] += b[k]; });
+  });
+  Object.keys(byDateKey).forEach(function (dk) {
+    var isMeeting = !!meetingKeys[dk];
+    var target = isMeeting ? byType.Meeting : byType.Practice;
+    var b = byDateKey[dk].bucket;
+    ["present", "late", "ae", "au", "total", "attended"].forEach(function (k) { target[k] += b[k]; });
+  });
+  var weekdayStats = DAY.filter(function (d) { return byWeekday[d]; }).map(function (d) {
+    return { day: d, rate: dashRate_(byWeekday[d]), total: byWeekday[d].total };
+  });
+  var sessionTypeStats = ["Practice", "Meeting"].filter(function (t) { return byType[t].total > 0; })
+    .map(function (t) { return { type: t, rate: dashRate_(byType[t]), total: byType[t].total }; });
+
+  // 5. Late-vs-absent behavioural split.
+  // "Chronic" requires a real pattern: at least CHRONIC_MIN incidents of the
+  // dominant kind. Without this floor a single lateness would label someone who
+  // attended everything as chronically late, which the data does not support.
+  // Floor scales with the range: judging "chronic" over a month should need more
+  // incidents than over a week. 8 sessions -> 3, 4 sessions -> 2.
+  var CHRONIC_MIN = Math.max(2, Math.ceil(sessionsCount / 3));
+  var behaviour = { chronicLate: [], chronicAbsent: [], mixed: 0, spotless: 0, occasional: 0 };
+  Object.keys(byMember).forEach(function (n) {
+    var b = byMember[n];
+    var absent = b.ae + b.au;
+    if (b.late === 0 && absent === 0) { behaviour.spotless++; return; }
+    var dominant = Math.max(b.late, absent);
+    if (dominant < CHRONIC_MIN) { behaviour.occasional++; return; }
+    if (b.late > absent) behaviour.chronicLate.push({ name: n, late: b.late, absent: absent, rate: dashRate_(b) });
+    else if (absent > b.late) behaviour.chronicAbsent.push({ name: n, late: b.late, absent: absent, rate: dashRate_(b) });
+    else behaviour.mixed++;
+  });
+  behaviour.chronicMin = CHRONIC_MIN;
+  behaviour.chronicLate.sort(function (x, y) { return y.late - x.late; });
+  behaviour.chronicAbsent.sort(function (x, y) { return y.absent - x.absent; });
+  behaviour.chronicLateCount = behaviour.chronicLate.length;
+  behaviour.chronicAbsentCount = behaviour.chronicAbsent.length;
+  behaviour.chronicLate = behaviour.chronicLate.slice(0, 10);
+  behaviour.chronicAbsent = behaviour.chronicAbsent.slice(0, 10);
+
+  // 6. Top consistent attenders — floor prevents a 1-of-1 member topping the list
+  var minSessions = Math.max(2, Math.ceil(sessionsCount / 2));
+  var topAttenders = memberRates.filter(function (m) { return m.total >= minSessions; })
+    .sort(function (x, y) { return (y.rate - x.rate) || (y.attended - x.attended) || x.name.localeCompare(y.name); })
+    .slice(0, 5);
+
+  // 7. Membership health
+  var health = { active: 0, hiatus: 0, rejoining: 0, inactive: 0, alumnus: 0,
+                 joinedInRange: 0, removedInRange: 0 };
+  var detailMap = {};
+  var mdSheet = ss.getSheetByName(MEMBER_DETAILS_SHEET);
+  if (mdSheet && mdSheet.getLastRow() > 1) {
+    var dmap = headerIndexMap_(mdSheet);
+    var dd = mdSheet.getDataRange().getValues();
+    for (var r2 = 1; r2 < dd.length; r2++) {
+      detailMap[dd[r2][0].toString().trim()] = {
+        status: dmap["member status"] != null ? dd[r2][dmap["member status"]].toString().trim() : "",
+        completedAt: dmap["completed at"] != null ? formatSheetDate_(dd[r2][dmap["completed at"]]) : ""
+      };
+    }
+  }
+  var removedOnMap = {};
+  var memSheet = ss.getSheetByName(MEMBERS_SHEET);
+  if (memSheet && memSheet.getLastRow() > 1) {
+    var mmap = headerIndexMap_(memSheet);
+    if (mmap["removed on"] != null && mmap["name"] != null) {
+      var mvals = memSheet.getDataRange().getValues();
+      for (var r3 = 1; r3 < mvals.length; r3++) {
+        var rv = mvals[r3][mmap["removed on"]];
+        if (rv) removedOnMap[mvals[r3][mmap["name"]].toString().trim()] = formatSheetDate_(rv);
+      }
+    }
+  }
+  readAllMembers_(ss).forEach(function (m) {
+    if (section !== "All" && (m.groups || []).indexOf(section) === -1) return;
+    var d = detailMap[m.name] || {};
+    if (m.active) {
+      if (d.status === "Rejoining") health.rejoining++; else health.active++;
+    } else if (d.status === "On Hiatus") health.hiatus++;
+    else if (d.status === "Alumnus") health.alumnus++;
+    else health.inactive++;
+    if (d.completedAt && d.completedAt >= range.start && d.completedAt <= range.end) health.joinedInRange++;
+    var ro = removedOnMap[m.name];
+    if (ro && ro >= range.start && ro <= range.end) health.removedInRange++;
+  });
+
+  // 8. Probation performance (from the Probation History event log)
+  var probPerf = { inRange: { passed: 0, conditional: 0, failed: 0, total: 0, passRate: 0 }, byMonth: [] };
+  var phSheet = ss.getSheetByName(PROBATION_HISTORY_SHEET);
+  if (phSheet && phSheet.getLastRow() > 1) {
+    var ph = phSheet.getDataRange().getValues();
+    var phh = ph[0].map(function (x) { return x.toString().trim().toLowerCase(); });
+    var cName = phh.indexOf("name"), cGroups = phh.indexOf("groups"),
+        cEnd = phh.indexOf("probation end"), cOut = phh.indexOf("outcome");
+    var months = {};
+    for (var p = 1; p < ph.length; p++) {
+      var gstr = cGroups !== -1 ? ph[p][cGroups].toString() : "";
+      if (section !== "All" && gstr.indexOf(section) === -1) continue;
+      var endD = cEnd !== -1 ? formatSheetDate_(ph[p][cEnd]) : "";
+      var out = cOut !== -1 ? ph[p][cOut].toString() : "";
+      if (!out) continue;
+      var mkey = endD ? endD.substring(0, 7) : "";
+      if (mkey) {
+        if (!months[mkey]) months[mkey] = { month: mkey, passed: 0, conditional: 0, failed: 0 };
+        if (out === "Passed") months[mkey].passed++;
+        else if (out === "Conditional") months[mkey].conditional++;
+        else if (out === "Failed") months[mkey].failed++;
+      }
+      if (endD && endD >= range.start && endD <= range.end) {
+        probPerf.inRange.total++;
+        if (out === "Passed") probPerf.inRange.passed++;
+        else if (out === "Conditional") probPerf.inRange.conditional++;
+        else if (out === "Failed") probPerf.inRange.failed++;
+      }
+    }
+    if (probPerf.inRange.total > 0) {
+      probPerf.inRange.passRate = Math.round(((probPerf.inRange.passed + probPerf.inRange.conditional) / probPerf.inRange.total) * 100);
+    }
+    probPerf.byMonth = Object.keys(months).sort().map(function (k) {
+      var m2 = months[k], tot = m2.passed + m2.conditional + m2.failed;
+      m2.total = tot;
+      m2.passRate = tot > 0 ? Math.round(((m2.passed + m2.conditional) / tot) * 100) : 0;
+      return m2;
+    });
+  }
+
+  // 9. Period-over-period
+  var comparison = null;
+  if (prevRange) {
+    var prevSessions = Object.keys(prevDates).length;
+    var prevRate = dashRate_(prevAgg);
+    comparison = {
+      previousRange: prevRange,
+      previousRate: prevRate,
+      rateDelta: overallRate - prevRate,
+      previousSessions: prevSessions,
+      sessionsDelta: sessionsCount - prevSessions,
+      previousAvgAttended: prevSessions > 0 ? Math.round((prevAgg.attended / prevSessions) * 10) / 10 : 0,
+      avgAttendedDelta: 0,
+      previousAuRate: prevAgg.total > 0 ? Math.round((prevAgg.au / prevAgg.total) * 100) : 0,
+      direction: (overallRate - prevRate) > 2 ? "improving" : ((overallRate - prevRate) < -2 ? "declining" : "flat")
+    };
+    comparison.avgAttendedDelta = Math.round((avgPerSession.attended - comparison.previousAvgAttended) * 10) / 10;
+    comparison.auRateDelta = auRate - comparison.previousAuRate;
+  }
 
   return {
-    section: section,
-    range: range,
-    sessionsCount: sessionsCount,
-    overallRate: overallRate,
-    absenteeismRate: absenteeismRate,
-    auRate: auRate,
-    statusCounts: statusCounts,
-    totalRecords: totalRecords,
-    avgPerSession: avgPerSession,
-    momentum: momentum,
-    apologyStats: apologyStats,
-    trend: trendArr,
-    nearAU: nearAU,
+    // --- v2 contract ---
+    section: section, range: range, sessionsCount: sessionsCount,
+    overallRate: overallRate, absenteeismRate: absenteeismRate, auRate: auRate,
+    statusCounts: statusCounts, totalRecords: totalRecords,
+    avgPerSession: avgPerSession, momentum: momentum, apologyStats: apologyStats,
+    trend: trendArr, nearAU: nearAU,
     probationCount: probInSection.length,
     probationFallingBehind: probFallingBehind,
-    probationOnTrack: probInSection.length - probFallingBehind.length
+    probationOnTrack: probInSection.length - probFallingBehind.length,
+    // --- v3 additions ---
+    partBreakdown: partBreakdown,
+    sectionComparison: sectionComparison,
+    distribution: distribution,
+    weekdayStats: weekdayStats,
+    sessionTypeStats: sessionTypeStats,
+    behaviour: behaviour,
+    topAttenders: topAttenders,
+    minSessionsForTop: minSessions,
+    membershipHealth: health,
+    probationPerformance: probPerf,
+    comparison: comparison
   };
 }
 
@@ -1992,10 +2993,22 @@ function exportSessionsListCSV(filters) {
 // -------------------------------------------------------
 //  EXPORT
 // -------------------------------------------------------
-function exportDateCSV(dateStr, group) { return arrayToCSV_(buildExportRows_(dateStr, dateStr, group)); }
-function exportDatePDF(dateStr, group) { return buildPrintHTML_("Attendance Report — " + dateStr, buildExportRows_(dateStr, dateStr, group), group); }
-function exportDateRangeCSV(s, e, group) { return arrayToCSV_(buildExportRows_(s, e, group)); }
-function exportDateRangePDF(s, e, group) { return buildPrintHTML_("Attendance Report — " + s + " to " + e, buildExportRows_(s, e, group), group); }
+// These dump org-wide attendance, so they need the same gate as the views they
+// mirror. Scoped roles are limited to their own section.
+function exportGuard_(group) {
+  var a = getAccess_(getSpreadsheet_());
+  if (a.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
+  if (a.level < ROLE_LEVELS.admin) {
+    if (group === "All" || (a.allowedSections || []).indexOf(group) === -1) {
+      throw new Error("You can only export " + (a.allowedSections || []).join(", ") + ".");
+    }
+  }
+  return a;
+}
+function exportDateCSV(dateStr, group) { exportGuard_(group); return arrayToCSV_(buildExportRows_(dateStr, dateStr, group)); }
+function exportDatePDF(dateStr, group) { exportGuard_(group); return buildPrintHTML_("Attendance Report — " + dateStr, buildExportRows_(dateStr, dateStr, group), group); }
+function exportDateRangeCSV(s, e, group) { exportGuard_(group); return arrayToCSV_(buildExportRows_(s, e, group)); }
+function exportDateRangePDF(s, e, group) { exportGuard_(group); return buildPrintHTML_("Attendance Report — " + s + " to " + e, buildExportRows_(s, e, group), group); }
 
 function buildExportRows_(startDate, endDate, group) {
   var ss=getSpreadsheet_(),all=readAllMembers_(ss),mm={};
@@ -2024,13 +3037,17 @@ function exportProbationPDF() {
 }
 
 function exportScoreboardCSV(group) {
-  var sb=getScoreboard(group),rows=[["Rank","Name","Groups","Total Points","Attendance Pts","Consec. Penalty","Offenses","Offense Pts","Days"]];
-  for(var i=0;i<sb.length;i++){var s=sb[i];rows.push([i+1,s.name,s.groups.join(", "),s.totalPoints,s.attPoints,s.consecPenalty,s.offenseCount,s.offensePts,s.totalDays]);}
+  exportGuard_(group);
+  // "Consec. Penalty" was removed: 3-AU penalties are recorded as offenses now, so
+  // that column was always 0 and double-implied a deduction that lives in Offense Pts.
+  var sb=getScoreboard(group),rows=[["Rank","Name","Groups","Total Points","Attendance Pts","Offenses","Offense Pts","Days"]];
+  for(var i=0;i<sb.length;i++){var s=sb[i];rows.push([i+1,s.name,s.groups.join(", "),s.totalPoints,s.attPoints,s.offenseCount,s.offensePts,s.totalDays]);}
   return arrayToCSV_(rows);
 }
 function exportScoreboardPDF(group) {
-  var sb=getScoreboard(group),rows=[["Rank","Name","Groups","Total Points","Attendance Pts","Consec. Penalty","Offenses","Offense Pts","Days"]];
-  for(var i=0;i<sb.length;i++){var s=sb[i];rows.push([i+1,s.name,s.groups.join(", "),s.totalPoints,s.attPoints,s.consecPenalty,s.offenseCount,s.offensePts,s.totalDays]);}
+  exportGuard_(group);
+  var sb=getScoreboard(group),rows=[["Rank","Name","Groups","Total Points","Attendance Pts","Offenses","Offense Pts","Days"]];
+  for(var i=0;i<sb.length;i++){var s=sb[i];rows.push([i+1,s.name,s.groups.join(", "),s.totalPoints,s.attPoints,s.offenseCount,s.offensePts,s.totalDays]);}
   return buildPrintHTML_("Scoreboard" + (group!=="All"?" — "+group:""),rows,group);
 }
 
@@ -2202,7 +3219,26 @@ function getMemberForEdit(memberName) {
     }
   }
 
+  // Membership state, promoted to TOP LEVEL. It previously only existed nested at
+  // details.memberStatus (inside the collapsed detail tier), which made it easy for
+  // the UI to miss and default everyone to the removal/probation flow. The backend
+  // now states the state AND which actions are valid, so the UI never has to infer.
+  var detailStatus = (details && details.memberStatus) ? details.memberStatus : "";
+  var mState, actions;
+  if (member.active) {
+    mState = (detailStatus === "Rejoining") ? "rejoining" : "active";
+    actions = ["setHiatus", "remove"];
+  } else if (detailStatus === "On Hiatus") {
+    mState = "hiatus";
+    actions = ["reactivateFromHiatus"];          // NEVER probation — they only paused
+  } else {
+    mState = member.probationFailed ? "failedProbation" : "removed";
+    actions = ["reinstateProbation", "reinstateActive"];
+  }
+
   return {
+    membership: { state: mState, detailStatus: detailStatus,
+                  active: !!member.active, availableActions: actions },
     name: member.name, email: member.email, phone: member.phone,
     admNo: member.admNo, groups: member.groups, roles: member.roles,
     choirPart: (member.roles && member.roles["Choir"]) || "",
@@ -2260,9 +3296,31 @@ function adminUpdateMember(p) {
   if (p.phone !== undefined)  setM("phone", p.phone);
   if (p.admNo !== undefined)  setM("adm. no.", p.admNo);
   if (p.groups !== undefined) setM("groups", (p.groups || []).join(", "));
-  if (p.choirPart !== undefined)      setM("choir part", p.choirPart);
-  if (p.bandRole !== undefined)       setM("band role", p.bandRole);
-  if (p.orchestraRole !== undefined)  setM("orchestra role", p.orchestraRole);
+  // Role changes must ALSO reach historic Attendance rows - the role is copied into
+  // each row at record time, so editing only the Members sheet leaves the past wrong.
+  var roleCascade = { Choir: 0, Band: 0, Orchestra: 0 };
+  function setRole(headerName, section, value) {
+    if (value === undefined) return;
+    var c = col(headerName);
+    var oldVal = (c !== -1) ? mData[rowIdx][c].toString().trim() : "";
+    setM(headerName, value);
+    if (String(value).trim() !== oldVal) {
+      try { roleCascade[section] = cascadeMemberRoleChange_(ss, p.originalName.trim(), section, String(value).trim()); }
+      catch (e) { Logger.log("role cascade (" + section + "): " + e); }
+    }
+  }
+  var editFam = getInstrumentFamilyMap_(ss);
+  var bandStore = resolveRoleForStorage_("Band", p.bandRole, editFam);
+  var orchStore = resolveRoleForStorage_("Orchestra", p.orchestraRole, editFam);
+  setRole("choir part", "Choir", p.choirPart);
+  setRole("band role", "Band", p.bandRole === undefined ? undefined : bandStore.role);
+  setRole("orchestra role", "Orchestra", p.orchestraRole === undefined ? undefined : orchStore.role);
+  // If an instrument was picked, remember it in Member Details.
+  var pickedInstruments = [bandStore.instrument, orchStore.instrument].filter(Boolean).join(" / ");
+  if (pickedInstruments) {
+    if (!p.details) p.details = {};
+    if (!p.details.instruments) p.details.instruments = pickedInstruments;
+  }
 
   // Extended details (Member Details sheet) — only if a details block was sent
   if (p.details) {
@@ -2313,7 +3371,7 @@ function adminUpdateMember(p) {
   }
 
   refreshAllRegisters_(ss);
-  return { success: true, name: (p.name || p.originalName).trim(), renamed: renamed };
+  return { success: true, name: (p.name || p.originalName).trim(), renamed: renamed, roleCascade: roleCascade };
 }
 
 function addMember(member) {
@@ -2321,6 +3379,10 @@ function addMember(member) {
   var data=sheet.getDataRange().getValues(),h=data[0].map(function(x){return x.toString().trim().toLowerCase();});
   var ni=h.indexOf("name");
   for(var i=1;i<data.length;i++){if(data[i][ni].toString().trim().toLowerCase()===member.name.trim().toLowerCase())throw new Error("'"+member.name.trim()+"' already exists.");}
+  // Band/Orchestra roles are stored as FAMILIES regardless of what the form sent.
+  var _famMap = getInstrumentFamilyMap_(ss);
+  var _bandStore = resolveRoleForStorage_("Band", member.bandRole, _famMap);
+  var _orchStore = resolveRoleForStorage_("Orchestra", member.orchestraRole, _famMap);
   var row=[];
   for(var c=0;c<h.length;c++){
     var col=h[c];
@@ -2329,8 +3391,8 @@ function addMember(member) {
     else if(col==="phone")row.push(member.phone||"");
     else if(col==="groups")row.push((member.groups||[]).join(", "));
     else if(col==="choir part")row.push(member.choirPart||"");
-    else if(col==="band role")row.push(member.bandRole||"");
-    else if(col==="orchestra role")row.push(member.orchestraRole||"");
+    else if(col==="band role")row.push(_bandStore.role);
+    else if(col==="orchestra role")row.push(_orchStore.role);
     else if(col==="adm. no.")row.push(member.admNo||"");
     else if(col==="status")row.push("Active");
     else if(col==="probation")row.push(member.probation?"Yes":"");
@@ -2339,7 +3401,29 @@ function addMember(member) {
     else row.push("");
   }
   sheet.appendRow(row);
-  return{success:true,name:member.name.trim()};
+  // Keep the specific instrument(s) in Member Details so nothing is lost.
+  var _insts = [_bandStore.instrument, _orchStore.instrument].filter(Boolean).join(" / ");
+  if (_insts) {
+    try {
+      var _ds = ensureMemberDetailsSheet_(ss);
+      var _dm = headerIndexMap_(_ds);
+      var _ic = _dm["band/orchestra instruments"];
+      if (_ic != null) {
+        var _dd = _ds.getDataRange().getValues(); var _found = false;
+        for (var _r = 1; _r < _dd.length; _r++) {
+          if (_dd[_r][0].toString().trim() === member.name.trim()) {
+            _ds.getRange(_r + 1, _ic + 1).setValue(_insts); _found = true; break;
+          }
+        }
+        if (!_found) {
+          _ds.appendRow([member.name.trim(), member.email || ""]);
+          _ds.getRange(_ds.getLastRow(), _ic + 1).setValue(_insts);
+        }
+      }
+    } catch (e) { Logger.log("instrument capture: " + e); }
+  }
+  return{success:true,name:member.name.trim(),
+         bandRole:_bandStore.role,orchestraRole:_orchStore.role,instruments:_insts};
 }
 
 function todayStr_(){return Utilities.formatDate(new Date(),Session.getScriptTimeZone(),"yyyy-MM-dd");}
@@ -2787,8 +3871,13 @@ function submitOnboarding(data) {
     if (phoneIdx !== -1 && d.phoneNumber) membersSheet.getRange(mRow, phoneIdx + 1).setValue(d.phoneNumber);
     if (admIdx !== -1 && finalAdm) membersSheet.getRange(mRow, admIdx + 1).setValue(finalAdm);
     if (cpIdx !== -1 && finalChoir) membersSheet.getRange(mRow, cpIdx + 1).setValue(finalChoir);
-    if (brIdx !== -1 && finalBand) membersSheet.getRange(mRow, brIdx + 1).setValue(finalBand);
-    if (orIdx !== -1 && finalOrch) membersSheet.getRange(mRow, orIdx + 1).setValue(finalOrch);
+    // Members stores the FAMILY; the specific instrument stays in Member Details
+    // (instrumentsCombined, written above).
+    var obFam = getInstrumentFamilyMap_(ss);
+    if (brIdx !== -1 && finalBand)
+      membersSheet.getRange(mRow, brIdx + 1).setValue(resolveRoleForStorage_("Band", finalBand, obFam).role);
+    if (orIdx !== -1 && finalOrch)
+      membersSheet.getRange(mRow, orIdx + 1).setValue(resolveRoleForStorage_("Orchestra", finalOrch, obFam).role);
   }
 
   // Send notification to admin
@@ -3187,7 +4276,6 @@ function getCommuniqueRecipientOptions() {
  *   ccAdmins: bool
  * }
  */
-
 
 // =======================================================
 //  COMMUNIQUÉ ATTACHMENTS
@@ -4087,12 +5175,42 @@ function bdReadMembers_() {
   var head = values.shift();
   var idx = {};
   head.forEach(function (h, i) { idx[String(h).trim()] = i; });
+
+  // Profile photos live in the MEMBERS sheet, passport photos in Member Details.
+  // Posters prefer the PROFILE photo: it is the image the member chose to represent
+  // themselves, which suits a celebratory poster better than an administrative ID
+  // photo collected at onboarding. Passport is the fallback, then no photo at all.
+  var profileByName = {}, profileByEmail = {};
+  try {
+    var msh = ss.getSheetByName(MEMBERS_SHEET);
+    if (msh && msh.getLastRow() > 1) {
+      var mv = msh.getDataRange().getValues();
+      var mh = mv[0].map(function (x) { return x.toString().trim().toLowerCase(); });
+      var nIdx = mh.indexOf("name"), eIdx = mh.indexOf("email"), pIdx = mh.indexOf("profile photo");
+      if (pIdx !== -1) {
+        for (var i = 1; i < mv.length; i++) {
+          var pv = String(mv[i][pIdx] || "").trim();
+          if (!pv) continue;
+          if (nIdx !== -1) profileByName[String(mv[i][nIdx] || "").trim()] = pv;
+          if (eIdx !== -1) profileByEmail[String(mv[i][eIdx] || "").trim().toLowerCase()] = pv;
+        }
+      }
+    }
+  } catch (e) { Logger.log("profile photo lookup: " + e); }
+
   return values.map(function (r) {
+    var nm = String(r[idx[MD_NAME_COL]]  || "").trim();
+    var em = String(r[idx[MD_EMAIL_COL]] || "").trim();
+    var passport = idx[MD_PHOTO_COL] != null ? String(r[idx[MD_PHOTO_COL]] || "").trim() : "";
+    var profile  = profileByName[nm] || (em ? profileByEmail[em.toLowerCase()] : "") || "";
     return {
-      name:   String(r[idx[MD_NAME_COL]]  || "").trim(),
-      email:  String(r[idx[MD_EMAIL_COL]] || "").trim(),
+      name:   nm,
+      email:  em,
       dobRaw: idx[MD_DOB_COL] != null ? r[idx[MD_DOB_COL]] : "",
-      photo:  idx[MD_PHOTO_COL] != null ? String(r[idx[MD_PHOTO_COL]] || "").trim() : "",
+      profilePhoto:  profile,                     // member-chosen (Members sheet)
+      passportPhoto: passport,                    // onboarding ID photo (Member Details)
+      photo:  profile || passport || "",          // resolved: profile -> passport -> none
+      photoSource: profile ? "profile" : (passport ? "passport" : "none"),
       status: idx[MD_STATUS_COL] != null ? String(r[idx[MD_STATUS_COL]] || "Active").trim() : "Active"
     };
   }).filter(function (m) { return m.name; });
@@ -4140,7 +5258,9 @@ function getUpcomingBirthdays_(windowDays) {
       var ref = new Date(base.getTime() + off * 86400000);
       if (bdMatches_(dob, ref)) {
         out.push({ name: mem.name, first: bdFirst_(mem.name), email: mem.email,
-                   photo: mem.photo, age: bdAge_(dob, ref), daysAway: off });
+                   photo: mem.photo, profilePhoto: mem.profilePhoto,
+                   passportPhoto: mem.passportPhoto, photoSource: mem.photoSource,
+                   age: bdAge_(dob, ref), daysAway: off });
         break;
       }
     }
@@ -4167,16 +5287,14 @@ function bdFill_(str, mem) {
 /** Extracts a Drive file ID from a URL. */
 function bdFileId_(url) { var m = String(url).match(/[-\w]{25,}/); return m ? m[0] : null; }
 function bdPhotoBlob_(mem) {
-  // Prefer the member's PROFILE photo (Members sheet); fall back to the passport
-  // photo (Member Details, carried on mem.photo) when no profile photo is set.
+  // Order: PROFILE photo (member-chosen) -> PASSPORT photo (onboarding ID) -> none.
+  // Both are resolved by bdReadMembers_, so no per-member sheet scan is needed here.
+  // Each candidate is tried in turn, so a broken/deleted profile file still falls
+  // through to the passport rather than producing a photoless poster.
   var candidates = [];
-  try {
-    if (mem.email) {
-      var m = findMemberByEmail_(getSpreadsheet_(), mem.email.toLowerCase());
-      if (m && m.profilePhotoRaw) candidates.push(m.profilePhotoRaw);
-    }
-  } catch(e) {}
-  if (mem.photo) candidates.push(mem.photo);
+  if (mem.profilePhoto)  candidates.push(mem.profilePhoto);
+  if (mem.passportPhoto) candidates.push(mem.passportPhoto);
+  if (!candidates.length && mem.photo) candidates.push(mem.photo); // legacy callers
 
   for (var i = 0; i < candidates.length; i++) {
     var id = bdFileId_(candidates[i]);
@@ -4251,6 +5369,7 @@ function buildGroupMessage_(mem) { return bdFill_(bdPick_(mem).group, mem); }
  */
 function dailyTasks_() {
   try { dailySchemaCheck_(); } catch (e) { Logger.log("Schema check: " + e); }
+  try { autoCloseUnneededApologies_(getSpreadsheet_()); } catch (e) { Logger.log("Apology cleanup: " + e); }
   try { syncConsecutiveAuOffenses_(getSpreadsheet_()); } catch (e) { Logger.log("AU sweep: " + e); }
   try { dailyBirthdayReminder_(); } catch (e) { Logger.log("Birthday: " + e); }
 }
@@ -5143,12 +6262,21 @@ function adminReinstateMember(memberName, mode) {
   requireManagement_();
   var ss = getSpreadsheet_();
   mode = (mode === "active") ? "active" : "probation";
+
+  // BACKSTOP: someone on hiatus paused by arrangement — they never lost standing,
+  // so they always return straight to Active. Even if this is called with
+  // mode "probation" (e.g. the UI offered the removal flow by mistake), a hiatus
+  // member is reactivated, not put on probation.
+  var detail = getMemberDetailStatus_(ss, memberName);
+  var wasHiatus = (detail === "On Hiatus");
+  if (wasHiatus) mode = "active";
+
   if (mode === "active") {
     reinstateMemberActive_(ss, memberName);
   } else {
     reinstateMemberToProbation_(ss, memberName);
   }
-  return { success: true, name: memberName, mode: mode };
+  return { success: true, name: memberName, mode: mode, wasHiatus: wasHiatus };
 }
 
 /**
@@ -5722,7 +6850,7 @@ function getApologiesForDate(dateStr, selectedGroups) {
     }
 
     // Single-day: date matches, not rejected/revoked, group overlaps
-    if (!endDate && rowDate === dateStr && groupMatch && status !== "Rejected" && status !== "Revoked" && status !== "Applied") {
+    if (!endDate && rowDate === dateStr && groupMatch && status !== "Rejected" && status !== "Revoked" && status !== "Applied" && status !== "Not needed") {
       var onTime = data[i][7].toString() === "Yes";
       result[name] = { type: data[i][3].toString(), reason: data[i][4].toString(), onTime: onTime, status: status, rowIndex: i+1, longTerm: false };
     }
@@ -5807,7 +6935,7 @@ function getApologyQueue() {
   }
 
   // Sort: Pending first, then by date descending
-  var statusOrder = { "Pending": 0, "Applied": 1, "Approved": 1, "Rejected": 2, "Revoked": 2 };
+  var statusOrder = { "Pending": 0, "Applied": 1, "Approved": 1, "Not needed": 2, "Rejected": 3, "Revoked": 3 };
   result.sort(function(a, b) {
     var sa = statusOrder[a.status] !== undefined ? statusOrder[a.status] : 3;
     var sb = statusOrder[b.status] !== undefined ? statusOrder[b.status] : 3;
@@ -5820,13 +6948,209 @@ function getApologyQueue() {
 /**
  * Admin approves an apology.
  */
+/**
+ * Auto-closes apologies that are no longer needed because the member actually
+ * turned up. Without this they sit Pending forever and clutter the review queue.
+ * An Absent-type apology is moot if the member was Present or Late on that date;
+ * a Late-type apology is moot only if they were Present (not merely late).
+ * Long-term apologies are left alone - one attended day inside a multi-week range
+ * does not make the range moot.
+ * @returns {number} apologies closed
+ */
+function autoCloseUnneededApologies_(ss) {
+  ss = ss || getSpreadsheet_();
+  var apSheet = ss.getSheetByName(APOLOGIES_SHEET);
+  var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (!apSheet || !attSheet || apSheet.getLastRow() < 2 || attSheet.getLastRow() < 2) return 0;
+
+  // best status per member per date
+  var byMember = {};
+  var ad = attSheet.getDataRange().getValues();
+  for (var i = 1; i < ad.length; i++) {
+    var n = ad[i][1].toString().trim(), ds = formatSheetDate_(ad[i][0]);
+    if (!byMember[n]) byMember[n] = {};
+    byMember[n][ds] = bestStatus_(byMember[n][ds], ad[i][4].toString());
+  }
+
+  var data = apSheet.getDataRange().getValues();
+  var closed = 0;
+  for (var r = 1; r < data.length; r++) {
+    var type = data[r][3].toString();
+    if (isRequestType_(type)) continue;
+    var status = data[r][8].toString();
+    if (status !== "Pending" && status !== "Approved") continue;
+    if (data[r][9]) continue;                       // long-term: leave alone
+    var name = data[r][1].toString().trim();
+    var ds = formatSheetDate_(data[r][0]);
+    var actual = byMember[name] ? byMember[name][ds] : null;
+    if (!actual) continue;                          // no register for that date yet
+
+    var moot = /late/i.test(type)
+      ? (actual === "Present")
+      : (actual === "Present" || actual === "Late Excused" || actual === "Late Unexcused");
+    if (!moot) continue;
+
+    apSheet.getRange(r + 1, 9).setValue("Not needed");
+    apSheet.getRange(r + 1, 11).setValue("Auto-closed - member attended (" + actual + ")");
+    closed++;
+  }
+  if (closed > 0) SpreadsheetApp.flush();
+  return closed;
+}
+
+/** PUBLIC — run the apology cleanup on demand. */
+function runApologyCleanup() {
+  requireManagement_();
+  var n = autoCloseUnneededApologies_(getSpreadsheet_());
+  var msg = "Auto-closed " + n + " apology/apologies that were no longer needed.";
+  Logger.log(msg);
+  return { success: true, closed: n, message: msg };
+}
+
+/**
+ * Backfills already-recorded attendance when an apology is APPROVED.
+ * Until now approval only affected FUTURE recording, while revoking cascaded
+ * backwards - so the system could retroactively punish but not retroactively
+ * excuse. This closes that asymmetry.
+ *   Absent-type apology: Absent Unexcused -> Absent Excused
+ *   Late-type apology:   Late Unexcused   -> Late Excused
+ * Present is never touched, and a single-day apology only affects its own date.
+ */
+function backfillApologyAttendance_(ss, row) {
+  var name = row[1].toString().trim();
+  var type = row[3].toString();
+  if (isRequestType_(type)) return { changed: 0, name: name };
+  var startDate = formatSheetDate_(row[0]);
+  var endDate = row[9] ? formatSheetDate_(row[9]) : "";
+  var groups = row[11] ? row[11].toString().split(",").map(function (x) { return x.trim(); }).filter(Boolean) : [];
+  var isLate = /late/i.test(type);
+  var from = isLate ? "Late Unexcused" : "Absent Unexcused";
+  var to   = isLate ? "Late Excused"   : "Absent Excused";
+
+  var sheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return { changed: 0, name: name };
+  var data = sheet.getDataRange().getValues();
+  var changed = 0;
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][1].toString().trim() !== name) continue;
+    var ds = formatSheetDate_(data[i][0]);
+    var inRange = endDate ? (ds >= startDate && ds <= endDate) : (ds === startDate);
+    if (!inRange) continue;
+    if (groups.length && groups.indexOf(data[i][2].toString().trim()) === -1) continue;
+    if (data[i][4].toString() !== from) continue;
+    sheet.getRange(i + 1, 5).setValue(to);
+    changed++;
+  }
+  if (changed > 0) SpreadsheetApp.flush();
+  return { changed: changed, name: name };
+}
+
+/**
+ * Re-evaluates a member's automatic 3-AU offenses after their attendance changed.
+ * An offense is keyed by the date of the 3rd unexcused absence in its set; if that
+ * set no longer exists (because an absence was excused retroactively), the offense
+ * is deleted. New sets are picked up by syncConsecutiveAuOffenses_ afterwards.
+ * @returns {number} offenses removed
+ */
+function recalcConsecutiveAuOffenses_(ss, memberName) {
+  var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  var offSheet = ss.getSheetByName(OFFENSES_SHEET);
+  if (!attSheet || !offSheet || offSheet.getLastRow() < 2) return 0;
+
+  // Rebuild the member's valid set-keys from CURRENT attendance
+  var byDate = {};
+  var ad = attSheet.getDataRange().getValues();
+  for (var i = 1; i < ad.length; i++) {
+    if (ad[i][1].toString().trim() !== memberName) continue;
+    var ds = formatSheetDate_(ad[i][0]);
+    byDate[ds] = bestStatus_(byDate[ds], ad[i][4].toString());
+  }
+  var validKeys = {};
+  var dates = Object.keys(byDate).sort(), run = 0;
+  for (var d = 0; d < dates.length; d++) {
+    if (byDate[dates[d]] === "Absent Unexcused") {
+      run++;
+      if (run >= CONSECUTIVE_ABSENCE_COUNT) { validKeys[dates[d]] = true; run = 0; }
+    } else run = 0;
+  }
+
+  // Delete auto-offenses whose set no longer exists (bottom-up so indexes hold)
+  var od = offSheet.getDataRange().getValues();
+  var removed = 0;
+  for (var r = od.length - 1; r >= 1; r--) {
+    if (od[r][1].toString().trim() !== memberName) continue;
+    var desc = od[r][2] ? od[r][2].toString() : "";
+    if (desc.indexOf(CONSEC_AU_OFFENSE_TAG) === -1) continue;   // never touch manual offenses
+    if (validKeys[formatSheetDate_(od[r][0])]) continue;
+    offSheet.deleteRow(r + 1);
+    removed++;
+  }
+  return removed;
+}
+
+/**
+ * Members who are currently inactive but whose removal is NO LONGER justified,
+ * because the absences that triggered it have since been excused. Reinstatement
+ * stays a deliberate admin action - this just surfaces the cases.
+ */
+function getReinstatementFlags() {
+  requireManagement_();
+  var ss = getSpreadsheet_();
+  var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (!attSheet || attSheet.getLastRow() < 2) return [];
+  var byMember = {};
+  var ad = attSheet.getDataRange().getValues();
+  for (var i = 1; i < ad.length; i++) {
+    var n = ad[i][1].toString().trim();
+    var ds = formatSheetDate_(ad[i][0]);
+    if (!byMember[n]) byMember[n] = {};
+    byMember[n][ds] = bestStatus_(byMember[n][ds], ad[i][4].toString());
+  }
+  var out = [];
+  readAllMembers_(ss).forEach(function (m) {
+    if (m.active) return;
+    var detail = getMemberDetailStatus_(ss, m.name);
+    if (detail === "On Hiatus" || detail === "Alumnus" || detail === "Memorial") return;
+    if (m.probationFailed) return;              // removed for probation, not absences
+    var dates = Object.keys(byMember[m.name] || {}).sort();
+    var trailing = 0;
+    for (var t = dates.length - 1; t >= 0; t--) {
+      if (byMember[m.name][dates[t]] === "Absent Unexcused") trailing++; else break;
+    }
+    if (trailing < CONSECUTIVE_ABSENCE_COUNT) {
+      out.push({ name: m.name, groups: m.groups, currentStreak: trailing,
+                 reason: "Removed for consecutive unexcused absences, but the current streak is now " +
+                         trailing + " - an apology was approved retroactively." });
+    }
+  });
+  return out;
+}
+
 function approveApology(rowIndex, note) {
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(APOLOGIES_SHEET);
   if (!sheet) throw new Error("Apologies sheet not found.");
+  var row = sheet.getRange(rowIndex, 1, 1, Math.max(12, sheet.getLastColumn())).getValues()[0];
   sheet.getRange(rowIndex, 9).setValue("Approved"); // Status
   if (note) sheet.getRange(rowIndex, 11).setValue(note);
-  return { success: true };
+
+  // Retroactively excuse anything already recorded for this apology, then re-check
+  // the automatic 3-AU offenses that those absences may have triggered.
+  var backfill = { changed: 0 }, offensesRemoved = 0, flagged = false;
+  try {
+    backfill = backfillApologyAttendance_(ss, row);
+    if (backfill.changed > 0) {
+      offensesRemoved = recalcConsecutiveAuOffenses_(ss, backfill.name);
+      refreshAllRegisters_(ss);
+      // Removal itself is NOT undone automatically - surface it for an admin instead.
+      var member = null;
+      readAllMembers_(ss).forEach(function (m) { if (m.name === backfill.name) member = m; });
+      if (member && !member.active) flagged = true;
+    }
+  } catch (e) { Logger.log("apology backfill: " + e); }
+
+  return { success: true, backfilled: backfill.changed,
+           offensesRemoved: offensesRemoved, reinstatementFlagged: flagged };
 }
 
 /**
