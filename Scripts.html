@@ -142,6 +142,7 @@ function renderSectionColumns(rgs, ensembleName) {
 // to fall through to "Late" because its submission "on time" flag is N/A.
 function apologyKindLabel(a) {
   var k = a && a.kind;
+  if (k === 'emergency') return 'Emergency apology';
   if (k === 'longterm') return 'Long-term absence';
   if (k === 'late') return 'Lateness';
   if (k === 'absent') return 'Absence';
@@ -156,6 +157,9 @@ function apologyKindLabel(a) {
 function apologyIsLateSubmission(a) {
   return !!a && (a.kind === 'late' || a.kind === 'absent') && !a.onTime;
 }
+// An emergency apology is past the deadline by definition — it is never "late",
+// it is its own thing, and it always waits on an explicit decision.
+function isPendingEmergency(a) { return !!a && a.kind === 'emergency' && a.status === 'Pending'; }
 // Record-rail apologies come from getApologiesForDate (no `kind`, but a longTerm flag).
 function apologyForDateLabel(a) {
   if (a && a.longTerm) return 'Long-term absence';
@@ -321,13 +325,13 @@ function renderViewTab() {
      +   '<button class="' + (viewMode === "byDate"     ? "active" : "") + '" onclick="setViewMode(\'byDate\')">By date</button>'
      +   '<button class="' + (viewMode === "byMember"   ? "active" : "") + '" onclick="setViewMode(\'byMember\')">By member</button>'
      +   '<button class="' + (viewMode === "probation"  ? "active" : "") + '" onclick="setViewMode(\'probation\')">Probation</button>'
-     +   '<button class="' + (viewMode === "scoreboard" ? "active" : "") + '" onclick="setViewMode(\'scoreboard\')">Scoreboard</button>'
+     +   (isManagement() ? '<button class="' + (viewMode === "scoreboard" ? "active" : "") + '" onclick="setViewMode(\'scoreboard\')">Scoreboard</button>' : '')
      +   '<button class="' + (viewMode === "apologies"  ? "active" : "") + '" onclick="setViewMode(\'apologies\')">Requests</button>'
      + '</div>';
   if      (viewMode === "byDate")     h += renderByDateView();
   else if (viewMode === "byMember")   h += renderByMemberView();
   else if (viewMode === "probation")  h += renderProbationView();
-  else if (viewMode === "scoreboard") h += renderScoreboardView();
+  else if (viewMode === "scoreboard") h += isManagement() ? renderScoreboardView() : renderByDateView();
   else if (viewMode === "apologies")  h += renderApologiesView();
   root.innerHTML = h;
 }
@@ -690,7 +694,7 @@ function renderProbationContent() {
       var rowBg = failing ? 'var(--crimson-100)' : (complete ? 'var(--gold-100)' : 'transparent');
       var segColor = failing ? 'var(--crimson)' : onTrack ? 'var(--present)' : 'var(--gold)';
       h += '<div class="prob-table-row" style="background:' + rowBg + '">'
-        +    '<div style="display:flex;align-items:center;gap:12px">' + memberAvatar(d.profilePhoto, initial, { size: 32, font: 14 }) + '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + esc(d.name) + '</div><div style="font-family:var(--f-mono);font-size:10px;color:var(--ink-500);letter-spacing:.06em;margin-top:2px">' + ((d.groups && d.groups[0]) || '').toUpperCase() + '</div></div></div>'
+        +    '<div style="display:flex;align-items:center;gap:12px">' + memberAvatar(d.profilePhoto, initial, { size: 32, font: 14 }) + '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + esc(d.name) + '</div><div style="font-family:var(--f-mono);font-size:10px;color:var(--ink-500);letter-spacing:.06em;margin-top:2px">' + probGroupsLabel(d) + '</div></div></div>'
         +    '<span style="font-family:var(--f-mono);font-size:11px;color:var(--ink-700)">' + esc(d.probationStart || '') + '</span>'
         +    '<div style="display:flex;align-items:center;gap:10px"><span style="font-family:var(--f-mono);font-size:12px;color:var(--ink);font-weight:600;min-width:36px">' + d.attended + '/' + d.maxSessions + '</span><div style="flex:1;display:flex;gap:2px">';
       h += probSegBar(d, 9);
@@ -713,6 +717,7 @@ function renderProbationContent() {
         +    '<span class="stat-card-rate" style="color:' + color + '">' + d2.attended + '/' + d2.maxSessions + ' · ' + d2.rate + '%</span>'
         +  '</div>'
         +  '<div class="summary-card-row" style="margin:4px 0 8px">'
+        +    '<span style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-500);letter-spacing:.06em">' + probGroupsLabel(d2) + '</span>'
         +    '<span style="color:var(--ink-500)">Since ' + d2.probationStart + '</span>'
         +    (d2.remaining > 0 ? '<span style="color:var(--ink-500)">' + d2.remaining + ' left</span>' : '')
         +  '</div>'
@@ -723,6 +728,9 @@ function renderProbationContent() {
   }
   c.innerHTML = h;
 }
+
+// Full membership, in the backend's canonical order (never sorted client-side).
+function probGroupsLabel(d) { return ((d && d.groups) || []).join(" \u00b7 ").toUpperCase(); }
 
 function probStatusBadge(complete, failing, onTrack) {
   if (complete) return '<span style="font-family:var(--f-mono);font-size:9.5px;font-weight:700;letter-spacing:.12em;padding:4px 8px;border-radius:4px;background:var(--gold);color:#fff">READY · EVAL</span>';
@@ -759,7 +767,10 @@ function probSegBar(d, segH) {
   var pending = (d.pendingSlots != null) ? d.pendingSlots : Math.max(0, max - seq.length);
   for (var i = 0; i < seq.length; i++) {
     var c = PROB_SEG_COLOR[seq[i].status] || "var(--paper-300)";
-    out += '<div title="' + esc(seq[i].status || "") + '" style="flex:1;height:' + segH + 'px;box-sizing:border-box;border-radius:2px;background:' + c + '"></div>';
+    // Entries carry groups[]/sessionKey — name the section(s) the session belonged to.
+    var sgs = seq[i].groups || (seq[i].sessionKey ? String(seq[i].sessionKey).split(",") : []);
+    var tip = (seq[i].status || "") + (sgs.length ? " \u00b7 " + sgs.join(", ") : "") + (seq[i].date ? " \u00b7 " + seq[i].date : "");
+    out += '<div title="' + esc(tip) + '" style="flex:1;height:' + segH + 'px;box-sizing:border-box;border-radius:2px;background:' + c + '"></div>';
   }
   for (var p = 0; p < pending; p++) {
     out += '<div title="Upcoming session" style="flex:1;height:' + segH + 'px;box-sizing:border-box;border-radius:2px;background:transparent;border:1px solid var(--paper-300)"></div>';
@@ -822,7 +833,7 @@ function renderScoreboardContent() {
     // Full table (right)
     h += '<div><div class="eyebrow" style="margin-bottom:14px">Full standings</div>';
     h += '<div style="background:var(--paper);border:1px solid var(--paper-200);border-radius:14px;overflow:hidden">';
-    h += '<div class="sb-table-header"><span>Rank</span><span>Name</span><span>Status counts</span><span>Off.</span><span>Prob.</span><span style="text-align:right">Total</span></div>';
+    h += '<div class="sb-table-header"><span>Rank</span><span>Name</span><span>Status counts</span><span>Rew.</span><span>Off.</span><span>Prob.</span><span style="text-align:right">Total</span></div>';
     for (var i = 0; i < scoreboardData.length; i++) {
       var s = scoreboardData[i];
       var rank = rankOf(s);
@@ -842,6 +853,7 @@ function renderScoreboardContent() {
         +      '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:5px;height:5px;border-radius:999px;background:var(--late-exc)"></span><span style="font-family:var(--f-mono);font-size:11px;color:var(--ink-700);font-weight:600">' + lCount + '</span></span>'
         +      '<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:5px;height:5px;border-radius:999px;background:var(--absent-unexc)"></span><span style="font-family:var(--f-mono);font-size:11px;color:var(--ink-700);font-weight:600">' + aCount + '</span></span>'
         +    '</div>'
+        +    '<span style="font-family:var(--f-mono);font-size:11px;font-weight:600;color:' + (s.rewardPts > 0 ? 'var(--present)' : 'var(--ink-400)') + '" title="' + (s.rewardCount || 0) + ' reward(s), already counted in the total">' + (s.rewardPts > 0 ? '+' + s.rewardPts : '—') + '</span>'
         +    '<span style="font-family:var(--f-mono);font-size:11px;font-weight:600;color:' + (s.offenseCount > 0 ? 'var(--crimson-600)' : 'var(--ink-400)') + '">' + (s.offenseCount > 0 ? s.offensePts : '—') + '</span>'
         +    '<span style="font-family:var(--f-mono);font-size:11px;font-weight:600;color:' + (s.probPenalty < 0 ? 'var(--crimson-600)' : 'var(--ink-400)') + '">' + (s.probPenalty < 0 ? s.probPenalty : '—') + '</span>'
         +    '<span class="sb-points ' + pcls + '" style="font-size:18px;text-align:right">' + s.totalPoints + '</span>'
@@ -873,6 +885,7 @@ function renderScoreboardContent() {
       +      '<span class="sb-detail">' + s2.groups.join(" · ").toUpperCase() + ' · ' + s2.totalDays + ' DAYS</span>'
       +      '<div class="sb-breakdown">'
       +        '<span>ATT ' + (s2.attPoints >= 0 ? "+" : "") + s2.attPoints + '</span>'
+      +        (s2.rewardCount > 0      ? '<span style="color:var(--present)">REW · ' + s2.rewardCount + ' · +' + s2.rewardPts + '</span>' : '')
       +        (s2.consecPenalty !== 0  ? '<span style="color:var(--crimson-600)">CONSEC ' + s2.consecPenalty + '</span>' : '')
       +        (s2.offenseCount > 0     ? '<span style="color:var(--crimson-600)">OFF · ' + s2.offenseCount + ' · ' + s2.offensePts + '</span>' : '')
       +        (s2.probPenalty          ? '<span style="color:var(--crimson-600)">PROB ' + s2.probPenalty + '</span>' : '')
@@ -882,57 +895,6 @@ function renderScoreboardContent() {
       + '</div>';
   }
   c.innerHTML = h2;
-}
-
-function renderMemberSbContent() {
-  var c = document.getElementById("memberScoreboardContent");
-  if (!c) return;
-  if (memberSbData.length === 0) {
-    c.innerHTML = '<p class="loading">No scoreboard data yet.</p>';
-    return;
-  }
-  var btn = document.getElementById("rankToggleMember");
-  if (btn) btn.textContent = sbRankMode === "competitive" ? "Competitive" : "Dense";
-
-  // Podium hero — top 3 only if we have >= 3 rows
-  var podiumHtml = '';
-  if (memberSbData.length >= 3) {
-    // Flag tied positions so the podium can show a TIED chip
-    var rankOf = function (m) { return sbRankMode === 'competitive' ? m.compRank : m.denseRank; };
-    var topThree = memberSbData.slice(0, 3).map(function (m) { return Object.assign({}, m); });
-    var counts = {};
-    topThree.forEach(function (m) { var r = rankOf(m); counts[r] = (counts[r] || 0) + 1; });
-    topThree.forEach(function (m) { if (counts[rankOf(m)] > 1) m._tied = true; });
-    podiumHtml = renderPodiumHero(topThree);
-  }
-
-  var rows = '';
-  for (var i = 0; i < memberSbData.length; i++) {
-    var s = memberSbData[i];
-    var isMe = s.name === userName;
-    var rank = sbRankMode === "competitive" ? s.compRank : s.denseRank;
-    var podium = rank <= 3 ? " podium" : "";
-    var pcls = s.totalPoints > 0 ? "positive" : s.totalPoints < 0 ? "negative" : "zero";
-    rows += '<div class="sb-row' + podium + (isMe ? ' me' : '') + '">'
-      +    '<span class="sb-rank">' + romanOrNum(rank) + '</span>'
-      +    '<div class="sb-info">'
-      +      '<span class="sb-name">' + esc(s.name) + (isMe ? ' <span class="prob-tag">YOU</span>' : '') + '</span>'
-      +      '<span class="sb-detail">' + s.groups.join(" · ").toUpperCase() + ' · ' + s.totalDays + ' DAYS</span>'
-      +    '</div>'
-      +    '<span class="sb-points ' + pcls + '">' + s.totalPoints + '</span>'
-      + '</div>';
-  }
-
-  // Two columns on desktop (podium left, standings right), single column on mobile —
-  // handled by the .sb-split CSS grid so it reflows with viewport, not just at render time.
-  if (podiumHtml) {
-    c.innerHTML = '<div class="sb-split">'
-      +   '<div><div class="eyebrow sb-split-head">Top three</div>' + podiumHtml + '</div>'
-      +   '<div><div class="eyebrow sb-split-head">Full standings</div>' + rows + '</div>'
-      + '</div>';
-  } else {
-    c.innerHTML = rows;
-  }
 }
 
 function renderPodiumHero(top3) {
@@ -1007,12 +969,18 @@ function reqBucket(a) {
 }
 function requestTypeChips() {
   var counts = { all: apologyQueue.length, apologies: 0, transfers: 0, changes: 0 };
-  for (var i = 0; i < apologyQueue.length; i++) counts[reqBucket(apologyQueue[i])]++;
+  var emCount = 0;
+  for (var i = 0; i < apologyQueue.length; i++) {
+    counts[reqBucket(apologyQueue[i])]++;
+    if (isPendingEmergency(apologyQueue[i])) emCount++;
+  }
   var defs = [["all", "All"], ["apologies", "Apologies"], ["transfers", "Transfers"], ["changes", "Changes"]];
   var h = '<div class="req-type-toggle">';
   for (var d = 0; d < defs.length; d++) {
+    var em = (emCount && (defs[d][0] === 'all' || defs[d][0] === 'apologies'))
+             ? '<span class="req-emergency-count" title="' + emCount + ' emergency apolog' + (emCount === 1 ? 'y' : 'ies') + ' awaiting a decision">' + emCount + '</span>' : '';
     h += '<button class="' + (requestTypeFilter === defs[d][0] ? 'active' : '') + '" onclick="setRequestTypeFilter(&#39;' + defs[d][0] + '&#39;)">'
-      + defs[d][1] + '<span class="cnt">' + counts[defs[d][0]] + '</span></button>';
+      + defs[d][1] + '<span class="cnt">' + counts[defs[d][0]] + '</span>' + em + '</button>';
   }
   return h + '</div>';
 }
@@ -1081,42 +1049,58 @@ function renderApologyList() {
   var isDesktop = window.matchMedia && window.matchMedia('(min-width: 1024px)').matches;
   var h = '';
   var currentStatus = "";
-  for (var i = 0; i < apologyQueue.length; i++) {
+  // Pending emergencies sit at the top: they are past the deadline already, and
+  // until someone decides, a register stays wrong.
+  var order = [];
+  for (var q = 0; q < apologyQueue.length; q++) order.push(q);
+  order.sort(function (x, y) {
+    return (isPendingEmergency(apologyQueue[y]) ? 1 : 0) - (isPendingEmergency(apologyQueue[x]) ? 1 : 0);
+  });
+  for (var oi = 0; oi < order.length; oi++) {
+    var i = order[oi];
     var a = apologyQueue[i];
     if (!apologyMatchesFilter(a)) continue;
     var pr = parseRequest(a);
-    var section = a.status === "Pending" ? "Pending review"
+    var isEm = a.kind === "emergency";
+    var section = isPendingEmergency(a) ? "Emergency \u00b7 needs a decision"
+                : a.status === "Pending" ? "Pending review"
                 : (a.status === "Applied" || a.status === "Approved") ? "Active"
                 : a.status === "Not needed" ? "No longer needed"
                 : "Resolved";
     if (section !== currentStatus) {
       currentStatus = section;
-      h += '<div class="ensemble-header" style="margin-top:14px"><span>' + section + '</span></div>';
+      h += '<div class="ensemble-header" style="margin-top:14px' + (isPendingEmergency(a) ? ';color:var(--crimson-600)' : '') + '"><span>' + section + '</span></div>';
     }
     var stColor = apologyStatusStyle(a.status, a.onTime).c;
     // LATE / ON TIME reflect *submission timing* and apply only to single-day apologies;
-    // long-term absences and admin requests carry their meaning in the kind label instead.
+    // long-term absences, emergencies and admin requests carry their meaning in the kind label.
     var timeTag  = apologyIsLateSubmission(a)
                    ? ' <span class="prob-tag" style="background:var(--crimson-100);color:var(--crimson-600)">LATE</span>'
                    : (((a.kind === 'late' || a.kind === 'absent') && a.onTime)
                        ? ' <span class="prob-tag" style="background:var(--present-bg);color:var(--present)">ON TIME</span>'
                        : '');
+    if (isEm) timeTag = ' <span class="em-tag">EMERGENCY</span>';
 
     if (isDesktop) {
       var sel = (selectedApologyIdx === i) ? ' selected' : '';
-      h += '<div class="apology-queue-item' + sel + '" onclick="selectApology(' + i + ')">'
-        +    '<div style="display:flex;justify-content:space-between;align-items:baseline">'
+      var pillBg = isPendingEmergency(a) ? 'var(--crimson)'
+                 : (a.status === "Pending" ? (a.onTime ? 'var(--present-bg)' : 'var(--gold-100)') : 'var(--paper-100)');
+      var pillFg = isPendingEmergency(a) ? 'var(--paper)' : stColor;
+      var pillTxt = isPendingEmergency(a) ? 'EMERGENCY'
+                  : (a.status === "Pending" ? (a.onTime ? "ON TIME" : "REVIEW") : a.status.toUpperCase());
+      h += '<div class="apology-queue-item' + sel + (isEm ? ' emergency' : '') + '" onclick="selectApology(' + i + ')">'
+        +    '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px">'
         +      '<span style="font-size:13.5px;font-weight:600;color:var(--ink)">' + esc(a.name) + '</span>'
-        +      '<span style="font-family:var(--f-mono);font-size:9px;font-weight:700;letter-spacing:.12em;padding:3px 6px;border-radius:3px;background:' + (a.status === "Pending" ? (a.onTime ? 'var(--present-bg)' : 'var(--gold-100)') : 'var(--paper-100)') + ';color:' + stColor + '">' + (a.status === "Pending" ? (a.onTime ? "ON TIME" : "REVIEW") : a.status.toUpperCase()) + '</span>'
+        +      '<span style="font-family:var(--f-mono);font-size:9px;font-weight:700;letter-spacing:.12em;padding:3px 6px;border-radius:3px;white-space:nowrap;background:' + pillBg + ';color:' + pillFg + '">' + pillTxt + '</span>'
         +    '</div>'
-        +    '<div style="font-family:var(--f-mono);font-size:10px;color:var(--ink-500);letter-spacing:.08em;margin-top:4px">'
+        +    '<div style="font-family:var(--f-mono);font-size:10px;color:' + (isEm ? 'var(--crimson-600)' : 'var(--ink-500)') + ';letter-spacing:.08em;margin-top:4px">'
         +      apologyKindLabel(a).toUpperCase() + ' \u00b7 ' + apologySubLine(a)
         +    '</div>'
         +    '<div style="font-size:11.5px;color:var(--ink-600);font-style:italic;margin-top:6px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">"' + esc(pr.cleanReason || a.reason) + '"</div>'
         + '</div>';
     } else {
       // Mobile: full card with actions inline
-      h += '<div class="stat-card" style="padding:14px 16px">'
+      h += '<div class="stat-card" style="padding:14px 16px' + (isEm ? ';border-color:var(--crimson-500);background:var(--crimson-100)' : '') + '">'
         +    '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px">'
         +      '<div style="flex:1;min-width:0">'
         +        '<div style="font-weight:600;font-size:13px;color:var(--ink)">' + esc(a.name) + timeTag + '</div>'
@@ -1207,14 +1191,28 @@ function renderApologyDetail() {
   if (a.status === "Pending" && a.type === "Name Change")      statusLabel = "PENDING \u00b7 NAME CHANGE";
   if (a.status === "Pending" && a.type === "Course Details")   statusLabel = "PENDING \u00b7 ACADEMIC DETAILS";
   if (a.status === "Pending" && a.type === "Rejoin Request")   statusLabel = "PENDING \u00b7 REJOIN REQUEST";
+  var isEmergency = a.kind === "emergency";
+  var emPending = isEmergency && a.status === "Pending";
+  if (emPending) statusLabel = "EMERGENCY \u00b7 AWAITING DECISION";
+  var badgeBg = emPending ? 'var(--crimson)'
+              : (a.status === "Not needed" ? 'var(--paper-200)' : (a.onTime ? 'var(--present-bg)' : 'var(--gold-100)'));
+  var badgeFg = emPending ? 'var(--paper)' : stColor;
 
   var h = '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:20px">'
         +   '<div>'
-        +     '<div class="eyebrow">' + apologyKindLabel(a).toUpperCase() + ' \u00b7 ' + apologySubLine(a) + '</div>'
+        +     '<div class="eyebrow"' + (isEmergency ? ' style="color:var(--crimson-600)"' : '') + '>' + apologyKindLabel(a).toUpperCase() + ' \u00b7 ' + apologySubLine(a) + '</div>'
         +     '<h2 style="margin-top:4px">' + esc(a.name) + '</h2>'
         +   '</div>'
-        +   '<span style="font-family:var(--f-mono);font-size:10px;font-weight:700;letter-spacing:.14em;padding:6px 10px;border-radius:4px;background:' + (a.status === "Not needed" ? 'var(--paper-200)' : (a.onTime ? 'var(--present-bg)' : 'var(--gold-100)')) + ';color:' + stColor + ';white-space:nowrap">' + statusLabel + '</span>'
+        +   '<span style="font-family:var(--f-mono);font-size:10px;font-weight:700;letter-spacing:.14em;padding:6px 10px;border-radius:4px;background:' + badgeBg + ';color:' + badgeFg + ';white-space:nowrap">' + statusLabel + '</span>'
         + '</div>';
+
+  if (emPending) {
+    h += '<div class="em-callout" style="margin-top:0;margin-bottom:20px">'
+      +    '<div class="em-callout-mark">!</div>'
+      +    '<div class="em-callout-body">Filed after the deadline had passed, so nothing has been applied. This one needs your decision either way \u2014 approving corrects the register for '
+      +      esc(formatDateDisplay(a.date)) + ' retroactively; rejecting leaves the record as it stands.</div>'
+      + '</div>';
+  }
 
   var pr = parseRequest(a);
 
@@ -1261,9 +1259,10 @@ function renderApologyDetail() {
       +    '<span class="prob-tag" style="font-size:11px;padding:4px 9px">REJOINING \u00b7 RE-ENTRY PROBATION</span>'
       + '</div>'
       +  '<p style="font-size:12.5px;color:var(--ink-600);line-height:1.55;margin-top:12px">' + esc(rjFirst) + ' re-enters a <b>fresh probation period</b>. Their banked attendance history and points are restored, and the new re-entry probation builds on top.</p>';
-  } else if (a.status === "Pending" && (a.kind === "late" || a.kind === "absent" || a.kind === "longterm")) {
+  } else if (a.status === "Pending" && (a.kind === "late" || a.kind === "absent" || a.kind === "longterm" || a.kind === "emergency")) {
     var fromStatus = a.kind === "late" ? "Late Unexcused" : "Absent Unexcused";
     var toStatus   = a.kind === "late" ? "Late Excused"   : "Absent Excused";
+    if (a.kind === "emergency") { fromStatus = "Unexcused"; toStatus = "Excused"; }
     h += '<div class="eyebrow" style="margin-bottom:8px">If you approve</div>'
       +  '<div class="consequence-preview">'
       +    '<span class="status-badge Absent">' + fromStatus + '</span>'
@@ -1433,13 +1432,17 @@ function renderMemberList() {
   var se = document.getElementById("memberListSearch");
   var s = se ? se.value.toLowerCase() : "";
   var f = memberListData.filter(function (m) {
+    if (!memberFilterMatch(m)) return false;
     return !s
       || m.name.toLowerCase().indexOf(s) !== -1
       || (m.email && m.email.toLowerCase().indexOf(s) !== -1)
       || m.groups.join(" ").toLowerCase().indexOf(s) !== -1;
   });
   if (f.length === 0) {
-    c.innerHTML = '<p class="loading">' + (memberListData.length === 0 ? 'No members yet.' : 'No matches.') + '</p>';
+    c.innerHTML = '<p class="loading">'
+      + (memberListData.length === 0 ? 'No members yet.'
+         : activeMemberFilterCount() ? 'No members match these filters.' : 'No matches.')
+      + '</p>';
     return;
   }
   var h = '<div class="member-count">' + f.length + ' OF ' + memberListData.length + ' SHOWN</div>';
@@ -1688,6 +1691,7 @@ function renderMemberDetail() {
     actions += '<button class="btn btn-secondary" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="showEditProfile(\'' + safeNm + '\')">Edit profile</button>';
   }
   if (m.active) {
+    actions += '<button class="btn btn-green" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="prefillReward(\'' + safeNm + '\')">Award reward</button>';
     actions += '<button class="btn btn-crimson" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="prefillOffense(\'' + safeNm + '\')">Record offense</button>';
   }
   if (actions) h += '<div style="display:flex;gap:8px">' + actions + '</div>';
@@ -2114,6 +2118,8 @@ function renderAddMemberPreview() {
 }
 
 function setMembersMode(mode) {
+  // Scoreboard + the disciplinary log are management-only — reps land on the roster.
+  if ((mode === 'scoreboard' || mode === 'offense') && !isManagement()) mode = 'roster';
   var btns = document.querySelectorAll('#membersModeToggle button');
   for (var b = 0; b < btns.length; b++) btns[b].className = (btns[b].getAttribute('data-mode') === mode) ? 'active' : '';
   // Leaving the roster resets the mobile master-detail back to the list view.
@@ -2121,9 +2127,10 @@ function setMembersMode(mode) {
     var rp = document.getElementById('membersRosterPane');
     if (rp) rp.classList.remove('detail-open');
   }
-  var panes = { roster: 'membersRosterPane', member: 'membersMemberPane', scoreboard: 'membersScoreboardPane', add: 'membersAddPane', offense: 'membersOffensePane' };
+  var panes = { roster: 'membersRosterPane', member: 'membersMemberPane', scoreboard: 'membersScoreboardPane', add: 'membersAddPane', offense: 'membersOffensePane', reward: 'membersRewardPane' };
   for (var k in panes) { var pe = document.getElementById(panes[k]); if (pe) pe.style.display = (k === mode) ? 'block' : 'none'; }
   if (mode === 'add') renderAddMemberPreview();
+  if (mode === 'roster') initMemberFilters();
   // By member + Scoreboard folded in from the old View & Edit — reuse the existing render fns.
   if (mode === 'member') {
     var mr = document.getElementById('memberHistoryRoot');
@@ -2141,25 +2148,223 @@ function setMembersMode(mode) {
   }
   if (mode === 'offense') {
     var od = document.getElementById('offDate'); if (od && !od.value) od.value = todayStr();
-    // Populate datalist of member names
-    if (!memberNames || !memberNames.length) loadMemberNames();
-    var dl = document.getElementById('offNameList');
-    var names = (memberNames && memberNames.length) ? memberNames : memberListData.map(function (m) { return m.name; });
-    if (dl) dl.innerHTML = names.map(function (n) { return '<option value="' + esc(n) + '"></option>'; }).join('');
+    // Populate datalist of member names. getMemberList() is the scoped source of
+    // truth; fillNameDatalists() refills once it resolves, so the first open isn't empty.
+    fillNameDatalists();
     // Build a recent-offense log from member offense data if available
     loadOffenseLog();
   }
+  if (mode === 'reward') {
+    var rd = document.getElementById('rwDate'); if (rd && !rd.value) rd.value = todayStr();
+    fillNameDatalists();
+    loadRewardCategories();
+    loadRewardLog();
+  }
+}
+
+// ─── AWARD / OFFENSE NAME PICKERS ─────────────────────────────────────────
+// Both the offense and reward forms search the same list. getMemberList() is the
+// scoped source of truth (the backend already filters it by role), so fetch it
+// once and refill the datalists when it lands — reading a cache synchronously on
+// open left the pickers empty the first time.
+var awardNames = [];
+
+function paintNameDatalists() {
+  var opts = awardNames.map(function (n) { return '<option value="' + esc(n) + '"></option>'; }).join('');
+  ['offNameList', 'rwNameList'].forEach(function (id) {
+    var dl = document.getElementById(id);
+    if (dl) dl.innerHTML = opts;
+  });
+}
+
+function fillNameDatalists() {
+  if (awardNames.length) { paintNameDatalists(); return; }
+  // Seed from whatever is already loaded so the picker is never dead on arrival…
+  if (memberListData && memberListData.length) {
+    awardNames = memberListData.map(function (m) { return m.name; });
+  } else if (memberNames && memberNames.length) {
+    awardNames = memberNames.slice();
+  }
+  paintNameDatalists();
+  // …then take the authoritative scoped list.
+  if (!google.script.run || typeof google.script.run.getMemberList !== "function") return;
+  google.script.run.withSuccessHandler(function (list) {
+    if (!list || !list.length) return;
+    memberListData = memberListData && memberListData.length ? memberListData : list;
+    awardNames = list.map(function (m) { return m.name; }).filter(Boolean);
+    paintNameDatalists();
+  }).withFailureHandler(function () { /* keep the seeded list */ }).getMemberList();
+}
+
+function knownMemberName(v) {
+  return awardNames.indexOf(v) !== -1;
+}
+
+// ─── REWARDS ──────────────────────────────────────────────────────────────
+// The positive counterpart to offenses. Categories come from the Config sheet:
+// a fixed category's value is not overridable (the backend ignores an override),
+// so only variable categories get an editable points field.
+var rewardCategories = [], rewardLog = [];
+
+function loadRewardCategories() {
+  if (!google.script.run || typeof google.script.run.getRewardCategories !== "function") return;
+  google.script.run.withSuccessHandler(function (cats) {
+    rewardCategories = cats || [];
+    var sel = document.getElementById('rwCategory');
+    if (!sel) return;
+    sel.innerHTML = rewardCategories.map(function (c) {
+      return '<option value="' + esc(c.category) + '">' + esc(c.category) + (c.variable ? '' : ' · +' + c.points) + '</option>';
+    }).join('');
+    onRewardCategoryChange();
+  }).withFailureHandler(function () { rewardCategories = []; }).getRewardCategories();
+}
+
+function currentRewardCategory() {
+  var sel = document.getElementById('rwCategory');
+  var v = sel ? sel.value : '';
+  for (var i = 0; i < rewardCategories.length; i++) {
+    if (rewardCategories[i].category === v) return rewardCategories[i];
+  }
+  return null;
+}
+
+// Variable categories get the points input; fixed ones show their value read-only.
+function onRewardCategoryChange() {
+  var cat = currentRewardCategory();
+  var inp = document.getElementById('rwPoints');
+  var fixed = document.getElementById('rwPointsFixed');
+  var hint = document.getElementById('rwPointsHint');
+  var title = document.getElementById('rwEffectTitle');
+  if (!inp || !fixed) return;
+  if (cat && cat.variable) {
+    inp.style.display = '';
+    fixed.style.display = 'none';
+    if (hint) hint.textContent = 'This category has no set value — you decide what it’s worth.';
+  } else {
+    var pts = cat ? cat.points : 1;
+    inp.style.display = 'none';
+    fixed.style.display = '';
+    fixed.textContent = '+' + pts + ' PT' + (pts === 1 ? '' : 'S');
+    if (hint) hint.textContent = 'Set by this category — not editable.';
+  }
+  updateRewardEffect();
+}
+
+function resolvedRewardPoints() {
+  var cat = currentRewardCategory();
+  if (cat && !cat.variable) return cat.points;
+  var inp = document.getElementById('rwPoints');
+  var v = inp ? Number(inp.value) : NaN;
+  return (isNaN(v) || !inp || inp.value === '') ? 1 : v;
+}
+
+function updateRewardEffect() {
+  var title = document.getElementById('rwEffectTitle');
+  if (!title) return;
+  var pts = resolvedRewardPoints();
+  title.textContent = 'This will add ' + pts + ' point' + (pts === 1 ? '' : 's');
+}
+
+function onRewardNameInput() {
+  var inp = document.getElementById("rwName");
+  var warn = document.getElementById("rwNameWarn");
+  if (!inp || !warn) return;
+  var v = inp.value.trim();
+  warn.style.display = (v && !knownMemberName(v)) ? 'block' : 'none';
+}
+
+function prefillReward(name) {
+  setMembersMode('reward');
+  var i = document.getElementById('rwName');
+  if (i) i.value = name;
+}
+
+function loadRewardLog() {
+  if (!google.script.run || typeof google.script.run.getRewardList !== "function") { renderRewardLog(); return; }
+  google.script.run.withSuccessHandler(function (list) { rewardLog = list || []; renderRewardLog(); })
+    .withFailureHandler(function () { rewardLog = []; renderRewardLog(); })
+    .getRewardList();
+}
+
+// "[auto:perfect]" marks an automatic award — shown as a badge, never as raw text.
+function rewardIsAuto(r) {
+  return /\[auto:perfect\]/i.test(r.description || '') || (r.recordedBy || '') === 'System';
+}
+function rewardCleanDesc(r) {
+  return String(r.description || '').replace(/\[auto:perfect\]/gi, '').trim();
+}
+
+function renderRewardLog() {
+  var c = document.getElementById("rewardLogContent");
+  if (!c) return;
+  if (!rewardLog || rewardLog.length === 0) {
+    c.innerHTML = '<p class="loading" style="font-size:12px">No rewards recorded yet.</p>';
+    return;
+  }
+  var h = '<div style="background:var(--paper);border:1px solid var(--paper-200);border-radius:14px;overflow:hidden">';
+  for (var i = 0; i < rewardLog.length; i++) {
+    var r = rewardLog[i], auto = rewardIsAuto(r);
+    h += '<div style="padding:14px 18px;border-bottom:' + (i < rewardLog.length - 1 ? '1px solid var(--paper-200)' : 'none') + '">'
+      +    '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px">'
+      +      '<span style="font-size:13px;font-weight:600;color:var(--ink)">' + esc(r.name) + '</span>'
+      +      '<span style="font-family:var(--f-mono);font-size:10px;color:var(--ink-500);letter-spacing:.06em">' + esc(formatDateDisplay(r.date) || r.date || '') + '</span>'
+      +    '</div>'
+      +    '<div style="font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;color:var(--ink-500);margin-bottom:6px">' + esc(r.category || '').toUpperCase() + '</div>'
+      +    (rewardCleanDesc(r) ? '<div style="font-size:12px;color:var(--ink-600);line-height:1.5;margin-bottom:8px">' + esc(rewardCleanDesc(r)) + '</div>' : '')
+      +    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+      +      '<span class="rw-pts">+' + r.points + ' PT' + (r.points === 1 ? '' : 'S') + '</span>'
+      +      (auto ? '<span class="rw-auto">AUTOMATIC</span>' : '')
+      +      '<span style="font-family:var(--f-mono);font-size:10px;color:var(--ink-400);letter-spacing:.08em">' + (auto ? 'AWARDED BY THE SYSTEM' : 'BY ' + esc(r.recordedBy || '—').toUpperCase()) + '</span>'
+      +      '<span style="flex:1"></span>'
+      +      '<button class="btn-export" onclick="removeReward(' + r.rowIndex + ',\'' + esc(r.name).replace(/'/g, "\\'") + '\')">Delete</button>'
+      +    '</div>'
+      + '</div>';
+  }
+  c.innerHTML = h + '</div>';
+}
+
+function removeReward(rowIndex, name) {
+  if (!confirm("Delete this reward for " + name + "? Their points go back down.")) return;
+  google.script.run.withSuccessHandler(function () {
+    showToast("Reward deleted.", "success");
+    loadRewardLog();
+  }).withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
+    .deleteReward(rowIndex);
+}
+
+function submitReward() {
+  var name = document.getElementById("rwName").value.trim();
+  var date = document.getElementById("rwDate").value;
+  var desc = document.getElementById("rwDesc").value.trim();
+  var sel = document.getElementById("rwCategory");
+  var category = sel ? sel.value : "";
+  if (!name || !date || !category || !desc) { showToast("Member, date, category and description are all needed.", "error"); return; }
+  if (!knownMemberName(name)) { showToast("Pick a member from the list.", "error"); return; }
+  var cat = currentRewardCategory();
+  // A fixed category's value wins server-side, so only send points for variable ones.
+  var points = (cat && cat.variable) ? resolvedRewardPoints() : "";
+  var btn = document.getElementById("btnAddReward");
+  btn.disabled = true; btn.textContent = "Awarding…";
+  google.script.run.withSuccessHandler(function (r) {
+    btn.disabled = false; btn.textContent = "Award reward";
+    r = r || {};
+    showToast(name + " awarded +" + (r.points || resolvedRewardPoints()) + " · " + category + ".", "success");
+    document.getElementById("rwName").value = "";
+    document.getElementById("rwDesc").value = "";
+    document.getElementById("rwNameWarn").style.display = "none";
+    loadRewardLog();
+  }).withFailureHandler(function (e) {
+    btn.disabled = false; btn.textContent = "Award reward";
+    showToast("Failed: " + e.message, "error");
+  }).addReward(date, name, category, desc, points);
 }
 
 function loadOffenseLog() {
-  // If the backend exposes a log, use it; otherwise derive a light list from members with offenses.
-  if (typeof google !== 'undefined' && google.script && google.script.run && google.script.run.getOffenseLog) {
-    google.script.run.withSuccessHandler(function (log) { offenseLog = log || []; renderOffenseLog(); })
-      .withFailureHandler(function () { offenseLog = []; renderOffenseLog(); })
-      .getOffenseLog();
-  } else {
-    renderOffenseLog();
-  }
+  // getOffenseList() is management-only — it throws for reps and members.
+  if (!isManagement()) { offenseLog = []; renderOffenseLog(); return; }
+  google.script.run.withSuccessHandler(function (log) { offenseLog = log || []; renderOffenseLog(); })
+    .withFailureHandler(function () { offenseLog = []; renderOffenseLog(); })
+    .getOffenseList();
 }
 var offenseLog = [];
 
@@ -2220,9 +2425,6 @@ function renderMyAttendance(data) {
         +   '<div class="eyebrow">' + esc(ebBits.join(" · ").toUpperCase()) + '</div>'
         +   '<span class="gold-rule"></span>'
         +   '<div class="display" style="font-size:36px">' + greet + ',<br>' + esc(firstName) + '.</div>';
-  if (totalSessions > 0) {
-    h +=    '<p class="subtitle" style="margin:14px 0 0">You\'ve made <b>' + attended + ' of ' + totalSessions + ' sessions</b> this term — that\'s <b>' + overallRate + '% attendance</b>.</p>';
-  }
   h +=   '</div>';
 
   // Probation outcome banner — passed
@@ -2233,7 +2435,7 @@ function renderMyAttendance(data) {
       +   '<div class="display" style="font-size:22px;margin-bottom:8px">' + (hasPenalty ? 'You’ve passed — with a note.' : 'You’ve passed your probation.') + '</div>'
       +   '<p style="font-size:13px;color:var(--ink-700);line-height:1.55;margin-bottom:10px">'
       +     (hasPenalty
-                 ? 'You’re an official member of the Chorale. Attendance during probation fell below the 80% threshold, so a one-time <b>' + data.probationPenalty + ' point</b> adjustment has been applied to your scoreboard total.'
+                 ? 'You’re an official member of the Chorale. Attendance during probation fell below the 80% threshold, so your pass is recorded as conditional and a one-time adjustment has been noted on your record.'
                  : 'You’re an official member of the Chorale. Congratulations on completing your probation.')
       +   '</p>'
       +   '<div class="form-label" style="margin:10px 0 6px;color:var(--ink-700)">Next steps</div>'
@@ -2266,66 +2468,43 @@ function renderMyAttendance(data) {
       + '</div>';
   }
 
-  // ── Top row: standing · attendance · next session ────────────────────
+  // ── Top row: this term · next session ────────────────────────────────
   h += '<div class="myatt-top-grid">';
 
-  // 1 · Standing (dark hero)
-  if (data.score) {
-    var pos = data.rank, total = data.totalMembers;
-    var gapText = (data.aheadName && typeof data.aheadGap === "number")
-      ? '<span style="color:var(--gold-300);font-weight:600">' + data.aheadGap + '</span> pts behind ' + esc(data.aheadName)
-      : (pos === 1 ? "Leading " + ((data.groups || []).join(" · ") || "the chorale") : (data.groups || []).join(" · ") + " · " + total + " members");
-    h += '<div class="hero-rank">'
-      +   '<img class="watermark" src="https://drive.google.com/thumbnail?id=1_mYJ9YIiaaTmiBc5MhxMhddihLACoquj&sz=w400" onerror="this.style.display=&#39;none&#39;">'
-      +   '<div style="position:relative;display:flex;flex-direction:column;flex:1">'
-      +     '<div style="display:flex;justify-content:space-between;align-items:center">'
-      +       '<span class="label">YOUR STANDING</span>'
-      +       '<span style="font-family:var(--f-mono);font-size:10px;color:var(--ink-300);letter-spacing:.14em">' + ((data.groups || []).join(" · ").toUpperCase()) + ' · ' + total + ' MEMBERS</span>'
-      +     '</div>'
-      +     '<div class="rank-row">'
-      +       '<span class="rank-num">#' + pos + '</span>'
-      +       '<div><span class="rank-pts">' + data.score.totalPoints + '</span> <span style="font-family:var(--f-mono);font-size:11px;color:var(--ink-300);letter-spacing:.14em">PTS</span>'
-      +         '<div style="font-family:var(--f-sans);font-size:11.5px;color:var(--ink-300);margin-top:4px">' + gapText + '</div>'
-      +       '</div>'
-      +     '</div>'
-      +     '<div class="breakdown" style="justify-content:space-between;margin-top:auto">'
-      +       '<span style="display:flex;gap:14px"><span><b>' + hP + '</b> present</span><span><b>' + hL + '</b> late</span><span><b>' + hA + '</b> absent</span></span>'
-      +       '<span style="font-family:var(--f-mono);font-size:10px;color:var(--gold-300);letter-spacing:.14em;cursor:pointer" onclick="switchTab(&#39;scoreboard-member&#39;)">VIEW STANDINGS →</span>'
-      +     '</div>'
-      +   '</div>'
-      + '</div>';
-  } else {
-    h += '<div class="hero-rank">'
-      +   '<img class="watermark" src="https://drive.google.com/thumbnail?id=1_mYJ9YIiaaTmiBc5MhxMhddihLACoquj&sz=w400" onerror="this.style.display=&#39;none&#39;">'
-      +   '<div style="position:relative;display:flex;flex-direction:column;flex:1">'
-      +     '<span class="label">YOUR STANDING</span>'
-      +     '<div class="display" style="font-size:24px;color:var(--paper);line-height:1.15;margin-top:12px">On probation.</div>'
-      +     '<div style="font-size:11.5px;color:var(--ink-300);margin-top:8px;line-height:1.5">Your scoreboard standing begins once probation is complete.</div>'
-      +   '</div>'
-      + '</div>';
-  }
+  // 1 · This term (dark hero) — the single home for sessions, rate and breakdown.
+  h += '<div class="hero-rank">'
+    +   '<img class="watermark" src="https://drive.google.com/thumbnail?id=1_mYJ9YIiaaTmiBc5MhxMhddihLACoquj&sz=w400" onerror="this.style.display=&#39;none&#39;">'
+    +   '<div class="hero-rank-inner">'
+    +     '<div style="display:flex;justify-content:space-between;align-items:center">'
+    +       '<span class="label">THIS TERM</span>'
+    +       '<span style="font-family:var(--f-mono);font-size:10px;color:var(--ink-300);letter-spacing:.14em">' + esc((data.groups || []).join(" · ").toUpperCase()) + '</span>'
+    +     '</div>'
+    +     '<div class="rank-row">'
+    +       '<span class="rank-num">' + attended + '</span>'
+    +       '<div style="flex:1"><span class="rank-pts">of ' + totalSessions + '</span> <span style="font-family:var(--f-mono);font-size:11px;color:var(--ink-300);letter-spacing:.14em">SESSIONS</span>'
+    +         '<div style="font-family:var(--f-sans);font-size:11.5px;color:var(--ink-300);margin-top:4px">' + (data.probation ? 'Probation in progress.' : 'Attended and on record.') + '</div>'
+    +       '</div>'
+    +       '<div style="text-align:right"><span class="hero-rate">' + overallRate + '<span>%</span></span>'
+    +         '<div style="font-family:var(--f-mono);font-size:10px;color:var(--ink-300);letter-spacing:.14em">ATTENDANCE</div>'
+    +       '</div>'
+    +     '</div>'
+    +     '<div class="hero-bar"><span style="width:' + overallRate + '%"></span></div>'
+    +     '<div class="breakdown">'
+    +       '<span><b>' + hP + '</b> present</span><span><b>' + hL + '</b> late</span><span><b>' + hA + '</b> absent</span>'
+    +     '</div>'
+    +   '</div>'
+    + '</div>';
 
-  // 2 · Attendance (cream card with breakdown)
-  h += '<div style="background:var(--paper);border:1px solid var(--paper-200);border-radius:14px;padding:18px 20px;display:flex;flex-direction:column">'
-    +    '<div class="eyebrow" style="color:var(--ink-700)">Attendance</div>'
-    +    '<div class="num" style="font-size:46px;line-height:1;margin-top:10px;color:var(--ink)">' + overallRate + '<span style="font-size:20px;color:var(--ink-500)">%</span></div>'
-    +    '<div class="stat-bar" style="margin-top:12px"><div class="stat-bar-fill" style="width:' + overallRate + '%;background:var(--gold)"></div></div>'
-    +    '<div style="margin-top:14px;display:flex;flex-direction:column;gap:7px">';
-  var attRows = [["Present", hP, "var(--present)"], ["Late", hL, "var(--late-exc)"], ["Absent", hA, "var(--absent-unexc)"]];
-  for (var ri = 0; ri < attRows.length; ri++) {
-    h += '<div style="display:flex;justify-content:space-between;align-items:center">'
-      +    '<span style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-700)"><span style="width:6px;height:6px;border-radius:999px;background:' + attRows[ri][2] + '"></span>' + attRows[ri][0] + '</span>'
-      +    '<span style="font-family:var(--f-mono);font-size:12px;font-weight:600;color:var(--ink)">' + attRows[ri][1] + '</span>'
-      +  '</div>';
-  }
-  h += '</div></div>';
-
-  // 3 · Next session (dashed card — filled by paintMyAttNextSession)
-  h += '<div class="next-session-card" id="myAttNextSession">'
+  // 2 · Next session (dashed card — filled by paintMyAttNextSession). The card and
+  // the emergency door share one grid cell so the door tracks the card at every
+  // width, rather than becoming a third grid item on desktop.
+  h += '<div class="next-session-cell">'
+    +  '<div class="next-session-card" id="myAttNextSession">'
     +    '<div class="eyebrow" style="color:var(--ink-700)">Next session</div>'
     +    '<p style="font-size:12px;color:var(--ink-500);margin-top:12px">Checking the schedule…</p>'
-    +  '</div>';
-
+    +  '</div>'
+    +  '<div id="myAttEmergencyDoor" style="display:none"></div>'
+    + '</div>';
   h += '</div>';
 
   // Probation progress (active)
@@ -2417,9 +2596,23 @@ function statusShortLabel(st) {
        : esc(st);
 }
 
-// Next-session card on the My Attendance dashboard
+// A session stays "current" for an hour after it starts, so the deadline-passed
+// card holds on that session (and keeps offering the emergency route) instead of
+// jumping to the next one the moment 6:00 PM ticks over.
+// Next-session card on the My Attendance dashboard.
+// Fed from getUpcomingSessions(), which keeps a session on the card for
+// SESSION_GRACE_MINUTES (60) after it starts and marks those entries withinGrace /
+// graceEndsAt. The server sends the session we should show, so the client does no
+// grace arithmetic of its own — take the first dated entry.
 var myAttNextInfo = null, myAttNextFetched = false;
 function setMyAttNextSession(info) {
+  if (info && info.length !== undefined) {
+    var list = info;
+    info = null;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].date) { info = list[i]; break; }
+    }
+  }
   myAttNextInfo = info || null;
   myAttNextFetched = true;
   paintMyAttNextSession();
@@ -2432,22 +2625,57 @@ function paintMyAttNextSession() {
   if (!info || !info.date) {
     h += '<p style="font-size:12px;color:var(--ink-500);margin-top:12px;line-height:1.5">No upcoming session on the schedule.</p>';
     c.innerHTML = h;
+    paintEmergencyDoor();
     return;
   }
   var p = String(info.date).split("-");
   var mn = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   var dateLine = p.length === 3 ? (parseInt(p[2], 10) + " " + mn[p[1] - 1]) : "";
   h += '<div class="display" style="font-size:24px;line-height:1.12;margin-top:8px">' + esc(info.dayName || "") + (dateLine ? '<br>' + dateLine : '') + '</div>'
-    +  '<div style="font-size:12px;color:var(--ink-600);margin-top:10px;line-height:1.5">' + (info.kind ? esc(info.kind) + ' · ' : '') + fmtTime12(info.time)
-    +    (info.venue ? '<br><span style="color:var(--ink-500)">' + esc(info.venue) + '</span>' : '')
+    +  '<div style="font-size:12px;color:var(--ink-600);margin-top:10px;line-height:1.5">' + ((info.kind || info.type) ? esc(info.kind || info.type) + ' · ' : '') + fmtTime12(info.time)
+    +    ((info.venue || info.title) ? '<br><span style="color:var(--ink-500)">' + esc(info.venue || info.title) + '</span>' : '')
     +  '</div>';
   if (info.deadlinePassed) {
-    h += '<div style="margin-top:12px;font-size:11.5px;color:var(--crimson-600);line-height:1.5">The apology deadline for this session has passed.</div>';
+    // withinGrace means the session has actually begun — say so, rather than only
+    // that the apology window shut.
+    h += '<div style="margin-top:12px;font-size:11.5px;color:var(--crimson-600);line-height:1.5">'
+      +    (info.withinGrace
+            ? 'Underway now \u2014 started ' + fmtTime12(info.time) + '. The apology deadline has passed.'
+            : 'The apology deadline for this session has passed.')
+      + '</div>';
   } else {
     h += '<div style="margin-top:12px;font-size:11.5px;color:var(--ink-500);line-height:1.5">Can’t make it? Submit an apology before ' + fmtTime12(info.deadline, true) + ' to be counted as excused.</div>'
       +  '<div style="margin-top:10px;font-size:12.5px;font-weight:600;color:var(--crimson);cursor:pointer" onclick="openApology()">Submit apology →</div>';
   }
   c.innerHTML = h;
+  paintEmergencyDoor();
+}
+
+// The emergency route is keyed to its OWN session, not to the one on the card:
+// getEmergencyApologyOption() opens at that session's start time and runs for
+// windowHours (24) whether or not the register is marked. So the door lives in its
+// own strip under the card and shows whenever the backend says eligible — including
+// once the card has moved on to the next session.
+function paintEmergencyDoor() {
+  var el = document.getElementById("myAttEmergencyDoor");
+  if (!el) return;
+  var o = emergencyOption;
+  if (!o || !o.eligible) { el.style.display = "none"; el.innerHTML = ""; return; }
+  var closes = o.closesAt ? String(o.closesAt).split(" ") : null;
+  el.style.display = "block";
+  el.innerHTML = '<div class="em-door" onclick="openApology(&#39;emergency&#39;)">'
+    +   '<span class="em-door-mark">!</span>'
+    +   '<div>'
+    +     '<div style="font-size:12.5px;color:var(--ink-700);line-height:1.5">Kept away by a genuine emergency? You can still file for <b>'
+    +       esc(formatDateShort(o.date)) + '</b> below</div>'
+    +     '<div class="em-door-win">'
+    +       (closes && closes.length === 2
+              ? 'WINDOW CLOSES ' + esc(formatDateShort(closes[0]).toUpperCase()) + ' \u00b7 ' + fmtTime12(closes[1])
+              : 'WITHIN ' + (o.windowHours || 24) + ' HOURS OF THE SESSION')
+    +     '</div>'
+    +     '<div style="font-size:12.5px;font-weight:600;color:var(--crimson);margin-top:8px">File an emergency apology \u2192</div>'
+    +   '</div>'
+    + '</div>';
 }
 
 // ─── ONBOARDING (first run) ───────────────────────────────────────────────
@@ -2696,8 +2924,11 @@ function closeProfile() {
 function setProfileMode(m) { profileMode = m; renderProfile(); }
 
 // ─── Apology sub-page (opened from My attendance) ──────────────────────────
-function openApology() {
+function openApology(mode) {
   switchTab("apology");
+  // Emergency is only ever reached from the "deadline has passed" card, never from
+  // the toggle — so opening in that mode locks the page to the emergency form.
+  setApologyKind(mode === 'emergency' ? 'emergency' : (apologyKind === 'emergency' ? 'single' : apologyKind));
   try { window.scrollTo(0, 0); } catch (e) {}
 }
 function closeApology() {
@@ -2999,8 +3230,8 @@ function syncApologySlots() {
 // Mobile bottom-tabs can't hold 9 admin tabs — show these, fold the rest into a "More" sheet.
 var MOBILE_PRIMARY = ["record", "sessions", "members"];
 var PERSONAL_TAB_IDS = ["myatt"];   // desktop sidebar: split under a "Personal" heading
-var NAV_GLYPHS = { record: "\u270E", sessions: "\u274F", members: "\u25D0", probation: "\u25D4", requests: "\u21CC", dashboard: "\u25A6", view: "\u229F", communique: "\u2709", birthdays: "\u2740", myatt: "\u25C9", "scoreboard-member": "\u2726", apology: "\u2709" };
-var NAV_HINTS = { record: "Mark tonight", sessions: "Recorded sessions", members: "Roster & standings", probation: "New-member pipeline", requests: "Approvals", dashboard: "Section analytics", view: "Past sessions", communique: "Email members", birthdays: "Celebrations", myatt: "This term", "scoreboard-member": "Standings", apology: "Submit apology" };
+var NAV_GLYPHS = { record: "\u270E", sessions: "\u274F", members: "\u25D0", probation: "\u25D4", requests: "\u21CC", dashboard: "\u25A6", view: "\u229F", communique: "\u2709", birthdays: "\u2740", myatt: "\u25C9", apology: "\u2709" };
+var NAV_HINTS = { record: "Mark tonight", sessions: "Recorded sessions", members: "Roster & standings", probation: "New-member pipeline", requests: "Approvals", dashboard: "Section analytics", view: "Past sessions", communique: "Email members", birthdays: "Celebrations", myatt: "This term", apology: "Submit apology" };
 var moreTabIds = [];
 
 function navBtnHtml(t, active) {
@@ -3237,6 +3468,11 @@ var userRole = "unknown", userName = "", userEmail = "", activeTab = "";
 var userAccess = { role: "unknown", section: "", repGroup: "", allowedSections: [], isAdminLike: false };
 function isFullAdmin()    { return userRole === "admin"; }
 function canEditHistory() { return userRole === "admin" || userRole === "sectionAdmin"; }
+// Points, rankings, the scoreboard and the disciplinary log are MANAGEMENT-ONLY:
+// admin + sectionAdmin. Elevated reps keep their register and dashboards but lose
+// these (getScoreboard / getOffenseList throw for them server-side), and members
+// never see points, rankings or standings at all.
+function isManagement()   { return userRole === "admin" || userRole === "sectionAdmin"; }
 function sectionAllowed(g) { return isFullAdmin() || userAccess.allowedSections.indexOf(g) !== -1; }
 // Elevated reps have no Requests queue — their register is record-only.
 function activeTabs() {
@@ -3272,6 +3508,13 @@ function applyRoleScopeUI() {
     var lab = el.parentNode;
     if (lab && !ok) { lab.style.opacity = "0.4"; lab.style.cursor = "default"; lab.title = "Your register covers " + allowed.join(", ") + " only"; }
   });
+  // Elevated reps: no scoreboard, no disciplinary log (both throw server-side).
+  if (!isManagement()) {
+    ["scoreboard", "offense"].forEach(function (m) {
+      var b = document.querySelector('#membersModeToggle button[data-mode="' + m + '"]');
+      if (b) b.style.display = "none";
+    });
+  }
   lockSectionChips("sessSectionChips");
   lockSectionChips("dashSectionChips");
 }
@@ -3294,7 +3537,7 @@ function lockSectionChips(boxId) {
 // Apology is NOT a top-level tab — it is a sub-page reached from My attendance
 // (keeps "My attendance" active in the nav, like the Profile sub-page).
 var adminTabs  = [{ id: "record", label: "Record" }, { id: "sessions", label: "Sessions" }, { id: "members", label: "Members" }, { id: "probation", label: "Probation", short: "Prob." }, { id: "requests", label: "Requests", short: "Reqs" }, { id: "dashboard", label: "Group Dashboard", short: "Stats" }, { id: "communique", label: "Communiqué", short: "Send" }, { id: "birthdays", label: "Birthdays", short: "Bdays" }, { id: "myatt", label: "My attendance", short: "Mine" }];
-var memberTabs = [{ id: "myatt", label: "My attendance", short: "Attendance" }, { id: "scoreboard-member", label: "Scoreboard" }];
+var memberTabs = [{ id: "myatt", label: "My attendance", short: "Attendance" }];
 
 google.script.run.withSuccessHandler(function (r) {
   userRole = r.role;
@@ -3518,7 +3761,7 @@ function switchTab(tab) {
   for (var j = 0; j < sBtns.length; j++) sBtns[j].className = "nav-item" + (sBtns[j].getAttribute("data-tab") === navTab ? " active" : "");
 
   // Hide all tab pages
-  var allPages = ["record", "sessions", "dashboard", "probation", "requests", "view", "members", "communique", "birthdays", "myatt", "scoreboard-member", "apology", "profile"];
+  var allPages = ["record", "sessions", "dashboard", "probation", "requests", "view", "members", "communique", "birthdays", "myatt", "apology", "profile"];
   for (var p = 0; p < allPages.length; p++) {
     var el = document.getElementById("tab-" + allPages[p]);
     if (el) el.className = "tab-page";
@@ -3540,9 +3783,8 @@ function switchTab(tab) {
   if (tab === "probation"         && !probationTabLoaded) initProbationTab();
   if (tab === "requests"          && !requestsTabLoaded)  initRequestsTab();
   if (tab === "myatt"             && !myAttLoaded)     loadMyAttendance();
-  if (tab === "scoreboard-member" && !memberSbLoaded)  loadMemberScoreboard();
   if (tab === "apology"           && !apologyLoaded)   loadApologyTab();
-  if (tab === "members"           && (!memberListData || memberListData.length === 0)) refreshMemberList();
+  if (tab === "members")          { if (!memberListData || memberListData.length === 0) refreshMemberList(); initMemberFilters(); }
   if (tab === "profile")          { profileMode = "view"; loadProfile(); }
 }
 
@@ -3911,6 +4153,7 @@ function renderGroupDashboard(d) {
 
   // At-Risk panel
   var risk = document.getElementById("dashAtRisk");
+  var sectionSel = (d.section && d.section !== "All") ? d.section : null;
   if (risk) {
     var rows = "";
     (d.nearAU || []).forEach(function (m) {
@@ -3918,7 +4161,7 @@ function renderGroupDashboard(d) {
         return '<span class="status-dot ' + statusDotClass_(ls.status) + '" title="' + esc(ls.date + ': ' + ls.status) + '"></span>';
       }).join("");
       rows += '<div class="atrisk-row"><div class="atrisk-info"><div class="atrisk-name">' + esc(m.name) + '</div>'
-           +    '<div class="atrisk-meta">' + esc((m.groups || []).join(" \u00b7 ").toUpperCase()) + '</div></div>'
+           +    '<div class="atrisk-meta">' + esc(dashGroupLabel_(m.groups, sectionSel)) + '</div></div>'
            +    '<div class="atrisk-dots">' + dots + '</div>'
            +    '<span class="atrisk-badge">' + m.consecutiveAU + '\u00d7 AU</span></div>';
     });
@@ -3942,11 +4185,21 @@ function renderGroupDashboard(d) {
         // Segmented per-session bar (same design as the Probation tab) — probSegBar
         // falls back to plain fill when sessionSequence is absent.
         list += '<div class="prob-fall-row"><div style="flex:1"><div style="font-size:13px;font-weight:600;color:var(--ink)">' + esc(p.name) + '</div>'
+             +    '<div style="font-family:var(--f-mono);font-size:9px;color:var(--ink-400);letter-spacing:.08em;margin-top:2px">' + probGroupsLabel(p) + '</div>'
              +    '<div class="prob-seg">' + probSegBar(p, 6) + '</div></div>'
              +    '<span style="font-family:var(--f-mono);font-size:12px;font-weight:600;color:var(--crimson-600)">' + p.rate + '%</span></div>';
       });
     }
-    prob.innerHTML = '<div class="eyebrow" style="margin-bottom:14px">Probation \u00b7 in this section</div>' + minis + list;
+    // scopedSection === null means the figures span every section the member belongs to
+    // (probation is membership-level). It will name a section if scoping ever lands.
+    var probScope = null;
+    for (var si = 0; si < fb.length; si++) { if (fb[si] && fb[si].scopedSection) { probScope = fb[si].scopedSection; break; } }
+    prob.innerHTML = '<div class="eyebrow" style="margin-bottom:4px">Probation \u00b7 ' + (sectionSel ? esc(sectionSel) + ' members' : 'all sections') + '</div>'
+      + '<div class="panel-note">' + (probScope
+          ? 'Progress counts ' + esc(probScope) + ' sessions only.'
+          : 'Progress is membership-level \u2014 it counts every session the member was called to'
+            + (sectionSel ? ', including any outside ' + esc(sectionSel) + '.' : '.')) + '</div>'
+      + minis + list;
   }
 
   // v2 panels — averages strip, momentum indicator, apology analytics
@@ -3966,6 +4219,15 @@ function renderGroupDashboard(d) {
   renderDashProbPerf(d);
   renderDashComparison(d);
   dashSyncGroups_();
+}
+
+// Group label for a dashboard row. When one section is selected, show just that
+// section — a member's other groups aren't part of what's on screen, and reading
+// "CHOIR · BAND" on the Choir view looks like the panel is mixing sections in.
+function dashGroupLabel_(groups, sectionSel) {
+  var g = groups || [];
+  if (sectionSel && g.indexOf(sectionSel) !== -1) return sectionSel.toUpperCase();
+  return g.join(" \u00b7 ").toUpperCase();
 }
 
 // green=Present, yellow=Late(both), grey=Absent Excused, red=Absent Unexcused → my CSS modifiers
@@ -4958,11 +5220,9 @@ function onSbGroupChange() { sbGroup = document.getElementById("sbGroupSelect").
 
 function toggleRankMode() {
   sbRankMode = sbRankMode === "competitive" ? "dense" : "competitive";
-  var label = sbRankMode === "competitive" ? "Competitive" : "Dense";
-  var btn  = document.getElementById("rankToggle");       if (btn)  btn.textContent  = label;
-  var btn2 = document.getElementById("rankToggleMember"); if (btn2) btn2.textContent = label;
+  var btn = document.getElementById("rankToggle");
+  if (btn) btn.textContent = sbRankMode === "competitive" ? "Competitive" : "Dense";
   renderScoreboardContent();
-  if (memberSbData.length > 0) renderMemberSbContent();
 }
 
 // Changes bar (batch edit)
@@ -5083,9 +5343,7 @@ function onOffenseNameInput() {
   var warn = document.getElementById("offNameWarn");
   if (!inp || !warn) return;
   var v = inp.value.trim();
-  // memberNames is loaded by loadMemberNames(); fall back to memberListData
-  var names = (memberNames && memberNames.length) ? memberNames : memberListData.map(function (m) { return m.name; });
-  var exact = names.indexOf(v) !== -1;
+  var exact = knownMemberName(v);
   warn.style.display = (v && !exact) ? "block" : "none";
 }
 
@@ -5116,8 +5374,7 @@ function submitOffense() {
   if (!name || !desc) { showToast("Name and description required.", "error"); return; }
   if (!date)          { showToast("Select a date.",                   "error"); return; }
   // Client-side guard: name must match an existing member exactly
-  var names = (memberNames && memberNames.length) ? memberNames : memberListData.map(function (m) { return m.name; });
-  if (names.length && names.indexOf(name) === -1) {
+  if (awardNames.length && !knownMemberName(name)) {
     document.getElementById("offNameWarn").style.display = "block";
     showToast("That member isn't on the roster. Pick an existing member.", "error");
     return;
@@ -5147,6 +5404,205 @@ function refreshMemberList() {
     .getMemberList();
 }
 
+// ─── Member filters ───────────────────────────────────────────────
+// One set of filters drives both the roster list and the two exports. Every list
+// comes from getMemberFilterOptions() — real values out of the sheet, never a
+// hard-coded set. The count shown is the backend's own count, so what the list
+// shows is what the export contains.
+var MFILTER_FIELDS = ["sections", "roles", "genders", "faculties", "yearsOfStudy", "probationStatuses", "memberStatuses"];
+var memberFilterOptions = null, memberFilterOpen = false, memberCountTimer = null;
+var memberFilters = { sections: [], roles: [], genders: [], faculties: [], yearsOfStudy: [], probationStatuses: [], memberStatuses: [] };
+
+// Client-side mirror of filterMembers_ in Code.gs, for the roster list.
+// Detail facets (gender / faculty / year / member status) need those fields on the
+// getMemberList() rows; when a row does not carry a field, that facet is skipped
+// for it rather than silently dropping the member from the roster.
+function memberFilterMatch(m) {
+  var f = memberFilters;
+  function has(l) { return l && l.length; }
+  if (has(f.sections) && !(m.groups || []).some(function (g) { return f.sections.indexOf(g) !== -1; })) return false;
+  if (has(f.roles)) {
+    var match = false;
+    for (var g in (m.roles || {})) {
+      var r = m.roles[g] ? String(m.roles[g]).trim() : "";
+      if (r && f.roles.indexOf(r) !== -1) match = true;
+    }
+    if (!match) return false;
+  }
+  if (has(f.genders) && m.gender && f.genders.indexOf(m.gender) === -1) return false;
+  if (has(f.faculties) && m.courseFaculty && f.faculties.indexOf(m.courseFaculty) === -1) return false;
+  if (has(f.yearsOfStudy) && m.yearOfStudy && f.yearsOfStudy.indexOf(m.yearOfStudy) === -1) return false;
+  if (has(f.memberStatuses) && m.memberStatus && f.memberStatuses.indexOf(m.memberStatus) === -1) return false;
+  if (has(f.probationStatuses)) {
+    var st = m.probationFailed ? "Failed" : m.probationPassed ? "Passed" : m.probation ? "On probation" : "Not on probation";
+    if (f.probationStatuses.indexOf(st) === -1) return false;
+  }
+  return true;
+}
+
+function initMemberFilters() {
+  var bar = document.getElementById("memberFilter");
+  // Exports are management-only server-side — don't offer reps a button that throws.
+  if (typeof isManagement === "function" && !isManagement()) { if (bar) bar.style.display = "none"; return; }
+  if (memberFilterOptions) return;
+  google.script.run.withSuccessHandler(function (o) {
+    memberFilterOptions = o || {};
+    renderMemberFilterPanel();
+    refreshFilteredMemberCount();
+  }).withFailureHandler(function (e) {
+    var p = document.getElementById("mfilterPanel");
+    if (p) p.innerHTML = '<p class="loading">Filters unavailable: ' + esc(e.message) + '</p>';
+  }).getMemberFilterOptions();
+}
+
+function toggleMemberFilterPanel() {
+  memberFilterOpen = !memberFilterOpen;
+  var p = document.getElementById("mfilterPanel");
+  var caret = document.getElementById("mfilterCaret");
+  if (p) p.style.display = memberFilterOpen ? "grid" : "none";
+  if (caret) caret.textContent = memberFilterOpen ? "\u25be" : "\u25b8";
+}
+
+function mfChips(field, values) {
+  var s = '<div class="mfilter-chips">';
+  for (var i = 0; i < values.length; i++) {
+    var v = String(values[i]);
+    var on = memberFilters[field].indexOf(v) !== -1;
+    s += '<button class="filter-chip' + (on ? ' active' : '') + '" onclick="toggleMemberFilter(&#39;' + field + '&#39;,&#39;' + jsAttr(v) + '&#39;)">' + esc(v) + '</button>';
+  }
+  return s + '</div>';
+}
+function mfFacet(field, label, values, span) {
+  if (!values || !values.length) return '';
+  return '<div class="mfilter-facet' + (span ? ' span-2' : '') + '">'
+       +   '<div class="mfilter-facet-head"><span class="eyebrow">' + label + '</span></div>'
+       +   mfChips(field, values)
+       + '</div>';
+}
+
+function renderMemberFilterPanel() {
+  var p = document.getElementById("mfilterPanel");
+  if (!p) return;
+  var o = memberFilterOptions || {};
+  var h = mfFacet("sections", "Sections", o.sections || []);
+
+  // Roles are keyed by section server-side; show them grouped, filter on one flat list.
+  var roleKeys = o.roles ? Object.keys(o.roles) : [];
+  var roleBlocks = "";
+  for (var r = 0; r < roleKeys.length; r++) {
+    var list = o.roles[roleKeys[r]] || [];
+    if (!list.length) continue;
+    roleBlocks += '<div class="mfilter-sub">' + esc(roleKeys[r]) + '</div>' + mfChips("roles", list);
+  }
+  if (roleBlocks) {
+    h += '<div class="mfilter-facet span-2">'
+      +    '<div class="mfilter-facet-head"><span class="eyebrow">Roles &amp; parts</span></div>'
+      +    roleBlocks
+      + '</div>';
+  }
+  h += mfFacet("genders", "Gender", o.genders || []);
+  h += mfFacet("yearsOfStudy", "Year of study", o.yearsOfStudy || []);
+  h += mfFacet("faculties", "Course faculty", o.faculties || [], true);
+  h += mfFacet("probationStatuses", "Probation", o.probationStatuses || []);
+  h += mfFacet("memberStatuses", "Member status", o.memberStatuses || []);
+  h += '<div class="mfilter-facet span-2" style="align-items:flex-start"><button class="mfilter-clear" onclick="clearMemberFilters()">Clear all filters</button></div>';
+  p.innerHTML = h || '<p class="loading">No filterable data yet.</p>';
+  syncMemberFilterBar();
+}
+
+function activeMemberFilterCount() {
+  var n = 0;
+  for (var i = 0; i < MFILTER_FIELDS.length; i++) n += memberFilters[MFILTER_FIELDS[i]].length;
+  return n;
+}
+function syncMemberFilterBar() {
+  var badge = document.getElementById("mfilterOnCount");
+  var n = activeMemberFilterCount();
+  if (badge) { badge.textContent = n; badge.style.display = n ? "inline-block" : "none"; }
+}
+
+function toggleMemberFilter(field, value) {
+  if (!memberFilters[field]) return;
+  var i = memberFilters[field].indexOf(value);
+  if (i === -1) memberFilters[field].push(value); else memberFilters[field].splice(i, 1);
+  renderMemberFilterPanel();
+  applyMemberFilters();
+}
+function clearMemberFilters() {
+  for (var i = 0; i < MFILTER_FIELDS.length; i++) memberFilters[MFILTER_FIELDS[i]] = [];
+  renderMemberFilterPanel();
+  applyMemberFilters();
+}
+
+// Re-render the roster against the filters, drop a selection that no longer
+// qualifies, then re-count.
+function applyMemberFilters() {
+  if (selectedMemberName) {
+    var still = memberListData.some(function (m) { return m.name === selectedMemberName && memberFilterMatch(m); });
+    if (!still) {
+      selectedMemberName = null;
+      var rp = document.getElementById("membersRosterPane");
+      if (rp) rp.classList.remove("detail-open");
+      if (typeof renderMemberDetail === "function") renderMemberDetail();
+    }
+  }
+  if (typeof renderMemberList === "function") renderMemberList();
+  refreshFilteredMemberCount();
+}
+
+// Omitted or empty means "no filter on that field" — send only what is set.
+function memberFilterPayload() {
+  var out = {};
+  for (var i = 0; i < MFILTER_FIELDS.length; i++) {
+    var f = MFILTER_FIELDS[i];
+    if (memberFilters[f].length) out[f] = memberFilters[f].slice();
+  }
+  return out;
+}
+
+function refreshFilteredMemberCount() {
+  var el = document.getElementById("mfilterCount");
+  if (el) el.innerHTML = '<b>\u2026</b> counting';
+  if (memberCountTimer) clearTimeout(memberCountTimer);
+  memberCountTimer = setTimeout(function () {
+    google.script.run.withSuccessHandler(function (n) {
+      n = Number(n) || 0;
+      var e2 = document.getElementById("mfilterCount");
+      if (e2) e2.innerHTML = '<b>' + n + '</b> member' + (n === 1 ? '' : 's') + ' match' + (n === 1 ? 'es' : '');
+      var csv = document.getElementById("mfilterCsv"), pdf = document.getElementById("mfilterPdf");
+      if (csv) csv.disabled = (n === 0);
+      if (pdf) pdf.disabled = (n === 0);
+    }).withFailureHandler(function () {
+      var e3 = document.getElementById("mfilterCount");
+      if (e3) e3.innerHTML = '<b>\u2014</b> members match';
+    }).countFilteredMembers(memberFilterPayload());
+  }, 220);
+}
+
+function exportFilteredMembersCSV() {
+  var btn = document.getElementById("mfilterCsv");
+  if (btn) { btn.disabled = true; btn.textContent = "Exporting\u2026"; }
+  google.script.run.withSuccessHandler(function (csv) {
+    if (btn) { btn.disabled = false; btn.textContent = "Export \u00b7 CSV"; }
+    downloadCSV_(csv, "members.csv");
+  }).withFailureHandler(function (e) {
+    if (btn) { btn.disabled = false; btn.textContent = "Export \u00b7 CSV"; }
+    showToast("Export failed: " + e.message, "error");
+  }).exportMembersCSV(memberFilterPayload());
+}
+
+function exportFilteredMembersPDF() {
+  var btn = document.getElementById("mfilterPdf");
+  if (btn) { btn.disabled = true; btn.textContent = "Preparing\u2026"; }
+  google.script.run.withSuccessHandler(function (html) {
+    if (btn) { btn.disabled = false; btn.textContent = "Print / Save as PDF"; }
+    openPrintHTML(html);
+  }).withFailureHandler(function (e) {
+    if (btn) { btn.disabled = false; btn.textContent = "Print / Save as PDF"; }
+    showToast("Export failed: " + e.message, "error");
+  }).exportMembersPDF(memberFilterPayload());
+}
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  7.  MY ATTENDANCE TAB
@@ -5163,7 +5619,10 @@ function loadMyAttendance() {
     .getMyAttendance();
   google.script.run.withSuccessHandler(setMyAttNextSession)
     .withFailureHandler(function () { setMyAttNextSession(null); })
-    .getNextSessionInfo();
+    .getUpcomingSessions();
+  // The card's "deadline passed" branch offers the emergency route, so it needs
+  // the same eligibility answer the apology page uses.
+  loadEmergencyApologyOption();
   loadMyApologies();
 }
 
@@ -5172,6 +5631,7 @@ function loadApologyTab() {
   // Upcoming sessions populate the dropdown; selecting one fills the detail + cut-off.
   loadUpcomingSessions();
   loadMyApologies();
+  loadEmergencyApologyOption();
 }
 
 // -- Upcoming sessions dropdown (single, unified session picker) ----------
@@ -5179,6 +5639,8 @@ var apolSessions = [];
 var apolCustomDate = false;
 
 function loadUpcomingSessions() {
+  var pick = document.getElementById("apolDate");
+  if (pick && !pick.min) pick.min = todayStr();   // no apologising for dates already gone
   var sel = document.getElementById("apolSessionSelect");
   if (!sel) return;
   google.script.run.withSuccessHandler(renderApolSessionOptions)
@@ -5289,13 +5751,136 @@ function updateApolConfirm() {
 
 function setApologyKind(kind) {
   apologyKind = kind;
+  var isEm = kind === 'emergency';
+  // The toggle offers the two ordinary routes only. Emergency has no button here:
+  // it is entered from the deadline-passed card, and the whole page becomes it.
+  var tog = document.getElementById('apologyTypeToggle');
+  if (tog) tog.style.display = isEm ? 'none' : 'inline-flex';
   var btns = document.querySelectorAll('#apologyTypeToggle button');
-  btns[0].className = kind === 'single'   ? 'active' : '';
-  btns[1].className = kind === 'extended' ? 'active' : '';
+  if (btns[0]) btns[0].className = kind === 'single'   ? 'active' : '';
+  if (btns[1]) btns[1].className = kind === 'extended' ? 'active' : '';
   document.getElementById('apologySingleForm').style.display = kind === 'single'   ? 'block' : 'none';
   document.getElementById('apologyLongForm').style.display   = kind === 'extended' ? 'block' : 'none';
+  var em = document.getElementById('apologyEmergencyForm');
+  if (em) em.style.display = isEm ? 'block' : 'none';
   var hint = document.getElementById('apolLongHint');
   if (hint) hint.style.display = kind === 'single' ? 'flex' : 'none';
+  // Header copy follows the mode — an emergency filing is not the normal cycle.
+  var eyebrow = document.getElementById('apolPageEyebrow');
+  var title = document.getElementById('apolPageTitle');
+  var sub = document.getElementById('apolPageSub');
+  if (title) title.textContent = isEm ? 'File an emergency apology.' : 'Submit an apology.';
+  if (eyebrow) {
+    eyebrow.textContent = isEm ? 'DEADLINE PASSED \u00b7 EMERGENCY ONLY' : '';
+    eyebrow.style.color = isEm ? 'var(--crimson-600)' : '';
+    eyebrow.style.display = isEm ? 'block' : 'none';
+  }
+  if (sub) {
+    sub.textContent = isEm
+      ? 'The ordinary deadline for this session has gone. This route is for genuine emergencies only, covers your most recent session, and always waits on an admin\u2019s decision.'
+      : 'Tell admins ahead of time. Apologies submitted before the cut-off on the day are auto-accepted as Late or Absent \u00b7 Excused.';
+  }
+  // Re-check on every entry: the window opens at session start and runs 24 hours,
+  // so eligibility can change between visits.
+  if (isEm) loadEmergencyApologyOption();
+}
+
+// ─── Emergency apology (after the deadline, most recent session only) ──────
+// Everything here is decided by the backend: eligibility, which session, and the
+// window. The client only renders what it is told and never assumes eligibility.
+var emergencyOption = null;
+
+function loadEmergencyApologyOption() {
+  google.script.run
+    .withSuccessHandler(function (o) {
+      emergencyOption = o || { eligible: false, reason: 'Emergency apologies are unavailable right now.' };
+      renderEmergencyApology();
+      paintMyAttNextSession();
+    })
+    .withFailureHandler(function (e) {
+      emergencyOption = { eligible: false, reason: (e && e.message) ? e.message : 'Could not check your last session.' };
+      renderEmergencyApology();
+      paintMyAttNextSession();
+    })
+    .getEmergencyApologyOption();
+}
+
+// The crimson strip under the ordinary form is gone — kept as a no-op so any
+// older call site can't throw.
+function syncEmergencyHint() {}
+
+function renderEmergencyApology() {
+  var c = document.getElementById('emergencyApolMount');
+  if (!c) return;
+  var o = emergencyOption;
+  if (!o) { c.innerHTML = '<p class="loading">Checking your last session\u2026</p>'; return; }
+
+  if (!o.eligible) {
+    c.innerHTML = '<div class="em-card">'
+      + '<div class="em-head"><span class="eyebrow">Emergency apology \u00b7 not available</span></div>'
+      + '<div class="em-body">'
+      +   '<div class="em-blocked">'
+      +     '<div class="em-blocked-mark">\u2014</div>'
+      +     '<div><div style="font-size:13.5px;font-weight:600;color:var(--ink);margin-bottom:4px">'
+      +       (o.date ? esc(formatDateDisplay(o.date)) : 'Nothing to file for') + '</div>'
+      +       '<div style="font-size:12.5px;color:var(--ink-600);line-height:1.55">' + esc(o.reason || '') + '</div></div>'
+      +   '</div>'
+      +   '<p style="font-size:12px;color:var(--ink-500);line-height:1.55;margin-top:14px">Emergency apologies cover your most recent session only, and only for a short window after it. For anything still to come, use <b>One session</b> before the deadline.</p>'
+      + '</div></div>';
+    return;
+  }
+
+  var groups = (o.groups && o.groups.length) ? o.groups.join(' / ').toUpperCase() : '';
+  // closesAt is an absolute "yyyy-MM-dd HH:mm" from the backend — state the real
+  // cut-off rather than a vague "within N hours".
+  var closes = o.closesAt ? String(o.closesAt).split(' ') : null;
+  var win = (closes && closes.length === 2)
+            ? ('CLOSES ' + formatDateShort(closes[0]).toUpperCase() + ' \u00b7 ' + fmtTime12(closes[1]))
+            : ('WITHIN ' + (o.windowHours || 24) + ' HOURS OF THE SESSION');
+  var recorded = (o.status && o.status !== 'Not yet recorded')
+                 ? ('RECORDED AS ' + esc(o.status).toUpperCase())
+                 : 'REGISTER NOT YET MARKED';
+  c.innerHTML = '<div class="em-card">'
+    + '<div class="em-head"><span class="eyebrow">Emergency apology \u00b7 after the deadline</span></div>'
+    + '<div class="em-body">'
+    +   '<p class="subtitle" style="margin-bottom:14px;max-width:58ch">The deadline for this session has gone. If you missed it because of a genuine emergency, you can still add yours here for this one session. An admin will review it.</p>'
+    +   '<div class="em-session">'
+    +     '<span class="em-session-date">' + esc(formatDateDisplay(o.date)) + '</span>'
+    +     '<span class="em-meta">' + (o.time ? fmtTime12(o.time) + ' \u00b7 ' : '') + (groups ? groups + ' \u00b7 ' : '') + recorded + '</span>'
+    +   '</div>'
+    +   '<div class="form-label" style="margin-top:18px">What happened <span style="color:var(--crimson-600)">*</span></div>'
+    +   '<textarea id="emReason" class="apol-reason" rows="3" placeholder="Took my mother to hospital and I couldn\u2019t get to a phone before the cut-off."></textarea>'
+    +   '<div class="apol-hint">Required. Say plainly what stopped you.</div>'
+    +   '<div class="em-rules">'
+    +     '<div class="em-rule"><span>!</span><div>For <b>genuine emergencies</b> only \u2014 illness, an accident, a family crisis. A clash you knew about belongs in an ordinary apology, filed before the deadline.</div></div>'
+    +     '<div class="em-rule"><span>!</span><div><b>Always needs admin approval.</b> Nothing is applied automatically, and filing this does not change your record on its own.</div></div>'
+    +     '<div class="em-rule"><span>!</span><div>If it is approved, your status for that session is corrected retroactively.</div></div>'
+    +   '</div>'
+    +   '<div class="apol-foot">'
+    +     '<div class="apol-cutoff">WINDOW \u00b7 ' + win + '</div>'
+    +     '<div class="apol-foot-actions">'
+    +       '<button class="btn btn-secondary" onclick="closeApology()">Cancel</button>'
+    +       '<button class="btn btn-crimson" id="btnEmApology" onclick="submitEmergencyApologyNow()">File emergency apology</button>'
+    +     '</div>'
+    +   '</div>'
+    + '</div></div>';
+}
+
+function submitEmergencyApologyNow() {
+  var t = document.getElementById('emReason');
+  var reason = t ? t.value.trim() : '';
+  if (!reason) { showToast('Describe what happened \u2014 a reason is required.', 'error'); if (t) t.focus(); return; }
+  var btn = document.getElementById('btnEmApology');
+  if (btn) { btn.disabled = true; btn.textContent = 'Filing\u2026'; }
+  google.script.run.withSuccessHandler(function (r) {
+    showToast('Emergency apology filed for ' + formatDateDisplay((r && r.date) || '') + '. An admin will review it.', 'success');
+    emergencyOption = null;
+    loadEmergencyApologyOption();
+    loadMyApologies();
+  }).withFailureHandler(function (e) {
+    if (btn) { btn.disabled = false; btn.textContent = 'File emergency apology'; }
+    showToast(e.message, 'error');
+  }).submitEmergencyApology(reason);
 }
 
 // Type pills (Late / Absent) — mirror selection into the hidden #apolType field.
@@ -5310,9 +5895,15 @@ function setApolType(type) {
 }
 
 // User picked an arbitrary date via "Apologise for another date".
+// Past dates are refused: an apology is notice for a session still to come.
 function onApolDateChange() {
   var d = document.getElementById('apolDate');
   if (!d || !d.value) return;
+  if (d.value < todayStr()) {
+    d.value = apolCustomDate && apolNextInfo && apolNextInfo.date ? apolNextInfo.date : '';
+    showToast('That date has already passed \u2014 pick today or a later one.', 'error');
+    return;
+  }
   apolCustomDate = true;
   apolNextInfo = { date: d.value };
 
@@ -5419,26 +6010,7 @@ function submitLtApology() {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  8.  MEMBER SCOREBOARD
-// ═══════════════════════════════════════════════════════════════════════════
-
-var memberSbLoaded = false, memberSbData = [];
-
-function loadMemberScoreboard() {
-  memberSbLoaded = true;
-  var grp = document.getElementById("sbMemberGroupSelect");
-  var group = grp ? grp.value : "All";
-  var c = document.getElementById("memberScoreboardContent");
-  c.innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading…</div></div>';
-  google.script.run.withSuccessHandler(function (data) {
-    memberSbData = data; renderMemberSbContent();
-  }).withFailureHandler(function (e) { c.innerHTML = '<p class="loading">Error: ' + esc(e.message) + '</p>'; })
-    .getScoreboard(group);
-}
-
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  9.  APOLOGY REVIEW (admin)
+//  8.  APOLOGY REVIEW (admin)
 // ═══════════════════════════════════════════════════════════════════════════
 
 var apologyQueue = [];

@@ -188,6 +188,8 @@ body { padding-bottom: env(safe-area-inset-bottom); }
 .btn-secondary { background: var(--paper); color: var(--ink); border-color: var(--paper-300); }
 .btn-crimson { background: var(--crimson); color: #fff; border-color: var(--crimson-600); }
 .btn-gold { background: var(--gold); color: #fff; border-color: var(--gold-700); }
+.btn-green { background: var(--present); color: #fff; border-color: #3E6A4A; }
+.btn-green:hover { background: #3E6A4A; }
 .btn-ghost { background: transparent; color: var(--ink-700); }
 .btn-export { font-family: var(--f-sans); font-weight: 500; font-size: 12.5px; padding: 7px 14px; border-radius: 8px; background: var(--paper); border: 1px solid var(--paper-300); color: var(--ink-700); cursor: pointer; }
 .btn-export:hover { border-color: var(--ink); color: var(--ink); }
@@ -380,10 +382,15 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--g
 .sb-points.zero     { color: var(--ink-400); }
 
 /* Scoreboard desktop table */
-.sb-table-header { display: grid; grid-template-columns: 0.6fr 2fr 1.6fr 0.6fr 0.6fr 0.7fr; padding: 11px 22px; background: var(--paper-100); border-bottom: 1px solid var(--paper-200); font-family: var(--f-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.12em; color: var(--ink-500); text-transform: uppercase; }
-.sb-table-row { display: grid; grid-template-columns: 0.6fr 2fr 1.6fr 0.6fr 0.6fr 0.7fr; padding: 12px 22px; align-items: center; border-bottom: 1px solid var(--paper-200); }
+.sb-table-header { display: grid; grid-template-columns: 0.6fr 2fr 1.6fr 0.6fr 0.6fr 0.6fr 0.7fr; padding: 11px 22px; background: var(--paper-100); border-bottom: 1px solid var(--paper-200); font-family: var(--f-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.12em; color: var(--ink-500); text-transform: uppercase; }
+.sb-table-row { display: grid; grid-template-columns: 0.6fr 2fr 1.6fr 0.6fr 0.6fr 0.6fr 0.7fr; padding: 12px 22px; align-items: center; border-bottom: 1px solid var(--paper-200); }
 .sb-table-row:last-child { border-bottom: none; }
 .sb-table-row .sb-rank { min-width: 0; }
+
+/* Rewards — the positive counterpart to offenses: green for the points, gold for automatic awards */
+.rw-pts { font-family: var(--f-mono); font-size: 9.5px; font-weight: 700; letter-spacing: .1em; padding: 2px 6px; border-radius: 3px; background: var(--present-bg); color: var(--present); }
+.rw-auto { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: .1em; padding: 2px 6px; border-radius: 3px; background: var(--gold-100); color: var(--gold-700); }
+.rw-fixed { padding: 11px 14px; border-radius: 10px; background: var(--present-bg); color: var(--present); font-family: var(--f-mono); font-size: 12px; font-weight: 600; letter-spacing: .04em; }
 
 /* Probation desktop table */
 .prob-table-header { display: grid; grid-template-columns: 1.6fr 1fr 2fr 0.7fr 0.8fr 1.1fr; padding: 12px 22px; background: var(--paper-100); border-bottom: 1px solid var(--paper-200); font-family: var(--f-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.14em; color: var(--ink-500); text-transform: uppercase; }
@@ -411,9 +418,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--g
   padding: 22px 18px 0; margin-bottom: 16px;
   display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; align-items: end;
 }
-@media (min-width: 1024px) { .podium-hero { padding: 26px 28px 0; gap: 10px; max-width: 560px; } #tab-scoreboard-member .controls { max-width: 420px; } }
+@media (min-width: 1024px) { .podium-hero { padding: 26px 28px 0; gap: 10px; max-width: 560px; } }
 
-/* Member scoreboard: stacked on mobile, two columns on desktop */
+/* Scoreboard split layout (admin): stacked on mobile, two columns on desktop */
 .sb-split { display: block; }
 .sb-split-head { display: none; }
 @media (min-width: 1024px) {
@@ -578,6 +585,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--g
 .dash-panels { display: grid; grid-template-columns: 1fr; gap: 18px; align-items: start; }
 .dash-panel { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 16px; overflow: hidden; }
 .dash-panel-pad { padding: 16px 20px; }
+.panel-note { font-size: 11px; color: var(--ink-500); line-height: 1.4; margin-bottom: 14px; }
 .dash-panel-head { padding: 16px 20px 12px; border-bottom: 1px solid var(--paper-200); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .dash-panel-head .big { font-family: var(--f-display); font-size: 28px; }
 .atrisk-row { display: flex; align-items: center; gap: 12px; padding: 13px 20px; border-bottom: 1px solid var(--paper-200); }
@@ -982,17 +990,26 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .hero-rank .rank-num { font-family: var(--f-display); font-style: normal; font-size: 56px; color: var(--gold-300); line-height: 0.9; }
 .hero-rank .rank-pts { font-family: var(--f-mono); font-size: 18px; color: var(--paper); }
 .hero-rank .rank-row { display: flex; align-items: baseline; gap: 14px; margin-top: 10px; position: relative; }
+.hero-rank .hero-rate { font-family: var(--f-display); font-size: 34px; color: var(--paper); line-height: 1; }
+.hero-rank .hero-rate span { font-size: 15px; color: var(--ink-300); }
+.hero-rank .hero-bar { position: relative; margin-top: 14px; height: 4px; border-radius: 999px; background: rgba(243,233,206,0.16); overflow: hidden; }
+.hero-rank .hero-bar span { display: block; height: 100%; background: var(--gold-300); border-radius: 999px; }
 .hero-rank .breakdown { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(243,233,206,0.16); display: flex; gap: 14px; font-family: var(--f-sans); font-size: 11.5px; color: var(--ink-300); position: relative; }
 .hero-rank .breakdown b { color: var(--paper); font-weight: 600; }
 
 /* My Attendance — dashboard grids */
 .myatt-top-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin-bottom: 18px; }
 .myatt-top-grid .hero-rank { margin: 0; display: flex; padding: 20px 22px; }
+/* Both top-row cards centre their contents vertically, so neither leaves a block of
+   dead space when the other column is the taller one. */
+.hero-rank-inner { position: relative; display: flex; flex-direction: column; flex: 1; justify-content: center; }
+.next-session-cell { display: flex; flex-direction: column; gap: 10px; }
+.next-session-cell .next-session-card { flex: 1; display: flex; flex-direction: column; justify-content: center; }
 .next-session-card { background: var(--paper-100); border: 1px dashed var(--paper-300); border-radius: 14px; padding: 18px 20px; }
 .myatt-lower-grid { display: grid; grid-template-columns: 1fr; gap: 18px; align-items: start; }
 .myatt-apologies { display: none; }
 @media (min-width: 1024px) {
-  .myatt-top-grid { grid-template-columns: 1.4fr 1fr 1fr; gap: 16px; }
+  .myatt-top-grid { grid-template-columns: 1.7fr 1fr; gap: 16px; }
   .myatt-lower-grid { grid-template-columns: 1.6fr 1fr; gap: 16px; }
   .myatt-apologies { display: block; }
 }
@@ -1171,6 +1188,56 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .apology-detail-pane .consequence-preview { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 16px; background: var(--paper); border: 1px solid var(--paper-200); border-radius: 12px; margin-bottom: 18px; }
 .apology-detail-pane .consequence-arrow { font-family: var(--f-display); font-size: 20px; color: var(--ink-400); }
 
+/* Emergency apologies — filed after the deadline, always need a decision. Crimson, never gold. */
+.apology-queue-list .apology-queue-item.emergency { border-left: 3px solid var(--crimson); background: var(--crimson-100); }
+.apology-queue-list .apology-queue-item.emergency:hover { background: #F1D6D2; }
+.apology-queue-list .apology-queue-item.emergency.selected { background: #F1D6D2; border-left-color: var(--crimson); }
+.em-tag { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: 0.12em; padding: 3px 6px; border-radius: 3px; background: var(--crimson); color: var(--paper); }
+.em-callout { display: flex; gap: 12px; align-items: flex-start; margin-top: 16px; padding: 14px 16px; border-radius: 12px; background: var(--crimson-100); border: 1px solid var(--crimson-500); }
+.em-callout-mark { width: 26px; height: 26px; border-radius: 999px; background: var(--crimson); color: var(--paper); display: flex; align-items: center; justify-content: center; font-family: var(--f-mono); font-size: 13px; font-weight: 700; flex-shrink: 0; }
+.em-callout-body { font-size: 12.5px; color: var(--ink-700); line-height: 1.55; }
+.req-emergency-count { font-family: var(--f-mono); font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--crimson); color: var(--paper); }
+
+/* Emergency door \u2014 the entry strip under the next-session card. Keyed to its own
+   session, so it can show while the card has already rolled to the next one. */
+.em-door { display: flex; gap: 11px; align-items: flex-start; padding: 14px 16px; border: 1px solid var(--crimson-500); border-radius: 14px; background: var(--crimson-100); cursor: pointer; }
+.em-door:hover { border-color: var(--crimson); }
+.em-door-mark { width: 24px; height: 24px; border-radius: 999px; background: var(--crimson); color: var(--paper); display: flex; align-items: center; justify-content: center; font-family: var(--f-mono); font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.em-door > div { min-width: 0; }
+.em-door .em-door-win { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.08em; line-height: 1.5; color: var(--ink-500); margin-top: 5px; overflow-wrap: break-word; }
+
+/* Emergency apology form (member-facing, entered from the deadline-passed card) */
+.em-card { border: 1px solid var(--crimson-500); border-radius: 14px; background: var(--paper); overflow: hidden; }
+.em-head { display: flex; align-items: center; gap: 10px; padding: 12px 20px; background: var(--crimson-100); border-bottom: 1px solid var(--crimson-500); }
+.em-head .eyebrow { color: var(--crimson-600); }
+.em-body { padding: 18px 20px 20px; }
+.em-session { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 14px; padding: 13px 16px; border-radius: 12px; background: var(--paper-100); border: 1px solid var(--paper-200); }
+.em-session-date { font-family: var(--f-display); font-style: normal; font-size: 21px; line-height: 1.1; color: var(--ink); }
+.em-meta { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-500); }
+.em-rules { display: flex; flex-direction: column; gap: 9px; margin-top: 16px; padding: 14px 16px; border-radius: 12px; background: var(--crimson-100); }
+.em-rule { display: flex; gap: 9px; align-items: flex-start; font-size: 12.5px; color: var(--ink-700); line-height: 1.5; }
+.em-rule > span { color: var(--crimson-600); flex-shrink: 0; font-weight: 700; }
+.em-blocked { display: flex; gap: 13px; align-items: flex-start; padding: 16px 18px; border-radius: 12px; background: var(--paper-100); border: 1px solid var(--paper-200); }
+.em-blocked-mark { width: 30px; height: 30px; border-radius: 999px; background: var(--paper-200); color: var(--ink-500); display: flex; align-items: center; justify-content: center; font-family: var(--f-mono); font-size: 14px; flex-shrink: 0; }
+
+/* Member export filters (Members → Roster) */
+.mfilter { margin-bottom: 14px; border: 1px solid var(--paper-200); border-radius: 14px; background: var(--paper); overflow: hidden; }
+.mfilter-bar { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; padding: 12px 16px; }
+.mfilter-toggle { display: inline-flex; align-items: center; gap: 8px; background: transparent; border: none; cursor: pointer; padding: 0; font-family: var(--f-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-700); }
+.mfilter-toggle .caret { color: var(--ink-400); }
+.mfilter-toggle .on { font-family: var(--f-mono); font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em; padding: 1px 6px; border-radius: 999px; background: var(--ink); color: var(--gold-300); }
+.mfilter-count { font-family: var(--f-mono); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-500); }
+.mfilter-count b { font-family: var(--f-display); font-style: normal; font-size: 17px; font-weight: 400; color: var(--ink); letter-spacing: 0; }
+.mfilter-actions { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.mfilter-panel { border-top: 1px solid var(--paper-200); padding: 16px; display: grid; gap: 16px; }
+.mfilter-facet { display: flex; flex-direction: column; gap: 8px; }
+.mfilter-facet-head { display: flex; align-items: baseline; gap: 8px; }
+.mfilter-sub { font-family: var(--f-mono); font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-400); margin-top: 4px; }
+.mfilter-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.mfilter-clear { background: transparent; border: none; cursor: pointer; font-family: var(--f-mono); font-size: 9.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-400); }
+.mfilter-clear:hover { color: var(--crimson-600); }
+@media (min-width: 1024px) { .mfilter-panel { grid-template-columns: 1fr 1fr; } .mfilter-facet.span-2 { grid-column: 1 / -1; } }
+
 /* ── Member apology form (sub-page of My attendance) ── */
 .apol-back { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; cursor: pointer; padding: 2px 0 10px; font-family: var(--f-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-500); }
 .apol-back:hover { color: var(--ink); }
@@ -1185,8 +1252,12 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .apol-other-date:hover { border-color: var(--ink); }
 .apol-other-date-title { font-size: 12.5px; font-weight: 600; color: var(--ink); }
 .apol-other-date-sub { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.06em; color: var(--ink-500); margin-top: 2px; }
-.apol-other-date-plus { font-family: var(--f-display); font-size: 17px; color: var(--ink-400); line-height: 1; flex-shrink: 0; }
+.apol-other-date-plus { font-family: var(--f-display); font-size: 17px; color: var(--ink-400); line-height: 1; flex-shrink: 0; pointer-events: none; }
 .apol-other-date-input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: none; background: transparent; opacity: 0; cursor: pointer; }
+/* The native calendar indicator is the only reliable click target for the picker,
+   so stretch it over the whole row — otherwise only the right edge (under the +)
+   opened it, and that edge also reset the cursor to a default arrow. */
+.apol-other-date-input::-webkit-calendar-picker-indicator { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
 .apol-type { display: flex; gap: 8px; }
 .apol-type-btn { flex: 1; display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-radius: 10px; border: 1px solid var(--paper-200); background: var(--paper); color: var(--ink-700); cursor: pointer; font-family: var(--f-sans); font-size: 13px; font-weight: 600; text-align: left; transition: background 0.12s, border-color 0.12s; }
 .apol-type-btn .apol-radio { width: 14px; height: 14px; border-radius: 999px; border: 2px solid var(--ink-400); flex-shrink: 0; box-sizing: border-box; }
@@ -2162,10 +2233,23 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
         <button data-mode="scoreboard" onclick="setMembersMode('scoreboard')">Scoreboard</button>
         <button data-mode="add" onclick="setMembersMode('add')">Add member</button>
         <button data-mode="offense" onclick="setMembersMode('offense')">Record offense</button>
+        <button data-mode="reward" onclick="setMembersMode('reward')">Award reward</button>
       </div>
 
       <!-- ROSTER (two-pane on desktop) -->
       <div id="membersRosterPane">
+        <!-- Filters — populated from getMemberFilterOptions(); scope the roster list and both exports -->
+        <div class="mfilter" id="memberFilter">
+          <div class="mfilter-bar">
+            <button class="mfilter-toggle" id="mfilterToggle" onclick="toggleMemberFilterPanel()"><span class="caret" id="mfilterCaret">▸</span>Filters<span class="on" id="mfilterOnCount" style="display:none">0</span></button>
+            <div class="mfilter-count" id="mfilterCount"><b>—</b> members match</div>
+            <div class="mfilter-actions">
+              <button class="btn-export" id="mfilterCsv" onclick="exportFilteredMembersCSV()">Export · CSV</button>
+              <button class="btn-export" id="mfilterPdf" onclick="exportFilteredMembersPDF()">Print / Save as PDF</button>
+            </div>
+          </div>
+          <div class="mfilter-panel" id="mfilterPanel" style="display:none"><p class="loading">Loading filters…</p></div>
+        </div>
         <div class="two-pane">
           <div class="two-pane-list">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
@@ -2269,6 +2353,49 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
         </div>
       </div>
 
+      <!-- AWARD REWARD — the positive counterpart to the offense pane -->
+      <div id="membersRewardPane" style="display:none">
+        <div class="two-pane">
+          <div class="two-pane-list">
+            <div class="card" style="border-color:var(--present-bg)">
+              <div class="form-label" style="margin-bottom:14px;color:var(--present)">New reward</div>
+              <div class="form-group">
+                <label class="form-label">Member *</label>
+                <input type="text" id="rwName" list="rwNameList" placeholder="Type to search a member" oninput="onRewardNameInput()" autocomplete="off">
+                <datalist id="rwNameList"></datalist>
+                <div id="rwNameWarn" style="display:none;font-size:11.5px;color:var(--crimson-600);margin-top:6px">No member matches that name exactly.</div>
+              </div>
+              <div class="form-row">
+                <div class="form-group"><label class="form-label">Date *</label><input type="date" id="rwDate"></div>
+                <div class="form-group"><label class="form-label">Category *</label><select id="rwCategory" onchange="onRewardCategoryChange()"></select></div>
+              </div>
+              <div class="form-group" id="rwPointsGroup">
+                <label class="form-label">Points</label>
+                <input type="number" id="rwPoints" min="1" step="1" value="1" oninput="updateRewardEffect()" style="display:none">
+                <div id="rwPointsFixed" class="rw-fixed">+1 PT</div>
+                <div id="rwPointsHint" style="font-size:11.5px;color:var(--ink-500);margin-top:6px"></div>
+              </div>
+              <div class="form-group"><label class="form-label">Description *</label><textarea id="rwDesc" placeholder="What earned it? Kept on the member's record." style="min-height:90px;resize:vertical"></textarea></div>
+              <div style="padding:12px 14px;background:var(--present-bg);border-radius:10px;display:flex;align-items:flex-start;gap:10px;margin-bottom:16px">
+                <span style="color:var(--present);font-family:var(--f-display);font-size:18px;line-height:1">✦</span>
+                <div>
+                  <div id="rwEffectTitle" style="font-size:12.5px;font-weight:600;color:var(--present)">This will add 1 point</div>
+                  <div style="font-size:11.5px;color:var(--ink-600);margin-top:4px;line-height:1.5">Reward points count towards the member’s scoreboard total and show on their record.</div>
+                </div>
+              </div>
+              <div style="display:flex;justify-content:flex-end;gap:10px">
+                <button class="btn btn-secondary" onclick="setMembersMode('roster')">Cancel</button>
+                <button class="btn btn-green" id="btnAddReward" onclick="submitReward()">Award reward</button>
+              </div>
+            </div>
+          </div>
+          <div class="two-pane-detail">
+            <div class="eyebrow" style="margin-bottom:12px">Recent rewards</div>
+            <div id="rewardLogContent"><p class="loading" style="font-size:12px">Rewards appear here.</p></div>
+          </div>
+        </div>
+      </div>
+
       <!-- BY MEMBER (history) — folded in from the old View & Edit. setMembersMode('member') injects renderByMemberView() here. -->
       <div id="membersMemberPane" style="display:none">
         <div id="memberHistoryRoot"><div class="loading"><div class="spinner"></div><div>Loading…</div></div></div>
@@ -2336,10 +2463,12 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 
       <!-- Header: back link + title + subtitle -->
       <button class="apol-back" onclick="closeApology()">← My attendance</button>
-      <h2 style="margin-top:4px">Submit an apology.</h2>
-      <p class="subtitle" style="max-width:62ch">Tell admins ahead of time. Apologies submitted before 4:00&nbsp;PM on the day are auto-accepted as Late or Absent&nbsp;·&nbsp;Excused.</p>
+      <div class="eyebrow" id="apolPageEyebrow" style="margin-top:10px"></div>
+      <h2 style="margin-top:4px" id="apolPageTitle">Submit an apology.</h2>
+      <p class="subtitle" style="max-width:62ch" id="apolPageSub">Tell admins ahead of time. Apologies submitted before 4:00&nbsp;PM on the day are auto-accepted as Late or Absent&nbsp;·&nbsp;Excused.</p>
 
-      <!-- One-session / Extended period segmented control -->
+      <!-- One-session / Extended period segmented control. Emergency is NOT here —
+           it is entered from the deadline-passed card and takes over the page. -->
       <div class="view-mode-toggle" id="apologyTypeToggle" style="margin-bottom:16px">
         <button class="active" onclick="setApologyKind('single')">One session</button>
         <button onclick="setApologyKind('extended')">Extended period</button>
@@ -2426,6 +2555,11 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
             </div>
           </div>
 
+          <!-- EMERGENCY FORM — after the deadline, most recent session only. Rendered by renderEmergencyApology(). -->
+          <div id="apologyEmergencyForm" style="display:none">
+            <div id="emergencyApolMount"><p class="loading">Checking your last session…</p></div>
+          </div>
+
           <!-- Long-term hint strip (single mode only) -->
           <div class="apol-longhint" id="apolLongHint" onclick="setApologyKind('extended')">
             <span class="apol-longhint-mark">▸</span>
@@ -2438,8 +2572,8 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
             <div style="position:relative">
               <div style="font-family:var(--f-mono);font-size:10px;letter-spacing:.18em;color:var(--gold-300)">HOW APOLOGIES WORK</div>
               <div style="margin-top:10px;display:flex;flex-direction:column;gap:10px">
-                <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:5px;height:5px;border-radius:999px;background:var(--gold-300);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">Before 4 PM on the day</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Auto-accepted · counted as Excused</div></div></div>
-                <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:5px;height:5px;border-radius:999px;background:var(--gold-500);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">After the cut-off</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Counted as Unexcused — points still deducted</div></div></div>
+                <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:5px;height:5px;border-radius:999px;background:var(--gold-300);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">Up to 30 minutes before</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Auto-accepted · counted as Excused</div></div></div>
+                <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:5px;height:5px;border-radius:999px;background:var(--gold-500);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">After the cut-off</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Counted as Unexcused</div></div></div>
                 <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:5px;height:5px;border-radius:999px;background:var(--gold-700);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">Extended absence (1+ week)</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Long-term apology · admin approval needed</div></div></div>
               </div>
             </div>
@@ -2460,8 +2594,8 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
               <div style="font-family:var(--f-mono);font-size:10px;letter-spacing:.18em;color:var(--gold-300)">HOW APOLOGIES WORK</div>
               <div class="display" style="font-size:22px;color:var(--paper);line-height:1.15;margin-top:8px">The earlier you tell us,<br>the kinder the count.</div>
               <div style="margin-top:16px;display:flex;flex-direction:column;gap:12px">
-                <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:6px;height:6px;border-radius:999px;background:var(--gold-300);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">Before 4 PM on the day</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Auto-accepted · counted as Excused</div></div></div>
-                <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:6px;height:6px;border-radius:999px;background:var(--gold-500);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">After the cut-off</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Counted as Unexcused — points still deducted</div></div></div>
+                <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:6px;height:6px;border-radius:999px;background:var(--gold-300);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">Up to 30 minutes before</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Auto-accepted · counted as Excused</div></div></div>
+                <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:6px;height:6px;border-radius:999px;background:var(--gold-500);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">After the cut-off</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Counted as Unexcused</div></div></div>
                 <div style="display:flex;align-items:flex-start;gap:10px"><span style="width:6px;height:6px;border-radius:999px;background:var(--gold-700);margin-top:7px;flex-shrink:0"></span><div><div style="font-size:13px;font-weight:600;color:var(--paper)">Extended absence (1+ week)</div><div style="font-size:11.5px;color:var(--ink-300);margin-top:2px">Long-term apology · admin approval needed</div></div></div>
               </div>
             </div>
@@ -2471,26 +2605,6 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
           <div id="myApologiesContentApol" class="apol-history desktop-only-rules"><p class="loading">Loading…</p></div>
         </div>
       </div>
-    </section>
-
-    <!-- ─── SCOREBOARD TAB (member) ─── -->
-    <section id="tab-scoreboard-member" class="tab-page">
-      <div class="section-head">
-        <div class="eyebrow">Standings · MMXXVI</div>
-        <span class="gold-rule"></span>
-        <h2>Scoreboard.</h2>
-        <p class="subtitle">How everyone is ranking this term.</p>
-      </div>
-      <div class="controls">
-        <select id="sbMemberGroupSelect" onchange="loadMemberScoreboard()">
-          <option value="All" selected>All</option>
-          <option value="Choir">Choir</option>
-          <option value="Band">Band</option>
-          <option value="Orchestra">Orchestra</option>
-        </select>
-        <button class="btn-export" onclick="toggleRankMode()" id="rankToggleMember">Competitive</button>
-      </div>
-      <div id="memberScoreboardContent"><div class="loading"><div class="spinner"></div><div>Loading…</div></div></div>
     </section>
   </main>
 </div>

@@ -58,6 +58,13 @@ var CONSECUTIVE_ABSENCE_PENALTY = -2;
 var OFFENSE_PENALTY = -3;
 var AU_REMOVAL_ENABLED = false;
 
+// Consecutive absence penalty
+// Apologies must be submitted at least this many minutes before the session starts.
+var APOLOGY_DEADLINE_MINUTES = 30;
+var CONSECUTIVE_ABSENCE_COUNT = 3;
+var CONSECUTIVE_ABSENCE_PENALTY = -2;
+
+
 function getSpreadsheet_() { return SpreadsheetApp.openById(SPREADSHEET_ID); }
  
 function doGet() {
@@ -101,7 +108,8 @@ var SHEET_SCHEMAS = {
   "Meetings": { order: true, headers: ["Date","Time","Groups","Title","Created By","Timestamp"] },
   "Members": { order: false, headers: ["Name","Email","Phone","Groups","Choir Part","Band Role","Orchestra Role","Adm. No.","Status","Profile Photo"] },
   "Admins": { order: false, headers: ["Email","Role","Section","Rep Group"] },
-  "Probation History": { order: false, headers: ["Name","Probation Start","Outcome","Attended","Required"] } // Email may sit anywhere, but the header MUST exist
+  "Probation History": { order: false, headers: ["Name","Probation Start","Outcome","Attended","Required"] },
+  "Rewards": { order: false, headers: ["Date","Name","Category","Description","Points","Recorded By"] } // Email may sit anywhere, but the header MUST exist
 };
 
 /**
@@ -502,18 +510,6 @@ function getMyAttendance() {
 
   var attData = readAllAttendance_(ss);
   var history = getMemberHistory(member.name);
-  var scoreboard = getScoreboard("All");
-
-  // Find this member's scoreboard position
-  var myScore = null;
-  var myRank = 0;
-  for (var i = 0; i < scoreboard.length; i++) {
-    if (scoreboard[i].name === member.name) {
-      myScore = scoreboard[i];
-      myRank = i + 1;
-      break;
-    }
-  }
 
   // Probation status
   var probation = null;
@@ -556,10 +552,8 @@ function getMyAttendance() {
     probationAcknowledged: member.probationAcknowledged,
     probationInfo: probation,
     onboardingCompleted: onboardingDone,
-    history: history,
-    score: myScore,
-    rank: myRank,
-    totalMembers: scoreboard.length
+    history: history
+    // score / rank / totalMembers removed: members no longer see points or rankings.
   };
 }
 
@@ -816,7 +810,7 @@ function getProbationDashboard() {
   var inScope = scopeMemberPredicate_(access, ss);
   var prob=all.filter(function(m){return m.probation&&m.active&&m.probationStart&&inScope(m);});
   if(prob.length===0)return[];var att=readAllAttendance_(ss);
-  return prob.map(function(m){var s=calculateProbationStats_(m,att);s.groups=m.groups.filter(function(g){return GROUPS.indexOf(g)!==-1;});s.profilePhoto=driveAvatarDataUri_(m.profilePhotoRaw);return s;});
+  return prob.map(function(m){var s=calculateProbationStats_(m,att);s.groups=m.groups.filter(function(g){return GROUPS.indexOf(g)!==-1;}).sort(function(a,b){return GROUPS.indexOf(a)-GROUPS.indexOf(b);});s.profilePhoto=driveAvatarDataUri_(m.profilePhotoRaw);return s;});
 }
 
 /**
@@ -847,8 +841,10 @@ function calculateProbationStats_(member, attData) {
     var key = rec.date + "|" + rec.session;
     var existing = sessionMap[key];
     if (!existing) {
-      sessionMap[key] = { date: rec.date, status: rec.status };
+      sessionMap[key] = { date: rec.date, status: rec.status,
+                          sessionKey: rec.session, groups: [rec.group] };
     } else {
+      if (existing.groups.indexOf(rec.group) === -1) existing.groups.push(rec.group);
       // Keep the better status (attended > not attended)
       var existAttended = ATTENDED_STATUSES.indexOf(existing.status) !== -1;
       var newAttended = ATTENDED_STATUSES.indexOf(rec.status) !== -1;
@@ -882,7 +878,11 @@ function calculateProbationStats_(member, attData) {
   var sessionSequence = [];
   for (var q = 0; q < sessionsToCount; q++) {
     var sq = sessionMap[sessionKeys[q]];
-    sessionSequence.push({ date: sq.date, status: sq.status });
+    sessionSequence.push({ date: sq.date, status: sq.status,
+                           sessionKey: sq.sessionKey,
+                           groups: (sq.groups || []).slice().sort(function (a, b) {
+                             return GROUPS.indexOf(a) - GROUPS.indexOf(b);
+                           }) });
   }
   var pendingSlots = Math.max(0, PROBATION_SESSIONS - sessionSequence.length);
 
@@ -901,7 +901,11 @@ function calculateProbationStats_(member, attData) {
     passed: totalSessions >= PROBATION_SESSIONS && attended >= required,
     lastSessionDate: lastSessionDate,
     sessionSequence: sessionSequence,
-    pendingSlots: pendingSlots
+    pendingSlots: pendingSlots,
+    // null = the figures span EVERY section the member belongs to. If probation is
+    // ever scoped to one section this carries that section's name, while `groups`
+    // still lists the member's full membership.
+    scopedSection: null
   };
 }
 
@@ -1193,9 +1197,18 @@ function readAllAttendance_(ss) {
  * @param {string} group — "All" or specific group
  */
 function getScoreboard(group) {
+  // Members may no longer see points, rankings or the scoreboard - this is now
+  // restricted to full admins and section admins.
+  requireManagement_();
+  return computeScoreboard_(group);
+}
+
+/** Internal, UNGUARDED scoreboard computation. Never expose this to the client. */
+function computeScoreboard_(group) {
   var ss = getSpreadsheet_();
   var allMembers = readAllMembers_(ss);
   var attData = readAllAttendance_(ss);
+  var rewards = readRewards_(ss);
   var offenses = readOffenses_(ss);
 
   var STATUS_PRIORITY = ["Present", "Late Excused", "Late Unexcused", "Absent Excused", "Absent Unexcused"];
@@ -1272,10 +1285,15 @@ function getScoreboard(group) {
       offensePts += (memberOffenses[oi].points !== undefined ? memberOffenses[oi].points : OFFENSE_PENALTY);
     }
 
+    // Reward points - shown as their own column and included in the total.
+    var memberRewards = rewards.filter(function (r) { return r.name === m.name; });
+    var rewardPts = 0;
+    for (var ri = 0; ri < memberRewards.length; ri++) rewardPts += (memberRewards[ri].points || 0);
+
     // Probation penalty (for conditional pass members)
     var probPenalty = m.probationPenalty || 0;
 
-    var totalPoints = attPoints + consecPenalty + offensePts + probPenalty;
+    var totalPoints = attPoints + consecPenalty + offensePts + probPenalty + rewardPts;
 
     results.push({
       name: m.name,
@@ -1285,6 +1303,8 @@ function getScoreboard(group) {
       consecPenalty: consecPenalty,
       offenseCount: memberOffenses.length,
       offensePts: offensePts,
+      rewardCount: memberRewards.length,
+      rewardPts: rewardPts,
       probPenalty: probPenalty,
       statusCounts: statusCounts,
       totalDays: dayStatuses.length,
@@ -1379,8 +1399,13 @@ function ensureOffensesSheet_(ss) {
 /**
  * Adds an offense to the Offenses sheet. Optional points override (defaults to flat penalty).
  */
-function addOffense(dateStr, memberName, description, points) {
+function addOffense(dateStr, memberName, description, points, isAutomatic) {
   var ss = getSpreadsheet_();
+  // MANUAL offenses are management-only. AUTOMATIC ones (the 3-AU sweep) must not
+  // be guarded: they fire from triggers with no session, and from saveAttendance
+  // run by elevated reps who are not management - guarding here would break
+  // attendance recording for them.
+  if (!isAutomatic) requireManagement_();
   var sheet = ensureOffensesSheet_(ss);
   var user = Session.getActiveUser().getEmail() || "Unknown";
   var pts = (points === undefined || points === null || points === "") ? OFFENSE_PENALTY : points;
@@ -1397,8 +1422,226 @@ function addOffense(dateStr, memberName, description, points) {
  * Returns offenses for display.
  */
 function getOffenseList() {
+  // The disciplinary log is management-only, same as the scoreboard, and section
+  // admins see only their own section's members.
   var ss = getSpreadsheet_();
-  return readOffenses_(ss);
+  var access = requireManagement_();
+  var offenses = readOffenses_(ss);
+  if (access.level < ROLE_LEVELS.admin) {
+    var inScope = scopeMemberPredicate_(access, ss);
+    var byName = {};
+    readAllMembers_(ss).forEach(function (m) { byName[m.name] = m; });
+    offenses = offenses.filter(function (o) { return byName[o.name] && inScope(byName[o.name]); });
+  }
+  return offenses;
+}
+
+// =======================================================
+//  REWARDS — the positive counterpart to Offenses.
+//  Categories live in the Config sheet ("Reward Category" | "Reward Points"):
+//  a number fixes that category's value; a blank means VARIABLE, so the admin
+//  sets the points when awarding. Reward points are surfaced separately AND
+//  included in the scoreboard total.
+// =======================================================
+var REWARDS_SHEET = "Rewards";
+var REWARD_DEFAULT_POINTS = 1;
+var AUTO_REWARD_TAG = "[auto:perfect]";
+var REWARD_PERFECT_POINTS = 2;      // points for a perfect-attendance month
+var REWARD_PERFECT_MIN_SESSIONS = 3; // a 1-session month should not earn it
+
+/** Ensures the Rewards sheet exists with its header row. Header-based throughout. */
+function ensureRewardsSheet_(ss) {
+  var headers = ["Date", "Name", "Category", "Description", "Points", "Recorded By", "Timestamp"];
+  var sheet = ss.getSheetByName(REWARDS_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(REWARDS_SHEET);
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight("bold");
+    sheet.setFrozenRows(1);
+    return sheet;
+  }
+  if (sheet.getLastRow() === 0 || sheet.getLastColumn() === 0) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight("bold");
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+/** Reads all rewards. Points default to REWARD_DEFAULT_POINTS when blank. */
+function readRewards_(ss) {
+  var sheet = ss.getSheetByName(REWARDS_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var data = sheet.getDataRange().getValues();
+  var h = data[0].map(function (x) { return x.toString().trim().toLowerCase(); });
+  function col(n) { return h.indexOf(n); }
+  var out = [];
+  for (var i = 1; i < data.length; i++) {
+    var name = col("name") !== -1 ? data[i][col("name")].toString().trim() : "";
+    if (!name) continue;
+    var raw = col("points") !== -1 ? data[i][col("points")] : "";
+    var pts = (raw === "" || raw === null || isNaN(Number(raw))) ? REWARD_DEFAULT_POINTS : Number(raw);
+    out.push({
+      rowIndex: i + 1,
+      date: formatSheetDate_(data[i][col("date")]),
+      name: name,
+      category: col("category") !== -1 ? data[i][col("category")].toString() : "",
+      description: col("description") !== -1 ? data[i][col("description")].toString() : "",
+      points: pts,
+      recordedBy: col("recorded by") !== -1 ? data[i][col("recorded by")].toString() : ""
+    });
+  }
+  return out;
+}
+
+/**
+ * Reward categories from the Config sheet.
+ * "Reward Points" holds a number for a FIXED category, or is blank for a VARIABLE
+ * one where the admin supplies the value at award time.
+ * @returns {Array} [{ category, points, variable }]
+ */
+function getRewardCategories() {
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(CONFIG_SHEET);
+  var out = [];
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var data = sheet.getDataRange().getValues();
+  var h = data[0].map(function (x) { return x.toString().trim().toLowerCase(); });
+  var ci = h.indexOf("reward category"), pi = h.indexOf("reward points");
+  if (ci === -1) return out;
+  for (var i = 1; i < data.length; i++) {
+    var cat = data[i][ci] ? data[i][ci].toString().trim() : "";
+    if (!cat) continue;
+    var raw = (pi !== -1 && data[i][pi] !== "" && data[i][pi] !== null) ? Number(data[i][pi]) : null;
+    var variable = (raw === null || isNaN(raw));
+    out.push({ category: cat, points: variable ? null : raw, variable: variable });
+  }
+  return out;
+}
+
+/**
+ * Awards a reward. Points resolution order:
+ *   1. a FIXED category's configured value always wins
+ *   2. otherwise the value the admin supplied
+ *   3. otherwise REWARD_DEFAULT_POINTS
+ * Section admins may only award members within their own scope.
+ */
+function addReward(dateStr, memberName, category, description, points) {
+  var ss = getSpreadsheet_();
+  var access = requireManagement_();
+  if (!memberName) throw new Error("A member is required.");
+
+  if (access.level < ROLE_LEVELS.admin) {
+    var inScope = scopeMemberPredicate_(access, ss);
+    var target = null;
+    readAllMembers_(ss).forEach(function (m) { if (m.name === memberName) target = m; });
+    if (!target || !inScope(target)) throw new Error("You can only award members in your section.");
+  }
+
+  var resolved = (points === undefined || points === null || points === "" || isNaN(Number(points)))
+    ? null : Number(points);
+  getRewardCategories().forEach(function (c) {
+    if (c.category.toLowerCase() === String(category || "").toLowerCase() && !c.variable) {
+      resolved = c.points; // a fixed category is not overridable
+    }
+  });
+  if (resolved === null) resolved = REWARD_DEFAULT_POINTS;
+
+  var sheet = ensureRewardsSheet_(ss);
+  var user = Session.getActiveUser().getEmail() || "Unknown";
+  sheet.appendRow([dateStr || todayStr_(), memberName, category || "", description || "",
+                   resolved, user, new Date()]);
+  return { success: true, name: memberName, points: resolved };
+}
+
+/** Removes a reward by its sheet row (admins, or the section admin who owns the member). */
+function deleteReward(rowIndex) {
+  requireManagement_();
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(REWARDS_SHEET);
+  if (!sheet) throw new Error("No rewards recorded.");
+  if (rowIndex < 2 || rowIndex > sheet.getLastRow()) throw new Error("Reward not found.");
+  sheet.deleteRow(rowIndex);
+  return { success: true };
+}
+
+/** Rewards for display, newest first. Scoped for section admins and reps. */
+function getRewardList() {
+  var ss = getSpreadsheet_();
+  var access = getAccess_(ss);
+  if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
+  var rewards = readRewards_(ss);
+  if (access.level < ROLE_LEVELS.admin) {
+    var inScope = scopeMemberPredicate_(access, ss);
+    var byName = {};
+    readAllMembers_(ss).forEach(function (m) { byName[m.name] = m; });
+    rewards = rewards.filter(function (r) { return byName[r.name] && inScope(byName[r.name]); });
+  }
+  rewards.sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
+  return rewards;
+}
+
+/**
+ * AUTOMATIC — awards a perfect-attendance reward for any completed calendar month
+ * in which every one of a member's records was "Present" (lateness disqualifies)
+ * and they had at least REWARD_PERFECT_MIN_SESSIONS sessions.
+ * Idempotent: keyed by member + month via the AUTO_REWARD_TAG, so re-running is safe.
+ * The CURRENT month is skipped - it is not finished yet.
+ */
+function syncAutomaticRewards_(ss) {
+  ss = ss || getSpreadsheet_();
+  var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (!attSheet || attSheet.getLastRow() < 2) return { added: 0 };
+
+  var thisMonth = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM");
+  var byMemberMonth = {};
+  var data = attSheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    var ds = formatSheetDate_(data[i][0]);
+    if (!ds) continue;
+    var month = ds.substring(0, 7);
+    if (month >= thisMonth) continue; // only completed months
+    var name = data[i][1].toString().trim();
+    var key = name + "|" + month;
+    if (!byMemberMonth[key]) byMemberMonth[key] = { name: name, month: month, dates: {} };
+    var slot = byMemberMonth[key].dates;
+    slot[ds] = bestStatus_(slot[ds], data[i][4].toString());
+  }
+
+  // existing auto rewards, keyed by name + month
+  var existing = {};
+  readRewards_(ss).forEach(function (r) {
+    if (r.description && r.description.indexOf(AUTO_REWARD_TAG) !== -1) {
+      existing[r.name + "|" + (r.date || "").substring(0, 7)] = true;
+    }
+  });
+
+  var added = 0;
+  for (var k in byMemberMonth) {
+    var rec = byMemberMonth[k];
+    var dates = Object.keys(rec.dates).sort();
+    if (dates.length < REWARD_PERFECT_MIN_SESSIONS) continue;
+    var perfect = true;
+    for (var d = 0; d < dates.length; d++) {
+      if (rec.dates[dates[d]] !== "Present") { perfect = false; break; }
+    }
+    if (!perfect) continue;
+    var awardDate = dates[dates.length - 1];
+    if (existing[rec.name + "|" + rec.month]) continue;
+    var sheet = ensureRewardsSheet_(ss);
+    sheet.appendRow([awardDate, rec.name, "Perfect attendance",
+                     "Present at all " + dates.length + " sessions in " + rec.month + " " + AUTO_REWARD_TAG,
+                     REWARD_PERFECT_POINTS, "System", new Date()]);
+    existing[rec.name + "|" + rec.month] = true;
+    added++;
+  }
+  return { added: added };
+}
+
+/** PUBLIC — run the automatic reward sweep on demand. Also runs in dailyTasks_. */
+function runRewardSweep() {
+  var r = syncAutomaticRewards_(getSpreadsheet_());
+  var msg = "Automatic rewards added: " + r.added;
+  Logger.log(msg);
+  return { success: true, added: r.added, message: msg };
 }
 
 // -------------------------------------------------------
@@ -1457,7 +1700,8 @@ function syncConsecutiveAuOffenses_(ss) {
           var setKey = dates[d]; // date of the 3rd AU = this set's key
           var already = existingKeys[name] && existingKeys[name][setKey];
           if (!already) {
-            addOffense(setKey, name, "3 consecutive unexcused absences " + CONSEC_AU_OFFENSE_TAG, CONSECUTIVE_ABSENCE_PENALTY);
+            addOffense(setKey, name, "3 consecutive unexcused absences " + CONSEC_AU_OFFENSE_TAG,
+                       CONSECUTIVE_ABSENCE_PENALTY, true /* automatic */);
             if (!existingKeys[name]) existingKeys[name] = {};
             existingKeys[name][setKey] = true;
             added++;
@@ -3037,17 +3281,17 @@ function exportProbationPDF() {
 }
 
 function exportScoreboardCSV(group) {
-  exportGuard_(group);
+  requireManagement_();
   // "Consec. Penalty" was removed: 3-AU penalties are recorded as offenses now, so
   // that column was always 0 and double-implied a deduction that lives in Offense Pts.
-  var sb=getScoreboard(group),rows=[["Rank","Name","Groups","Total Points","Attendance Pts","Offenses","Offense Pts","Days"]];
-  for(var i=0;i<sb.length;i++){var s=sb[i];rows.push([i+1,s.name,s.groups.join(", "),s.totalPoints,s.attPoints,s.offenseCount,s.offensePts,s.totalDays]);}
+  var sb=getScoreboard(group),rows=[["Rank","Name","Groups","Total Points","Attendance Pts","Rewards","Reward Pts","Offenses","Offense Pts","Days"]];
+  for(var i=0;i<sb.length;i++){var s=sb[i];rows.push([i+1,s.name,s.groups.join(", "),s.totalPoints,s.attPoints,s.rewardCount,s.rewardPts,s.offenseCount,s.offensePts,s.totalDays]);}
   return arrayToCSV_(rows);
 }
 function exportScoreboardPDF(group) {
-  exportGuard_(group);
-  var sb=getScoreboard(group),rows=[["Rank","Name","Groups","Total Points","Attendance Pts","Offenses","Offense Pts","Days"]];
-  for(var i=0;i<sb.length;i++){var s=sb[i];rows.push([i+1,s.name,s.groups.join(", "),s.totalPoints,s.attPoints,s.offenseCount,s.offensePts,s.totalDays]);}
+  requireManagement_();
+  var sb=getScoreboard(group),rows=[["Rank","Name","Groups","Total Points","Attendance Pts","Rewards","Reward Pts","Offenses","Offense Pts","Days"]];
+  for(var i=0;i<sb.length;i++){var s=sb[i];rows.push([i+1,s.name,s.groups.join(", "),s.totalPoints,s.attPoints,s.rewardCount,s.rewardPts,s.offenseCount,s.offensePts,s.totalDays]);}
   return buildPrintHTML_("Scoreboard" + (group!=="All"?" — "+group:""),rows,group);
 }
 
@@ -3102,54 +3346,358 @@ function acknowledgeProbation() {
 /**
  * Failed member requests to restart probation.
  */
-function requestProbationRestart(reason) {
+/**
+ * FOLDED INTO THE REJOIN FLOW. A failed probation now sets the member inactive,
+ * which is exactly the state the rejoin flow handles, so this is a thin alias kept
+ * only so any UI still calling it keeps working. New code should call requestRejoin.
+ */
+// =======================================================
+//  EMERGENCY APOLOGIES
+//  Filed AFTER the deadline for a session that has already happened. They always
+//  require explicit admin approval - nothing about them is automatic, and a
+//  pending one never influences a register. Restricted to the member's single
+//  most recent session, within a short window, and never long-term.
+// =======================================================
+var EMERGENCY_APOLOGY_TYPE = "Emergency";
+// How long AFTER a session starts a member may still file an emergency apology.
+// Measured from the session's START TIME, not from the end of the day.
+var EMERGENCY_APOLOGY_WINDOW_HOURS = 24;
+// How long a session stays on the member's card after it has started, so the card
+// does not jump to the next session the instant the current one begins.
+var SESSION_GRACE_MINUTES = 60;
+
+/**
+ * The session a member may currently file an emergency apology for.
+ *
+ * Eligibility is keyed to the SESSION (from the schedule), not to an attendance
+ * row. The register is often marked hours after a session ends, and keying off it
+ * meant the window opened late - or never, if the card had already rolled on.
+ * Now the window opens the moment a session starts and runs for
+ * EMERGENCY_APOLOGY_WINDOW_HOURS, whether or not anyone has marked the register.
+ *
+ * @returns {Object} { eligible, reason, date, time, groups, sessionKey,
+ *                     opensAt, closesAt, status, windowHours }
+ */
+function getEmergencyApologyOption() {
   var ss = getSpreadsheet_();
   var email = Session.getActiveUser().getEmail();
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
-  if (!member) throw new Error("No member found.");
-  if (!member.probationFailed) throw new Error("You are not in a failed probation state.");
+  if (!member) throw new Error("No member record found.");
+  var memberGroups = member.groups.filter(function (g) { return GROUPS.indexOf(g) !== -1; });
+  if (!memberGroups.length) return { eligible: false, reason: "You are not in any section." };
 
-  // Store restart request in Apologies sheet as a special type
+  var tz = Session.getScriptTimeZone();
+  var now = new Date();
+  var windowMs = EMERGENCY_APOLOGY_WINDOW_HOURS * 3600000;
+
+  // Walk backwards day by day for the most recent STARTED session still in window.
+  var days = Math.ceil(EMERGENCY_APOLOGY_WINDOW_HOURS / 24) + 1;
+  var candidate = null;
+  for (var d = 0; d <= days; d++) {
+    var checkDate = new Date(now.getTime() - d * 86400000);
+    var dateStr = Utilities.formatDate(checkDate, tz, "yyyy-MM-dd");
+    var info = getSessionTime(dateStr, memberGroups);
+    if (!info.found) continue;
+    var timeStr = info.latest || info.time;
+    var tp = timeStr.split(":");
+    var sessionDT = new Date(checkDate.getFullYear(), checkDate.getMonth(), checkDate.getDate(),
+                             parseInt(tp[0], 10), parseInt(tp[1], 10));
+    if (sessionDT > now) continue;                       // not started yet
+    if ((now - sessionDT) > windowMs) break;             // older than this is out of window
+    candidate = { date: dateStr, time: timeStr, sessionDT: sessionDT, groups: memberGroups };
+    break;                                               // most recent wins
+  }
+
+  if (!candidate) {
+    return { eligible: false,
+             reason: "There is no recent session to file an emergency apology for." };
+  }
+
+  var closesAt = new Date(candidate.sessionDT.getTime() + windowMs);
+  var base = {
+    date: candidate.date, time: candidate.time, groups: candidate.groups,
+    sessionKey: candidate.groups.join(", "),
+    opensAt: Utilities.formatDate(candidate.sessionDT, tz, "yyyy-MM-dd HH:mm"),
+    closesAt: Utilities.formatDate(closesAt, tz, "yyyy-MM-dd HH:mm"),
+    windowHours: EMERGENCY_APOLOGY_WINDOW_HOURS
+  };
+
+  // If the register IS marked and they turned up, there is nothing to excuse.
+  var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  var recorded = null;
+  if (attSheet && attSheet.getLastRow() > 1) {
+    var ad = attSheet.getDataRange().getValues();
+    for (var i = 1; i < ad.length; i++) {
+      if (ad[i][1].toString().trim() !== member.name) continue;
+      if (formatSheetDate_(ad[i][0]) !== candidate.date) continue;
+      recorded = bestStatus_(recorded, ad[i][4].toString());
+    }
+  }
+  base.status = recorded || "Not yet recorded";
+  if (recorded === "Present" || recorded === "Late Excused") {
+    base.eligible = false;
+    base.reason = "You were marked " + recorded + " for that session.";
+    return base;
+  }
+
+  // Already has an apology on file for that date?
+  var apSheet = ss.getSheetByName(APOLOGIES_SHEET);
+  if (apSheet && apSheet.getLastRow() > 1) {
+    var apd = apSheet.getDataRange().getValues();
+    for (var a = 1; a < apd.length; a++) {
+      if (apd[a][1].toString().trim() !== member.name) continue;
+      if (formatSheetDate_(apd[a][0]) !== candidate.date) continue;
+      if (isRequestType_(apd[a][3])) continue;
+      var st = apd[a][8].toString();
+      if (st === "Rejected" || st === "Revoked" || st === "Not needed") continue;
+      base.eligible = false;
+      base.reason = "You already have an apology on file for that session.";
+      return base;
+    }
+  }
+
+  base.eligible = true;
+  return base;
+}
+
+/**
+ * Files an emergency apology for the member's most recent session.
+ * Always lands Pending: it is after the deadline by definition, so an admin must
+ * decide. Approving it runs the normal backfill, which flips the recorded status.
+ */
+function submitEmergencyApology(reason) {
+  if (!reason || !reason.toString().trim()) throw new Error("Please describe what happened.");
+  var ss = getSpreadsheet_();
+  var email = Session.getActiveUser().getEmail();
+  var member = findMemberByEmail_(ss, email.toLowerCase());
+  if (!member) throw new Error("No member record found.");
+
+  var opt = getEmergencyApologyOption();
+  if (!opt.eligible) throw new Error(opt.reason || "You cannot file an emergency apology right now.");
+
   var sheet = ensureApologiesSheet_(ss);
   var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
-  sheet.appendRow([todayStr_(), member.name, email, "Restart Probation", reason, now, "", "N/A", "Pending", "", ""]);
-  return { success: true };
+  // onTime is "No" by definition; End Date stays blank so this can never be long-term.
+  sheet.appendRow([opt.date, member.name, email, EMERGENCY_APOLOGY_TYPE, reason.toString().trim(),
+                   now, opt.time || "", "No", "Pending", "", "", (opt.groups || []).join(", ")]);
+  try {
+    var admins = getAdminEmails_(ss);
+    if (admins.length) {
+      MailApp.sendEmail({
+        to: admins.join(","),
+        subject: "Emergency apology — " + member.name + " (" + opt.date + ")",
+        htmlBody: buildEmail_(
+          "<p><b>" + member.name + "</b> has filed an <b>emergency apology</b> for the session on " +
+          opt.date + ", after the normal deadline.</p><p>Reason: " + reason + "</p>" +
+          "<p>This needs your review - it will not be applied until approved.</p>",
+          { headerTitle: "Emergency Apology", signatureKey: "general" }),
+        name: EMAIL_FROM_NAME
+      });
+    }
+  } catch (e) { Logger.log("emergency apology notify: " + e); }
+  return { success: true, date: opt.date };
+}
+
+// =======================================================
+//  MEMBER EXPORT WITH FILTERS
+// =======================================================
+
+/** Joins Members with Member Details once, for filtering and export. */
+function readMembersWithDetails_(ss) {
+  var members = readAllMembers_(ss);
+  var detail = {};
+  var sheet = ss.getSheetByName(MEMBER_DETAILS_SHEET);
+  if (sheet && sheet.getLastRow() > 1) {
+    var dmap = headerIndexMap_(sheet);
+    var d = sheet.getDataRange().getValues();
+    for (var i = 1; i < d.length; i++) {
+      var nm = d[i][0].toString().trim();
+      if (!nm) continue;
+      function val(h) { return dmap[h] != null && d[i][dmap[h]] != null ? d[i][dmap[h]].toString().trim() : ""; }
+      detail[nm] = {
+        gender: val("gender"),
+        yearOfStudy: val("year of study"),
+        courseFaculty: val("course faculty"),
+        courseName: val("course name"),
+        admissionNumber: val("admission number"),
+        nationality: val("nationality"),
+        residence: val("residence"),
+        phoneNumber: val("phone number"),
+        memberStatus: val("member status")
+      };
+    }
+  }
+  return members.map(function (m) {
+    var d = detail[m.name] || {};
+    return {
+      name: m.name, email: m.email, phone: m.phone || d.phoneNumber || "",
+      admNo: m.admNo || d.admissionNumber || "",
+      groups: m.groups, roles: m.roles, active: m.active,
+      probation: m.probation, probationPassed: m.probationPassed, probationFailed: m.probationFailed,
+      gender: d.gender || "", yearOfStudy: d.yearOfStudy || "",
+      courseFaculty: d.courseFaculty || "", courseName: d.courseName || "",
+      nationality: d.nationality || "", residence: d.residence || "",
+      memberStatus: d.memberStatus || ""
+    };
+  });
+}
+
+/** Distinct values for each member filter, so the UI never hard-codes a list. */
+function getMemberFilterOptions() {
+  var ss = getSpreadsheet_();
+  var access = getAccess_(ss);
+  if (access.level < ROLE_LEVELS.elevated) throw new Error("Admin access required.");
+  var inScope = scopeMemberPredicate_(access, ss);
+  var all = readMembersWithDetails_(ss).filter(inScope);
+
+  var roles = {}, genders = {}, faculties = {}, years = {};
+  all.forEach(function (m) {
+    GROUPS.forEach(function (g) {
+      var r = m.roles && m.roles[g] ? m.roles[g].toString().trim() : "";
+      if (r) { if (!roles[g]) roles[g] = {}; roles[g][r] = true; }
+    });
+    if (m.gender) genders[m.gender] = true;
+    if (m.courseFaculty) faculties[m.courseFaculty] = true;
+    if (m.yearOfStudy) years[m.yearOfStudy] = true;
+  });
+  var rolesOut = {};
+  Object.keys(roles).forEach(function (g) { rolesOut[g] = Object.keys(roles[g]).sort(); });
+
+  return {
+    sections: (access.level >= ROLE_LEVELS.admin) ? GROUPS.slice() : (access.allowedSections || []).slice(),
+    roles: rolesOut,
+    genders: Object.keys(genders).sort(),
+    faculties: Object.keys(faculties).sort(),
+    yearsOfStudy: Object.keys(years).sort(),
+    probationStatuses: ["On probation", "Passed", "Failed", "Not on probation"],
+    memberStatuses: ["Active", "Rejoining", "On Hiatus", "Left", "Alumnus", "Memorial"]
+  };
+}
+
+/** Applies the filter object to the joined member list. */
+function filterMembers_(members, f) {
+  f = f || {};
+  function has(list) { return list && list.length; }
+  return members.filter(function (m) {
+    if (has(f.sections) && !m.groups.some(function (g) { return f.sections.indexOf(g) !== -1; })) return false;
+    if (has(f.roles)) {
+      var match = false;
+      GROUPS.forEach(function (g) {
+        var r = m.roles && m.roles[g] ? m.roles[g].toString().trim() : "";
+        if (r && f.roles.indexOf(r) !== -1) match = true;
+      });
+      if (!match) return false;
+    }
+    if (has(f.genders) && f.genders.indexOf(m.gender) === -1) return false;
+    if (has(f.faculties) && f.faculties.indexOf(m.courseFaculty) === -1) return false;
+    if (has(f.yearsOfStudy) && f.yearsOfStudy.indexOf(m.yearOfStudy) === -1) return false;
+    if (has(f.memberStatuses) && f.memberStatuses.indexOf(m.memberStatus) === -1) return false;
+    if (has(f.probationStatuses)) {
+      var state = m.probationFailed ? "Failed"
+                : m.probationPassed ? "Passed"
+                : m.probation ? "On probation" : "Not on probation";
+      if (f.probationStatuses.indexOf(state) === -1) return false;
+    }
+    return true;
+  });
+}
+
+/** Builds the export table (header row + data rows) for the filtered members. */
+function buildMemberExportRows_(members) {
+  var rows = [["Name", "Email", "Phone", "Adm. No.", "Sections", "Choir Part", "Band Role",
+               "Orchestra Role", "Gender", "Year of Study", "Course Faculty", "Course",
+               "Probation", "Member Status"]];
+  members.forEach(function (m) {
+    var probState = m.probationFailed ? "Failed"
+                  : m.probationPassed ? "Passed"
+                  : m.probation ? "On probation" : "—";
+    rows.push([
+      m.name, m.email, m.phone, m.admNo, m.groups.join(", "),
+      (m.roles && m.roles["Choir"]) || "", (m.roles && m.roles["Band"]) || "",
+      (m.roles && m.roles["Orchestra"]) || "",
+      m.gender, m.yearOfStudy, m.courseFaculty, m.courseName,
+      probState, m.memberStatus || (m.active ? "Active" : "Inactive")
+    ]);
+  });
+  return rows;
+}
+
+/** Human-readable summary of which filters produced an export. */
+function describeMemberFilters_(f) {
+  f = f || {};
+  var bits = [];
+  function add(label, list) { if (list && list.length) bits.push(label + ": " + list.join(", ")); }
+  add("Sections", f.sections); add("Roles", f.roles); add("Gender", f.genders);
+  add("Faculty", f.faculties); add("Year", f.yearsOfStudy);
+  add("Probation", f.probationStatuses); add("Status", f.memberStatuses);
+  return bits.length ? bits.join("  ·  ") : "All members";
+}
+
+/** Filtered member export as CSV. */
+function exportMembersCSV(filters) {
+  var ss = getSpreadsheet_();
+  var access = requireManagement_();
+  var inScope = scopeMemberPredicate_(access, ss);
+  var members = filterMembers_(readMembersWithDetails_(ss).filter(inScope), filters);
+  return arrayToCSV_(buildMemberExportRows_(members));
+}
+
+/** Filtered member export as print-ready HTML (the browser prints it to PDF). */
+function exportMembersPDF(filters) {
+  var ss = getSpreadsheet_();
+  var access = requireManagement_();
+  var inScope = scopeMemberPredicate_(access, ss);
+  var members = filterMembers_(readMembersWithDetails_(ss).filter(inScope), filters);
+  var rows = buildMemberExportRows_(members);
+  return buildPrintHTML_("Member Directory — " + members.length + " member(s)", rows,
+                         describeMemberFilters_(filters));
+}
+
+/** Preview count, so the UI can show "42 members match" before exporting. */
+function countFilteredMembers(filters) {
+  var ss = getSpreadsheet_();
+  var access = requireManagement_();
+  var inScope = scopeMemberPredicate_(access, ss);
+  return filterMembers_(readMembersWithDetails_(ss).filter(inScope), filters).length;
+}
+
+function requestProbationRestart(reason) {
+  return requestRejoin(reason);
 }
 
 /**
  * Admin approves a probation restart request.
  * Resets the member's probation to active with today as start date.
  */
+/**
+ * FOLDED INTO approveRejoin. The old implementation diverged from the current
+ * model: it set the member straight to "Active" instead of "Rejoining", never
+ * updated Member Details, and left the request row open. It now locates the
+ * member's pending request (either type) and approves it through the one path.
+ */
 function approveProbationRestart(memberName) {
+  requireManagement_();
   var ss = getSpreadsheet_();
-  var allMembers = readAllMembers_(ss);
-  var member = null;
-  for (var i = 0; i < allMembers.length; i++) {
-    if (allMembers[i].name === memberName) { member = allMembers[i]; break; }
+  var sheet = ss.getSheetByName(APOLOGIES_SHEET);
+  var rowIndex = -1;
+  if (sheet && sheet.getLastRow() > 1) {
+    var data = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][1].toString().trim() !== memberName) continue;
+      var t = data[i][3].toString();
+      if (t !== "Restart Probation" && t !== "Rejoin Request") continue;
+      if (data[i][8].toString() !== "Pending") continue;
+      rowIndex = i + 1;
+      break;
+    }
   }
-  if (!member) throw new Error("Member not found.");
-
-  var sheet = ss.getSheetByName(MEMBERS_SHEET);
-  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
-    .map(function(x) { return x.toString().trim().toLowerCase(); });
-
-  var probIdx = headers.indexOf("probation");
-  var probStartIdx = headers.indexOf("probation start");
-  var probEndIdx = headers.indexOf("probation end");
-  var penaltyIdx = headers.indexOf("probation penalty");
-  var ackedIdx = headers.indexOf("probation acknowledged");
-  var statusIdx = headers.indexOf("status");
-
-  var row = member.rowIndex;
-  if (probIdx !== -1) sheet.getRange(row, probIdx + 1).setValue("Yes");
-  if (probStartIdx !== -1) sheet.getRange(row, probStartIdx + 1).setValue(todayStr_());
-  if (probEndIdx !== -1) sheet.getRange(row, probEndIdx + 1).setValue("");
-  if (penaltyIdx !== -1) sheet.getRange(row, penaltyIdx + 1).setValue("");
-  if (ackedIdx !== -1) sheet.getRange(row, ackedIdx + 1).setValue("");
-  if (statusIdx !== -1) sheet.getRange(row, statusIdx + 1).setValue("Active");
-
-  return { success: true, name: memberName };
+  if (rowIndex === -1) {
+    // Admin-initiated restart with no request on file - reinstate directly.
+    reinstateMemberToProbation_(ss, memberName);
+    return { success: true, name: memberName, note: "No pending request found; reinstated directly." };
+  }
+  return approveRejoin(rowIndex, memberName);
 }
 
 // -------------------------------------------------------
@@ -5371,6 +5919,7 @@ function dailyTasks_() {
   try { dailySchemaCheck_(); } catch (e) { Logger.log("Schema check: " + e); }
   try { autoCloseUnneededApologies_(getSpreadsheet_()); } catch (e) { Logger.log("Apology cleanup: " + e); }
   try { syncConsecutiveAuOffenses_(getSpreadsheet_()); } catch (e) { Logger.log("AU sweep: " + e); }
+  try { syncAutomaticRewards_(getSpreadsheet_()); } catch (e) { Logger.log("Reward sweep: " + e); }
   try { dailyBirthdayReminder_(); } catch (e) { Logger.log("Birthday: " + e); }
 }
 
@@ -6149,6 +6698,190 @@ function approveNameChange(rowIndex, memberName) {
 // -------------------------------------------------------
 var MEMBERS_REMOVED_ON_COL = "Removed On";
 
+/**
+ * Writes a value, surviving a stale data-validation rule on the target cell.
+ * Status columns often carry a dropdown from before new states existed (e.g. a
+ * Status list of only Active/Inactive rejects "Rejoining"). A reject-input rule
+ * makes setValue THROW, which previously left records half-updated. On failure we
+ * relax that one cell to warn-only and retry, so a write is never lost.
+ */
+function safeSetValue_(sheet, row, col, value) {
+  var range = sheet.getRange(row, col);
+  try {
+    range.setValue(value);
+    SpreadsheetApp.flush();
+    return true;
+  } catch (e) {
+    try {
+      var rule = range.getDataValidation();
+      if (rule) {
+        range.setDataValidation(rule.copy().setAllowInvalid(true).build());
+      } else {
+        range.clearDataValidations();
+      }
+      range.setValue(value);
+      SpreadsheetApp.flush();
+      Logger.log("safeSetValue_: relaxed validation on " + sheet.getName() +
+                 " r" + row + "c" + col + " to write \"" + value + "\"");
+      return true;
+    } catch (e2) {
+      Logger.log("safeSetValue_ FAILED on " + sheet.getName() + " r" + row + "c" + col + ": " + e2);
+      throw e2;
+    }
+  }
+}
+
+/** Reads a status list from a Config sheet column (the single source of truth). */
+function getConfigStatusList_(headerName) {
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(CONFIG_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var data = sheet.getDataRange().getValues();
+  var h = data[0].map(function (x) { return x.toString().trim().toLowerCase(); });
+  var idx = h.indexOf(headerName.toLowerCase());
+  if (idx === -1) return [];
+  var out = [];
+  for (var i = 1; i < data.length; i++) {
+    var v = data[i][idx] ? data[i][idx].toString().trim() : "";
+    if (v && out.indexOf(v) === -1) out.push(v);
+  }
+  return out;
+}
+
+// Every status the system itself can WRITE. The Config lists must contain these,
+// or a write will be rejected by the dropdown.
+var REQUIRED_MEMBER_SHEET_STATUSES = ["Active", "Inactive", "Rejoining"];
+var REQUIRED_MEMBER_DETAIL_STATUSES = ["Active", "Rejoining", "On Hiatus", "Left"];
+
+/**
+ * DIAGNOSTIC — checks the Config status lists cover every state the system can
+ * produce. A missing value means that transition will throw when it writes.
+ * Writes nothing.
+ */
+function validateStatusConfig() {
+  var sheetList = getConfigStatusList_("Member Sheet Status");
+  var detailList = getConfigStatusList_("Member Statuses");
+  var problems = [];
+  function check(label, list, required) {
+    if (!list.length) { problems.push(label + ": Config column not found or empty."); return; }
+    required.forEach(function (r) {
+      var found = list.some(function (v) { return v.toLowerCase() === r.toLowerCase(); });
+      if (!found) problems.push(label + ': missing "' + r + '" - any transition writing it will fail.');
+    });
+  }
+  check("Member Sheet Status", sheetList, REQUIRED_MEMBER_SHEET_STATUSES);
+  check("Member Statuses", detailList, REQUIRED_MEMBER_DETAIL_STATUSES);
+
+  var msg = "STATUS CONFIG CHECK\n\n" +
+    "Member Sheet Status: " + (sheetList.join(", ") || "(empty)") + "\n" +
+    "Member Statuses:     " + (detailList.join(", ") || "(empty)") + "\n\n" +
+    (problems.length ? "PROBLEMS:\n  " + problems.join("\n  ")
+                     : "Both lists cover every status the system writes.");
+  Logger.log(msg);
+  return msg;
+}
+
+/**
+ * Applies the Config status lists to the sheet dropdowns. Config is the single
+ * source of truth, so edit the Config columns and re-run this rather than editing
+ * validation by hand. Rules are warn-only so a script write can never be blocked.
+ */
+function setupMembershipStatusValidation() {
+  requireFullAdmin_();
+  var ss = getSpreadsheet_();
+  var sheetList = getConfigStatusList_("Member Sheet Status");
+  var detailList = getConfigStatusList_("Member Statuses");
+  var out = [];
+
+  var mSheet = ss.getSheetByName(MEMBERS_SHEET);
+  if (mSheet && sheetList.length) {
+    var mmap = headerIndexMap_(mSheet);
+    if (mmap["status"] != null) {
+      setColumnValidation_(mSheet, mmap["status"] + 1, sheetList);
+      out.push("Members.Status -> " + sheetList.join(", "));
+    }
+  }
+  var dSheet = ss.getSheetByName(MEMBER_DETAILS_SHEET);
+  if (dSheet && detailList.length) {
+    var dmap = headerIndexMap_(dSheet);
+    if (dmap["member status"] != null) {
+      setColumnValidation_(dSheet, dmap["member status"] + 1, detailList);
+      out.push("MemberDetails.Member Status -> " + detailList.join(", "));
+    }
+  }
+  SpreadsheetApp.flush();
+  var msg = (out.length ? "Dropdowns updated from Config (warn-only):\n  " + out.join("\n  ")
+                        : "No Config status columns found - nothing applied.") +
+            "\n\n" + validateStatusConfig();
+  Logger.log(msg);
+  return msg;
+}
+
+/**
+ * DIAGNOSTIC — finds members left in a contradictory state, e.g. probation was
+ * restarted but the membership status never flipped because a stale dropdown
+ * rejected the write. Writes nothing.
+ */
+function findBrokenMembershipStates() {
+  requireManagement_();
+  var ss = getSpreadsheet_();
+  var problems = [];
+  readAllMembers_(ss).forEach(function (m) {
+    var detail = getMemberDetailStatus_(ss, m.name);
+    // On probation but not rostered: they can never complete it.
+    if (m.probation && !m.probationPassed && !m.probationFailed && !m.active && detail !== "On Hiatus") {
+      problems.push({ name: m.name, issue: "probation restarted but membership is inactive",
+                      membersStatus: m.active ? "Active" : "Inactive", detailStatus: detail,
+                      probationStart: m.probationStart, fix: "repairMembershipState(\"" + m.name + "\")" });
+    }
+    // Active in one sheet, gone in the other.
+    if (m.active && (detail === "Left" || detail === "Memorial")) {
+      problems.push({ name: m.name, issue: "active in Members but \"" + detail + "\" in Member Details",
+                      membersStatus: "Active", detailStatus: detail,
+                      fix: "set one of the two to match the other" });
+    }
+  });
+  Logger.log(problems.length
+    ? "Members in a contradictory state (" + problems.length + "):\n" +
+      problems.map(function (p) { return "  " + p.name + " - " + p.issue + "\n      fix: " + p.fix; }).join("\n")
+    : "No contradictory membership states found.");
+  return problems;
+}
+
+/**
+ * Completes a reinstatement that stopped half-way: the member already has a fresh
+ * probation, so this just brings the two status fields into line (Rejoining).
+ */
+function repairMembershipState(memberName) {
+  requireManagement_();
+  var ss = getSpreadsheet_();
+  var member = null;
+  readAllMembers_(ss).forEach(function (m) { if (m.name === memberName) member = m; });
+  if (!member) throw new Error("Member not found: " + memberName);
+  if (!member.probation) throw new Error(memberName + " is not on probation - nothing to repair.");
+  setMembershipState_(ss, memberName, "Rejoining", "Rejoining", "");
+  var msg = memberName + " set to Rejoining in both sheets; existing probation (started " +
+            (member.probationStart || "?") + ") left as is.";
+  Logger.log(msg);
+  return { success: true, name: memberName, message: msg };
+}
+
+/** Repairs every member found by findBrokenMembershipStates(). */
+function repairAllBrokenMembershipStates() {
+  requireFullAdmin_();
+  var problems = findBrokenMembershipStates();
+  var fixed = [], skipped = [];
+  problems.forEach(function (p) {
+    if (p.issue.indexOf("probation restarted") !== 0) { skipped.push(p.name + " (" + p.issue + ")"); return; }
+    try { repairMembershipState(p.name); fixed.push(p.name); }
+    catch (e) { skipped.push(p.name + ": " + e.message); }
+  });
+  var msg = "Repaired " + fixed.length + ": " + (fixed.join(", ") || "none") +
+            (skipped.length ? "\nNeeds a manual decision: " + skipped.join(", ") : "");
+  Logger.log(msg);
+  return msg;
+}
+
 /** Sets a member's status in BOTH sheets. Pass null to leave one untouched. */
 function setMembershipState_(ss, memberName, membersStatus, detailsStatus, removedOnDate) {
   ss = ss || getSpreadsheet_();
@@ -6166,8 +6899,8 @@ function setMembershipState_(ss, memberName, membersStatus, detailsStatus, remov
     }
     for (var i = 1; i < data.length; i++) {
       if (data[i][nameIdx].toString().trim() !== memberName) continue;
-      if (membersStatus && statusIdx !== -1) sheet.getRange(i + 1, statusIdx + 1).setValue(membersStatus);
-      if (removedOnDate !== undefined && remIdx !== -1) sheet.getRange(i + 1, remIdx + 1).setValue(removedOnDate || "");
+      if (membersStatus && statusIdx !== -1) safeSetValue_(sheet, i + 1, statusIdx + 1, membersStatus);
+      if (removedOnDate !== undefined && remIdx !== -1) safeSetValue_(sheet, i + 1, remIdx + 1, removedOnDate || "");
       break;
     }
   }
@@ -6181,7 +6914,7 @@ function setMembershipState_(ss, memberName, membersStatus, detailsStatus, remov
         var dd = ds.getDataRange().getValues();
         for (var r = 1; r < dd.length; r++) {
           if (dd[r][0].toString().trim() === memberName) {
-            ds.getRange(r + 1, msIdx + 1).setValue(detailsStatus);
+            safeSetValue_(ds, r + 1, msIdx + 1, detailsStatus);
             break;
           }
         }
@@ -6228,10 +6961,11 @@ function requestRejoin(reason) {
   // Block duplicate pending requests
   var data = sheet.getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
+    var pendingType = data[i][3].toString();
     if (data[i][1].toString().trim() === member.name &&
-        data[i][3].toString() === "Rejoin Request" &&
+        (pendingType === "Rejoin Request" || pendingType === "Restart Probation") &&
         data[i][8].toString() === "Pending") {
-      throw new Error("You already have a rejoin request awaiting review.");
+      throw new Error("You already have a request awaiting review.");
     }
   }
   var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
@@ -6253,7 +6987,7 @@ function approveRejoin(rowIndex, memberName) {
   if (!sheet) throw new Error("Requests sheet not found.");
   reinstateMemberToProbation_(ss, memberName);
   sheet.getRange(rowIndex, 9).setValue("Approved");
-  sheet.getRange(rowIndex, 11).setValue("Rejoin approved — re-entry probation started");
+  sheet.getRange(rowIndex, 11).setValue("Approved — re-entry probation started");
   return { success: true, name: memberName };
 }
 
@@ -6354,6 +7088,11 @@ function adminReactivateFromHiatus(memberName) {
 function reinstateMemberToProbation_(ss, memberName) {
   var sheet = ss.getSheetByName(MEMBERS_SHEET);
   if (!sheet) throw new Error("Members sheet not found.");
+  // Set the membership state BEFORE the probation fields. If this throws, the
+  // record is left untouched rather than half-migrated (probation restarted but
+  // still marked inactive), which is what happened when a stale Status dropdown
+  // rejected "Rejoining".
+  setMembershipState_(ss, memberName, "Rejoining", "Rejoining", "");
   var data = sheet.getDataRange().getValues();
   var h = data[0].map(function(x){ return x.toString().trim().toLowerCase(); });
   var nameIdx = h.indexOf("name"), probIdx = h.indexOf("probation"),
@@ -6370,8 +7109,6 @@ function reinstateMemberToProbation_(ss, memberName) {
     if (ackIdx !== -1)   sheet.getRange(row, ackIdx + 1).setValue("");
     break;
   }
-  // Rejoining members ARE rostered (they must attend to complete probation)
-  setMembershipState_(ss, memberName, "Rejoining", "Rejoining", "");
   return true;
 }
 
@@ -6706,7 +7443,7 @@ function submitApology(dateStr, apologyType, reason, sessionTime, sessionLabel, 
   if (sessionTime) {
     var sp = sessionTime.split(":"), dp = dateStr.split("-");
     var sessionDT = new Date(parseInt(dp[0]), parseInt(dp[1])-1, parseInt(dp[2]), parseInt(sp[0]), parseInt(sp[1]));
-    onTime = now <= new Date(sessionDT.getTime() - 3600000);
+    onTime = now <= new Date(sessionDT.getTime() - APOLOGY_DEADLINE_MINUTES * 60000);
   }
 
   // Store session label (e.g. "Practice" or meeting title) in the reason prefix if provided,
@@ -6803,8 +7540,9 @@ function getMyApologies() {
       type: rType,
       isRequest: isReq,
       kind: isReq ? "request"
-            : ((!isReq && col9) ? "longterm"
-               : (/late/i.test(rType) ? "late" : "absent")),
+            : (rType === EMERGENCY_APOLOGY_TYPE ? "emergency"
+               : ((!isReq && col9) ? "longterm"
+                  : (/late/i.test(rType) ? "late" : "absent"))),
       reason: data[i][4].toString(),
       submittedAt: data[i][5].toString(),
       onTime: data[i][7].toString() === "Yes",
@@ -6850,7 +7588,10 @@ function getApologiesForDate(dateStr, selectedGroups) {
     }
 
     // Single-day: date matches, not rejected/revoked, group overlaps
-    if (!endDate && rowDate === dateStr && groupMatch && status !== "Rejected" && status !== "Revoked" && status !== "Applied" && status !== "Not needed") {
+    // An Emergency apology counts only once APPROVED - it is filed after the fact
+    // and must never quietly excuse a session before an admin has seen it.
+    var isPendingEmergency = (data[i][3].toString() === EMERGENCY_APOLOGY_TYPE && status === "Pending");
+    if (!isPendingEmergency && !endDate && rowDate === dateStr && groupMatch && status !== "Rejected" && status !== "Revoked" && status !== "Applied" && status !== "Not needed") {
       var onTime = data[i][7].toString() === "Yes";
       result[name] = { type: data[i][3].toString(), reason: data[i][4].toString(), onTime: onTime, status: status, rowIndex: i+1, longTerm: false };
     }
@@ -6887,8 +7628,9 @@ function getApologyQueue() {
       // Explicit classification so the UI never has to guess:
       //   "request" | "longterm" (Absent + a real end date) | "late" | "absent"
       kind: isReq ? "request"
-            : ((!isReq && col9) ? "longterm"
-               : (/late/i.test(rType) ? "late" : "absent")),
+            : (rType === EMERGENCY_APOLOGY_TYPE ? "emergency"
+               : ((!isReq && col9) ? "longterm"
+                  : (/late/i.test(rType) ? "late" : "absent"))),
       reason: data[i][4].toString(),
       submittedAt: data[i][5].toString(),
       onTime: data[i][7].toString() === "Yes",
@@ -6980,6 +7722,7 @@ function autoCloseUnneededApologies_(ss) {
     var status = data[r][8].toString();
     if (status !== "Pending" && status !== "Approved") continue;
     if (data[r][9]) continue;                       // long-term: leave alone
+    if (type === EMERGENCY_APOLOGY_TYPE) continue;  // always an explicit admin decision
     var name = data[r][1].toString().trim();
     var ds = formatSheetDate_(data[r][0]);
     var actual = byMember[name] ? byMember[name][ds] : null;
@@ -7295,7 +8038,7 @@ function getNextSessionInfo() {
       var earliestParts = info.time.split(":");
       var earliestDT = new Date(checkDate.getFullYear(), checkDate.getMonth(), checkDate.getDate(), parseInt(earliestParts[0]), parseInt(earliestParts[1]));
       if (latestDT > now) {
-        var deadlineDT = new Date(latestDT.getTime() - 60 * 60 * 1000);
+        var deadlineDT = new Date(latestDT.getTime() - APOLOGY_DEADLINE_MINUTES * 60000);
         return {
           date: dateStr,
           dayName: info.dayName,
@@ -7366,8 +8109,10 @@ function getUpcomingSessions() {
     }
   }
 
-  // Only future sessions (deadline-relevant): keep those whose session time hasn't passed
-  sessions = sessions.filter(function(s){ return !s.sessionPassed; });
+  // Keep a session on the card for SESSION_GRACE_MINUTES after it starts, so the
+  // view does not jump to the next session the instant this one begins. The client
+  // no longer needs to simulate this.
+  sessions = sessions.filter(function(s){ return !s.sessionPassed || s.withinGrace; });
   sessions.sort(function(a, b){ return (a.date + a.time).localeCompare(b.date + b.time); });
   return sessions;
 }
@@ -7376,8 +8121,11 @@ function getUpcomingSessions() {
 function buildSessionEntry_(dateStr, dayName, time, type, title, groups, checkDate, now) {
   var tp = time.split(":");
   var sessionDT = new Date(checkDate.getFullYear(), checkDate.getMonth(), checkDate.getDate(), parseInt(tp[0]), parseInt(tp[1]));
-  var deadlineDT = new Date(sessionDT.getTime() - 60 * 60 * 1000);
+  var deadlineDT = new Date(sessionDT.getTime() - APOLOGY_DEADLINE_MINUTES * 60000);
+  var graceEnd = new Date(sessionDT.getTime() + SESSION_GRACE_MINUTES * 60000);
   return {
+    withinGrace: (now > sessionDT && now <= graceEnd),
+    graceEndsAt: Utilities.formatDate(graceEnd, Session.getScriptTimeZone(), "HH:mm"),
     date: dateStr,
     dayName: dayName,
     time: time,
