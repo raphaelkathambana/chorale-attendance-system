@@ -182,6 +182,8 @@ body { padding-bottom: env(safe-area-inset-bottom); }
 .btn:hover { transform: translateY(-1px); }
 .btn:active { transform: translateY(0); }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+.btn-export:disabled { opacity: 0.55; cursor: not-allowed; }
+button[aria-busy="true"] { cursor: progress; }
 .btn-primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .btn-primary:hover { background: var(--ink-700); }
 .btn-secondary { background: var(--paper); color: var(--ink); border-color: var(--paper-300); }
@@ -1156,6 +1158,29 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .att-bar-track { width: 56px; height: 4px; border-radius: 4px; background: var(--paper-200); overflow: hidden; }
 .att-bar-fill { height: 100%; border-radius: 4px; }
 .att-bar-label { font-family: var(--f-mono); font-size: 11px; color: var(--ink-600); font-weight: 600; }
+.att-bar.is-empty .att-bar-label { color: var(--ink-300); }
+
+/* Members roster — profile pane: real attendance, scoreboard rank, additional info */
+.md-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+.md-stats.one { grid-template-columns: 1fr; }
+.md-stat { padding: 12px 14px; background: var(--paper); border-radius: 10px; border: 1px solid var(--paper-200); min-width: 0; }
+.md-stat .num { font-size: 26px; color: var(--ink); margin-top: 4px; }
+.md-stat-sub { font-family: var(--f-mono); font-size: 9px; letter-spacing: .1em; color: var(--ink-500); margin-top: 4px; }
+.md-box { padding: 4px 14px; background: var(--paper); border-radius: 10px; border: 1px solid var(--paper-200); }
+.md-kv { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; padding: 7px 0; }
+.md-kv + .md-kv { border-top: 1px solid var(--paper-100); }
+.md-kv .k { font-family: var(--f-mono); font-size: 10px; color: var(--ink-500); letter-spacing: .1em; flex-shrink: 0; }
+.md-kv .v { font-size: 12px; color: var(--ink); text-align: right; min-width: 0; overflow-wrap: anywhere; }
+.md-kv .nil { color: var(--ink-300); }
+.md-info-loading { padding: 18px 0 6px; text-align: center; }
+.md-info-note { font-size: 12px; color: var(--ink-500); line-height: 1.5; padding: 8px 0 2px; }
+.ep-actions { display: flex; gap: 8px; margin-top: 18px; }
+/* Desktop: the pane scrolls on its own (height fitted by fitMemberDetailPane());
+   Save / Cancel stay pinned to its bottom edge while the form scrolls. */
+@media (min-width: 1024px) {
+  #membersRosterPane .two-pane-detail { max-height: calc(100vh - 56px); overflow-y: auto; overscroll-behavior: contain; border-radius: 14px; scrollbar-width: thin; scrollbar-color: var(--paper-300) transparent; }
+  #membersRosterPane .ep-actions { position: sticky; bottom: 0; z-index: 2; background: #fff; margin: 18px -24px -22px; padding: 14px 24px 22px; border-top: 1px solid var(--paper-200); border-radius: 0 0 13px 13px; }
+}
 
 /* View & Edit — date list gold accent + dark tally strip */
 .date-item.selected { border-color: var(--ink); background: var(--paper-100); border-left: 3px solid var(--gold); }
@@ -1549,6 +1574,8 @@ body.view-only [onclick*="approveNameChange"],
 body.view-only [onclick*="approveCourseDetailsChange"],
 body.view-only [onclick*="adminReinstateMember"],
 body.view-only [onclick*="reinstateFlagged"],
+body.view-only [onclick*="applyProbationCorrection"],
+body.view-only .pof-notify,
 body.view-only [onclick*="epSetHiatus"],
 body.view-only [onclick*="epSetInactive"],
 body.view-only [onclick*="epReactivate"],

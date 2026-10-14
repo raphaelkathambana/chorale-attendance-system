@@ -939,7 +939,7 @@ function renderPodiumHero(top3) {
 function renderApologiesView() {
   var isDesktop = window.matchMedia && window.matchMedia('(min-width: 1024px)').matches;
   // Level 1 — request type · Level 2 — status within that type
-  var head = '<div id="reinstateFlagsPanel"></div>'
+  var head = '<div id="reinstateFlagsPanel"></div><div id="probationFlagsPanel"></div>'
            + '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">'
            +   requestTypeChips()
            +   '<button class="btn-export" onclick="loadApologyQueue()">Refresh \u27f3</button>'
@@ -1435,8 +1435,12 @@ function renderMemberList() {
   var c = document.getElementById("memberListContent");
   var se = document.getElementById("memberListSearch");
   var s = se ? se.value.toLowerCase() : "";
+  if (memberFilterBusy) {
+    c.innerHTML = '<div class="loading"><div class="spinner"></div><div>Filtering roster\u2026</div></div>';
+    return;
+  }
   var f = memberListData.filter(function (m) {
-    if (!memberFilterMatch(m)) return false;
+    if (!memberPassesFilter(m)) return false;
     return !s
       || m.name.toLowerCase().indexOf(s) !== -1
       || (m.email && m.email.toLowerCase().indexOf(s) !== -1)
@@ -1462,8 +1466,6 @@ function renderMemberList() {
     var groupTags = m.groups.map(function(g) {
       return '<span style="font-family:var(--f-mono);font-size:9.5px;font-weight:600;letter-spacing:.08em;padding:2px 6px;border-radius:3px;background:var(--paper-200);color:var(--ink-600)">' + g.toUpperCase() + '</span>';
     }).join(' ');
-    var rate = 60 + ((m.name.charCodeAt(0) * 13) % 38);
-    var barColor = rate >= 80 ? 'var(--present)' : rate >= 60 ? 'var(--gold)' : 'var(--crimson)';
     var statusTag = memberStatusBadges(m);
     var tint = { Soprano: '#F3E9CE', Alto: '#F0E0CE', Tenor: '#ECE7DE', Bass: '#E1ECDF' }[section] || 'var(--paper-200)';
     var selClass = (selectedMemberName === m.name) ? ' selected' : '';
@@ -1474,7 +1476,7 @@ function renderMemberList() {
       +    '<div style="font-family:var(--f-mono);font-size:10px;color:var(--ink-400);letter-spacing:.06em;margin-top:2px">' + esc(m.admNo || '') + '</div></div></div>'
       +    '<span style="font-size:12.5px;color:var(--ink-700)">' + esc(section) + '</span>'
       +    '<div style="display:flex;gap:4px;flex-wrap:wrap">' + groupTags + '</div>'
-      +    '<div class="att-bar"><div class="att-bar-track"><div class="att-bar-fill" style="width:' + rate + '%;background:' + barColor + '"></div></div><span class="att-bar-label">' + rate + '%</span></div>'
+      +    rosterAttBar(m)
       +    '<div style="text-align:right">' + statusTag + '</div>'
       + '</div>';
   }
@@ -1531,10 +1533,171 @@ function memberStatusBadges(m, sty) {
   if (m.probationFailed) return tag("inactive-tag", "", "FAILED");
   return tag("prob-tag", "background:var(--present-bg);color:var(--present)", "ACTIVE");
 }
+// ─── Roster profile data ──────────────────────────────────────────────────
+// Attendance: getMemberList().attendanceRate / attended / totalSessions when the
+// backend sends them; otherwise the getMemberHistory() figure, fetched when the
+// profile opens (the same number the By member view shows). Never estimated.
+// Rank: the scoreboard's own rank (getScoreboard("All"), current Competitive /
+// Dense mode) — management only, like every other rank in the app.
+var memberDetailMode = "view";          // "view" | "edit" — async loads never repaint an open edit form
+var memberAttCache = {}, memberAttPending = {};
+var memberDetailsCache = {}, memberDetailsPending = {}, memberInfoOpen = false;
+var rosterRanks = null, rosterRanksLoading = false;
+
+function hasServerFn(fn) {
+  return !!(window.google && google.script && google.script.run && typeof google.script.run[fn] === "function");
+}
+function attColor(r) { return r >= 80 ? 'var(--present)' : r >= 60 ? 'var(--gold)' : 'var(--crimson)'; }
+function memberAttendance(m) {
+  if (!m) return null;
+  if (typeof m.attendanceRate === "number") return { rate: m.attendanceRate, attended: m.attended || 0, total: m.totalSessions || 0 };
+  return memberAttCache[m.name] || null;
+}
+// Same aggregation as renderMemberHistory(): Present + Late (either) over every row.
+function attFromHistory(r) {
+  var att = 0, tot = 0, st = (r && r.stats) || {};
+  for (var g in st) {
+    att += (st[g].Present || 0) + (st[g]["Late Excused"] || 0) + (st[g]["Late Unexcused"] || 0);
+    tot += st[g].total || 0;
+  }
+  return { rate: tot ? Math.round((att / tot) * 100) : 0, attended: att, total: tot };
+}
+function rosterAttBar(m) {
+  var a = memberAttendance(m);
+  if (!a || !a.total) {
+    var why = !a ? 'Opens with the member\u2019s profile' : a.failed ? 'Unavailable' : 'No sessions recorded yet';
+    return '<div class="att-bar is-empty" title="' + why + '"><div class="att-bar-track"></div><span class="att-bar-label">\u2014</span></div>';
+  }
+  return '<div class="att-bar" title="' + a.attended + ' of ' + a.total + ' sessions"><div class="att-bar-track"><div class="att-bar-fill" style="width:' + a.rate + '%;background:' + attColor(a.rate) + '"></div></div><span class="att-bar-label">' + a.rate + '%</span></div>';
+}
+function loadMemberAttendance(name) {
+  if (memberAttPending[name] || memberAttCache[name]) return;
+  memberAttPending[name] = true;
+  google.script.run.withSuccessHandler(function (r) {
+    delete memberAttPending[name];
+    memberAttCache[name] = attFromHistory(r);
+    renderMemberList();
+    refreshMemberDetailView(name);
+  }).withFailureHandler(function () {
+    delete memberAttPending[name];
+    memberAttCache[name] = { rate: 0, attended: 0, total: 0, failed: true };
+    refreshMemberDetailView(name);
+  }).getMemberHistory(name);
+}
+
+function setRosterRanks(rows) {
+  rosterRanks = { byName: {}, count: (rows || []).length };
+  (rows || []).forEach(function (r) { rosterRanks.byName[r.name] = r; });
+}
+function loadRosterRanks() {
+  if (!isManagement() || rosterRanks || rosterRanksLoading) return;
+  rosterRanksLoading = true;
+  google.script.run.withSuccessHandler(function (rows) {
+    rosterRanksLoading = false;
+    setRosterRanks(rows);
+    refreshMemberDetailView(selectedMemberName);
+  }).withFailureHandler(function () {
+    rosterRanksLoading = false;
+    rosterRanks = { byName: {}, count: 0, failed: true };
+    refreshMemberDetailView(selectedMemberName);
+  }).getScoreboard("All");
+}
+function memberRankInfo(m) {
+  if (!rosterRanks) return { num: '\u2026', sub: 'LOADING' };
+  if (rosterRanks.failed) return { num: '\u2014', sub: 'SCOREBOARD UNAVAILABLE' };
+  var r = rosterRanks.byName[m.name];
+  if (r) return { num: '#' + (sbRankMode === 'competitive' ? r.compRank : r.denseRank), sub: 'OF ' + rosterRanks.count + ' \u00b7 ' + r.totalPoints + ' PTS' };
+  if (isOnHiatus(m)) return { num: '\u2014', sub: 'ON HIATUS \u00b7 UNRANKED' };
+  if (!m.active) return { num: '\u2014', sub: 'INACTIVE \u00b7 UNRANKED' };
+  if (m.probation) return { num: '\u2014', sub: 'ON PROBATION \u00b7 UNRANKED' };
+  return { num: '\u2014', sub: 'NOT ON SCOREBOARD' };
+}
+function mdStat(label, num, sub) {
+  return '<div class="md-stat"><div class="eyebrow" style="font-size:9px">' + label + '</div>'
+       + '<div class="num">' + num + '</div><div class="md-stat-sub">' + sub + '</div></div>';
+}
+
+// Additional info (Member Details) — read-only on the profile, no Edit needed.
+// getMemberDetails(name) when the backend has it (management + view-only, scoped);
+// until then full admins read it through getMemberForEdit(name).
+function canViewMemberDetails() {
+  return isFullAdmin() || (isManagement() && hasServerFn("getMemberDetails"));
+}
+function loadMemberDetails(name) {
+  if (memberDetailsPending[name]) return;
+  memberDetailsPending[name] = true;
+  var useNew = hasServerFn("getMemberDetails");
+  var run = google.script.run.withSuccessHandler(function (r) {
+    delete memberDetailsPending[name];
+    memberDetailsCache[name] = (useNew ? r : (r && r.details)) || {};
+    paintMemberInfo(name);
+  }).withFailureHandler(function (e) {
+    delete memberDetailsPending[name];
+    memberDetailsCache[name] = { __error: serverError(e) };
+    paintMemberInfo(name);
+  });
+  if (useNew) run.getMemberDetails(name); else run.getMemberForEdit(name);
+}
+function fmtDob(v) {
+  var p = String(v || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!p) return v || "";
+  var mn = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return Number(p[3]) + ' ' + mn[Number(p[2]) - 1] + ' ' + p[1];
+}
+function memberInfoHtml(name) {
+  var d = memberDetailsCache[name];
+  if (d === undefined) { loadMemberDetails(name); return '<div class="md-info-loading"><div class="spinner"></div></div>'; }
+  if (d.__error) return '<p class="md-info-note">' + esc(d.__error) + '</p>';
+  var keys = ['courseFaculty','courseName','yearOfStudy','gender','dateOfBirth','nationality','residence','passportNumber','nationalIdNumber','nokName','nokRelationship','nokPhone','nokResidence'];
+  if (!keys.some(function (k) { return d[k] && String(d[k]).trim(); })) {
+    return '<p class="md-info-note">No additional details on file yet. They are collected at onboarding.</p>';
+  }
+  function row(k, v) { return '<div class="md-kv"><span class="k">' + k + '</span><span class="v">' + (v ? esc(v) : '<span class="nil">\u2014</span>') + '</span></div>'; }
+  function block(t, rows) { return '<div class="eyebrow" style="margin:14px 0 6px;font-size:9.5px">' + t + '</div><div class="md-box">' + rows + '</div>'; }
+  return block('Academic', row('FACULTY', d.courseFaculty) + row('COURSE', d.courseName) + row('YEAR', d.yearOfStudy))
+       + block('Personal', row('GENDER', d.gender) + row('BORN', fmtDob(d.dateOfBirth)) + row('NATIONALITY', d.nationality)
+               + row('RESIDENCE', d.residence) + row('PASSPORT', d.passportNumber) + row('NATIONAL ID', d.nationalIdNumber))
+       + block('Next of kin', row('NAME', d.nokName) + row('RELATIONSHIP', d.nokRelationship) + row('PHONE', d.nokPhone) + row('RESIDENCE', d.nokResidence));
+}
+function memberInfoSection(m) {
+  if (!canViewMemberDetails()) return "";
+  return '<button type="button" class="ep-toggle" onclick="toggleMemberInfo()">'
+       +   (memberInfoOpen ? '\u25be Hide additional info' : '\u25b8 Show additional info') + '</button>'
+       + (memberInfoOpen ? '<div class="md-info" id="mdInfo">' + memberInfoHtml(m.name) + '</div>' : '');
+}
+function toggleMemberInfo() { memberInfoOpen = !memberInfoOpen; renderMemberDetail(); }
+function paintMemberInfo(name) {
+  if (memberDetailMode !== "view" || selectedMemberName !== name) return;
+  var el = document.getElementById("mdInfo");
+  if (el) el.innerHTML = memberInfoHtml(name);
+  fitMemberDetailPane();
+}
+function refreshMemberDetailView(name) {
+  if (name && memberDetailMode === "view" && selectedMemberName === name) renderMemberDetail();
+}
+
+// Desktop: the profile / edit pane scrolls on its own and always fits the
+// viewport, so a long Edit Profile never makes you scroll the whole page.
+function fitMemberDetailPane() {
+  var dp = document.querySelector("#membersRosterPane .two-pane-detail");
+  if (!dp) return;
+  var desktop = window.matchMedia && window.matchMedia("(min-width: 1024px)").matches;
+  if (!desktop || !dp.offsetParent) { dp.style.maxHeight = ""; return; }
+  var top = Math.max(28, dp.getBoundingClientRect().top);
+  dp.style.maxHeight = Math.max(260, window.innerHeight - top - 24) + "px";
+}
+function resetMemberDetailScroll() {
+  var dp = document.querySelector("#membersRosterPane .two-pane-detail");
+  if (dp) dp.scrollTop = 0;
+}
+window.addEventListener("scroll", fitMemberDetailPane, { passive: true });
+window.addEventListener("resize", fitMemberDetailPane);
+
 function selectMember(name) {
   selectedMemberName = name;
   renderMemberList();
   renderMemberDetail();
+  resetMemberDetailScroll();
   // Mobile master-detail: bring the member's detail into view instead of
   // letting it render far below the list. Swap the list out for the detail
   // and scroll back to the top so the profile starts where the user is looking.
@@ -1559,6 +1722,7 @@ function closeMemberDetail() {
 function renderMemberDetail() {
   var c = document.getElementById("memberDetailPane");
   if (!c) return;
+  memberDetailMode = "view";
   if (!selectedMemberName) {
     c.innerHTML = '<div class="empty-pane">Select a member to see their profile.</div>';
     return;
@@ -1597,17 +1761,17 @@ function renderMemberDetail() {
         +     '</div>'
         +   '</div>';
 
-  // Attendance stats — 2 mini cards
-  var rate = 60 + ((m.name.charCodeAt(0) * 13) % 38);
-  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">'
-    +    '<div style="padding:12px 14px;background:var(--paper);border-radius:10px;border:1px solid var(--paper-200)">'
-    +      '<div class="eyebrow" style="font-size:9px">ATTENDANCE</div>'
-    +      '<div class="num" style="font-size:26px;color:var(--ink);margin-top:4px">' + rate + '%</div>'
-    +    '</div>'
-    +    '<div style="padding:12px 14px;background:var(--paper);border-radius:10px;border:1px solid var(--paper-200)">'
-    +      '<div class="eyebrow" style="font-size:9px">RANK</div>'
-    +      '<div class="num" style="font-size:26px;color:var(--ink);margin-top:4px">#' + (memberListData.indexOf(m) + 1) + '</div>'
-    +    '</div>'
+  // Attendance (real figure) + scoreboard rank (management only)
+  var att = memberAttendance(m);
+  if (!att) loadMemberAttendance(m.name);
+  var showRank = isManagement();
+  if (showRank) loadRosterRanks();
+  var attNum = !att ? '\u2026' : (att.total ? att.rate + '%' : '\u2014');
+  var attSub = !att ? 'LOADING' : att.failed ? 'UNAVAILABLE' : att.total ? att.attended + ' OF ' + att.total + ' SESSIONS' : 'NO SESSIONS YET';
+  var rk = showRank ? memberRankInfo(m) : null;
+  h += '<div class="md-stats' + (showRank ? '' : ' one') + '">'
+    +    mdStat('ATTENDANCE', attNum, attSub)
+    +    (rk ? mdStat('RANK', rk.num, rk.sub) : '')
     + '</div>';
 
   // Groups & roles
@@ -1699,9 +1863,12 @@ function renderMemberDetail() {
     actions += '<button class="btn btn-crimson" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="prefillOffense(\'' + safeNm + '\')">Record offense</button>';
   }
   if (isReadOnly()) actions = "";   // view-only: roster detail reports, never acts
-  if (actions) h += '<div style="display:flex;gap:8px">' + actions + '</div>';
+  var info = memberInfoSection(m);
+  h += info;
+  if (actions) h += '<div style="display:flex;gap:8px' + (info ? ';margin-top:14px' : '') + '">' + actions + '</div>';
   h += '</div>';
   c.innerHTML = h;
+  fitMemberDetailPane();
 }
 
 // ─── ADMIN EDIT PROFILE ───────────────────────────────────────────────────
@@ -1715,11 +1882,17 @@ function showEditProfile(name) {
     if (pane) pane.classList.add('detail-open');
     window.scrollTo(0, 0);
   }
+  memberDetailMode = 'edit';
+  resetMemberDetailScroll();
   var c = document.getElementById('memberDetailPane');
   if (c) c.innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading profile\u2026</div></div>';
   google.script.run
-    .withSuccessHandler(renderEditProfile)
-    .withFailureHandler(function(e) { showToast(e.message, 'error'); renderMemberDetail(); })
+    .withSuccessHandler(function (m) {
+      if (memberDetailMode !== 'edit' || selectedMemberName !== name) return;   // user moved on
+      if (m) memberDetailsCache[name] = m.details || {};
+      renderEditProfile(m);
+    })
+    .withFailureHandler(function(e) { showToast(serverError(e), 'error'); renderMemberDetail(); })
     .getMemberForEdit(name);
 }
 
@@ -1795,6 +1968,8 @@ function submitEditProfile() {
   google.script.run
     .withSuccessHandler(function(r) {
       showToast(r.name + ' updated.' + (r.renamed ? ' Name changed.' : ''), 'success');
+      delete memberDetailsCache[payload.originalName]; delete memberDetailsCache[r.name];
+      if (r.renamed) { delete memberAttCache[payload.originalName]; rosterRanks = null; }
       selectedMemberName = r.name;
       // Refresh member list then show the updated profile
       google.script.run.withSuccessHandler(function(list) {
@@ -1926,13 +2101,14 @@ function renderEditProfile(m) {
   h += epMembershipSection(m, d);
 
   // ── Actions
-  h += '<div style="display:flex;gap:8px;margin-top:18px">'
+  h += '<div class="ep-actions">'
     +    '<button class="btn btn-primary" id="btnSaveProfile" style="flex:1;padding:10px 16px;font-size:13px" onclick="submitEditProfile()">Save changes</button>'
     +    '<button class="btn btn-secondary" style="padding:10px 16px;font-size:13px" onclick="closeEditProfile()">Cancel</button>'
     + '</div>'
     + '</div>'; // close card
 
   c.innerHTML = h;
+  fitMemberDetailPane();
 }
 
 // ── Membership status (Edit Profile) ──
@@ -2143,7 +2319,7 @@ function setMembersMode(mode) {
   var panes = { roster: 'membersRosterPane', member: 'membersMemberPane', scoreboard: 'membersScoreboardPane', add: 'membersAddPane', offense: 'membersOffensePane', reward: 'membersRewardPane' };
   for (var k in panes) { var pe = document.getElementById(panes[k]); if (pe) pe.style.display = (k === mode) ? 'block' : 'none'; }
   if (mode === 'add') renderAddMemberPreview();
-  if (mode === 'roster') initMemberFilters();
+  if (mode === 'roster') { initMemberFilters(); requestAnimationFrame(fitMemberDetailPane); }
   // By member + Scoreboard folded in from the old View & Edit — reuse the existing render fns.
   if (mode === 'member') {
     var mr = document.getElementById('memberHistoryRoot');
@@ -2359,10 +2535,10 @@ function submitReward() {
   var cat = currentRewardCategory();
   // A fixed category's value wins server-side, so only send points for variable ones.
   var points = (cat && cat.variable) ? resolvedRewardPoints() : "";
-  var btn = document.getElementById("btnAddReward");
-  btn.disabled = true; btn.textContent = "Awarding…";
+  var done = beginAction("reward", [document.getElementById("btnAddReward")], "Awarding…");
+  if (!done) return;
   google.script.run.withSuccessHandler(function (r) {
-    btn.disabled = false; btn.textContent = "Award reward";
+    done();
     r = r || {};
     showToast(name + " awarded +" + (r.points || resolvedRewardPoints()) + " · " + category + ".", "success");
     document.getElementById("rwName").value = "";
@@ -2370,8 +2546,8 @@ function submitReward() {
     document.getElementById("rwNameWarn").style.display = "none";
     loadRewardLog();
   }).withFailureHandler(function (e) {
-    btn.disabled = false; btn.textContent = "Award reward";
-    showToast("Failed: " + e.message, "error");
+    done();
+    showToast(serverError(e), "error");
   }).addReward(date, name, category, desc, points);
 }
 
@@ -3210,24 +3386,28 @@ function saveProfileEdits() {
 
 function approveSectionTransfer(rowIndex, memberName) {
   if (roBlock()) return;
+  if (inFlight["decide:" + rowIndex]) return;
   var note = getReviewNote("Optional note (leave blank for none):");
   if (note === null) return;
-  google.script.run.withSuccessHandler(function () { showToast((memberName || "Member") + "\u2019s transfer approved.", "success"); selectedApologyIdx = null; loadApologyQueue(); })
-    .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
+  var done = beginDecision(rowIndex); if (!done) return;
+  google.script.run.withSuccessHandler(function () { done(); showToast((memberName || "Member") + "\u2019s transfer approved.", "success"); selectedApologyIdx = null; loadApologyQueue(); })
+    .withFailureHandler(function (e) { done(); showToast(serverError(e), "error"); })
     .approveSectionTransfer(rowIndex, memberName);
 }
 function approveCourseDetailsChange(rowIndex, memberName) {
   if (roBlock()) return;
-  google.script.run.withSuccessHandler(function () { showToast((memberName || "Member") + "\u2019s academic details updated.", "success"); selectedApologyIdx = null; loadApologyQueue(); })
-    .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
+  var done = beginDecision(rowIndex); if (!done) return;
+  google.script.run.withSuccessHandler(function () { done(); showToast((memberName || "Member") + "\u2019s academic details updated.", "success"); selectedApologyIdx = null; loadApologyQueue(); })
+    .withFailureHandler(function (e) { done(); showToast(serverError(e), "error"); })
     .approveCourseDetailsChange(rowIndex, memberName);
 }
 function approveNameChange(rowIndex, memberName) {
   if (roBlock()) return;
   var note = getReviewNote("Optional note (leave blank for none):");
   if (note === null) return;
-  google.script.run.withSuccessHandler(function () { showToast("Name change approved.", "success"); selectedApologyIdx = null; loadApologyQueue(); })
-    .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
+  var done = beginDecision(rowIndex); if (!done) return;
+  google.script.run.withSuccessHandler(function () { done(); showToast("Name change approved.", "success"); selectedApologyIdx = null; loadApologyQueue(); })
+    .withFailureHandler(function (e) { done(); showToast(serverError(e), "error"); })
     .approveNameChange(rowIndex, memberName);
 }
 
@@ -3462,6 +3642,41 @@ var GROUPS_LIST = ["Choir", "Band", "Orchestra"];
 var ROMAN = { 1: "I", 2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI", 7: "VII", 8: "VIII", 9: "IX", 10: "X" };
 
 function esc(s) { var e = document.createElement("span"); e.textContent = s == null ? "" : s; return e.innerHTML; }
+
+// ─── IN-FLIGHT LOCKS ─────────────────────────────────────────────────────
+// Sends, rewards and offenses are not de-duplicated server-side, so a double-click
+// does them twice. beginAction() refuses a second start of the same key, disables
+// the given buttons, and returns done() — call it in BOTH success and failure
+// handlers. The key outlives a re-render, so a freshly drawn button is still guarded.
+var inFlight = {};
+function beginAction(key, els, busyLabel) {
+  if (inFlight[key]) return null;
+  inFlight[key] = true;
+  var list = [];
+  (els || []).forEach(function (el) { if (el) list.push({ el: el, text: el.textContent, dis: el.disabled }); });
+  list.forEach(function (s) { s.el.disabled = true; s.el.setAttribute("aria-busy", "true"); });
+  if (busyLabel && list[0]) list[0].el.textContent = busyLabel;
+  return function done() {
+    delete inFlight[key];
+    list.forEach(function (s) { s.el.disabled = s.dis; s.el.removeAttribute("aria-busy"); s.el.textContent = s.text; });
+  };
+}
+// The backend's own message, minus the "Exception: " prefix Apps Script adds.
+function serverError(e) {
+  var m = String((e && e.message) || e || "").replace(/^(Exception|Error):\s*/i, "").trim();
+  return m || "The server didn\u2019t respond. Try again.";
+}
+// Every Approve / Reject / Decline / Revoke button for one queue row, so deciding
+// a row locks all of its buttons, not just the one clicked.
+function decisionButtons(rowIndex) {
+  var re = new RegExp("^(adminApprove|adminReject|adminRevoke|adminApproveRestart|approveRejoin|approveSectionTransfer|approveNameChange|approveCourseDetailsChange)\\((?:'(?:[^'\\\\]|\\\\.)*',)?" + rowIndex + "[,)]");
+  return [].filter.call(document.querySelectorAll("button[onclick]"), function (b) { return re.test(b.getAttribute("onclick") || ""); });
+}
+function beginDecision(rowIndex) {
+  var done = beginAction("decide:" + rowIndex, decisionButtons(rowIndex));
+  if (!done) showToast("Still working on that request\u2026", "info");
+  return done;
+}
 function romanOrNum(n) { return ROMAN[n] || ('#' + n); }
 
 function showToast(m, t) {
@@ -3914,7 +4129,7 @@ function switchTab(tab) {
   if (tab === "requests"          && !requestsTabLoaded)  initRequestsTab();
   if (tab === "myatt"             && !myAttLoaded)     loadMyAttendance();
   if (tab === "apology"           && !apologyLoaded)   loadApologyTab();
-  if (tab === "members")          { if (!memberListData || memberListData.length === 0) refreshMemberList(); initMemberFilters(); }
+  if (tab === "members")          { if (!memberListData || memberListData.length === 0) refreshMemberList(); initMemberFilters(); requestAnimationFrame(fitMemberDetailPane); }
   if (tab === "profile")          { profileMode = "view"; loadProfile(); }
 }
 
@@ -3983,11 +4198,13 @@ function renderRequestsTab() {
   var root = document.getElementById("requestsRoot");
   if (root && typeof renderApologiesView === "function") root.innerHTML = renderApologiesView();
   renderReinstateFlags();
+  renderProbationOutcomeFlags();
 }
 function initRequestsTab() {
   requestsTabLoaded = true;
   renderRequestsTab();
   loadReinstatementFlags();
+  loadProbationOutcomeFlags();
   if (typeof loadApologyQueue === "function") loadApologyQueue();
 }
 // When the Requests tab is live, refresh its chrome there; else fall back to the legacy view shell.
@@ -5347,7 +5564,7 @@ function manualEvaluate() {
 // Scoreboard (admin)
 var scoreboardData = [], sbGroup = "All", sbRankMode = "competitive";
 function loadScoreboard() {
-  google.script.run.withSuccessHandler(function (d) { scoreboardData = d; renderScoreboardContent(); })
+  google.script.run.withSuccessHandler(function (d) { scoreboardData = d; if (sbGroup === "All") setRosterRanks(d); renderScoreboardContent(); })
     .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
     .getScoreboard(sbGroup);
 }
@@ -5377,10 +5594,20 @@ function saveChanges() {
     }
   }
   if (u.length === 0) return;
-  var btn = document.getElementById("btnSaveChanges");
-  if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+  var done = beginAction("saveAttendance", [document.getElementById("btnSaveChanges")], "Saving…");
+  if (!done) return;
   google.script.run.withSuccessHandler(function (r) {
-    showToast(r.changed + " record" + (r.changed > 1 ? "s" : "") + " updated.", "success");
+    done();
+    r = r || {};
+    // A save can break a 3-AU set (offense removed) and change a concluded
+    // probation result (flagged, never applied here). Say both.
+    var parts = ["Saved", (r.changed || 0) + " record" + (r.changed === 1 ? "" : "s") + " updated"];
+    if (r.offensesRemoved) parts.push(r.offensesRemoved + " offense" + (r.offensesRemoved === 1 ? "" : "s") + " removed");
+    if (r.historyUpdated)  parts.push(r.historyUpdated + " probation history row" + (r.historyUpdated === 1 ? "" : "s") + " refreshed");
+    var pNote = probationFlagToastPart(r.probationFlags);
+    if (pNote) parts.push(pNote);
+    showToast(parts.join(" \u00b7 ") + ".", "success");
+    if (pNote || r.offensesRemoved) { loadProbationOutcomeFlags(); loadReinstatementFlags(); }
     for (var ri2 in viewEditedStatuses) {
       viewOriginalStatuses[ri2] = viewEditedStatuses[ri2];
       for (var i = 0; i < viewRecords.length; i++) {
@@ -5389,8 +5616,8 @@ function saveChanges() {
     }
     viewEditedStatuses = {}; hideChangesBar(); if (sessDetailActive) paintSessionDetail(); else renderViewTab();
   }).withFailureHandler(function (e) {
-    showToast("Failed: " + e.message, "error");
-    if (btn) { btn.disabled = false; btn.textContent = "Save changes"; }
+    done();
+    showToast(serverError(e), "error");
   }).batchUpdateAttendance(u);
 }
 
@@ -5517,17 +5744,17 @@ function submitOffense() {
     showToast("That member isn't on the roster. Pick an existing member.", "error");
     return;
   }
-  var btn = document.getElementById("btnAddOffense");
-  btn.disabled = true; btn.textContent = "Recording…";
+  var done = beginAction("offense", [document.getElementById("btnAddOffense")], "Recording…");
+  if (!done) return;
   google.script.run.withSuccessHandler(function () {
-    btn.disabled = false; btn.textContent = "Record offense";
+    done();
     showToast("Offense recorded for " + name + ".", "success");
     document.getElementById("offName").value = "";
     document.getElementById("offDesc").value = "";
     document.getElementById("offNameWarn").style.display = "none";
   }).withFailureHandler(function (e) {
-    btn.disabled = false; btn.textContent = "Record offense";
-    showToast("Failed: " + e.message, "error");
+    done();
+    showToast(serverError(e), "error");
   }).addOffense(date, name, desc);
 }
 
@@ -5535,8 +5762,10 @@ function refreshMemberList() {
   document.getElementById("memberListContent").innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading…</div></div>';
   google.script.run.withSuccessHandler(function (d) {
     memberListData = d;
-    renderMemberList();
-    renderMemberDetail();
+    // Fresh roster → fresh figures: attendance, details and ranks reload on demand.
+    memberAttCache = {}; memberDetailsCache = {}; rosterRanks = null;
+    if (memberFilterNames) applyMemberFilters(); else renderMemberList();
+    if (memberDetailMode === "view") renderMemberDetail();
   })
     .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
     .getMemberList();
@@ -5551,10 +5780,17 @@ var MFILTER_FIELDS = ["sections", "roles", "genders", "faculties", "yearsOfStudy
 var memberFilterOptions = null, memberFilterOpen = false, memberCountTimer = null;
 var memberFilters = { sections: [], roles: [], genders: [], faculties: [], yearsOfStudy: [], probationStatuses: [], memberStatuses: [] };
 
-// Client-side mirror of filterMembers_ in Code.gs, for the roster list.
-// Detail facets (gender / faculty / year / member status) need those fields on the
-// getMemberList() rows; when a row does not carry a field, that facet is skipped
-// for it rather than silently dropping the member from the roster.
+// The roster list is filtered SERVER-SIDE: getFilteredMemberNames(filters) runs the
+// same filterMembers_ as the count and both exports, so list, count and files agree.
+// While a request is out the list shows a loading state.
+var memberFilterNames = null, memberFilterBusy = false, memberFilterSeq = 0, memberFilterTimer = null;
+function memberPassesFilter(m) {
+  return memberFilterNames ? !!memberFilterNames[m.name] : memberFilterMatch(m);
+}
+
+// FALLBACK only (backend without getFilteredMemberNames): a client mirror of
+// filterMembers_. getMemberList() rows carry no gender / faculty / year / member
+// status, so those facets are skipped per row rather than dropping the member.
 function memberFilterMatch(m) {
   var f = memberFilters;
   function has(l) { return l && l.length; }
@@ -5672,20 +5908,61 @@ function clearMemberFilters() {
   applyMemberFilters();
 }
 
-// Re-render the roster against the filters, drop a selection that no longer
-// qualifies, then re-count.
+// Filters changed: show the list loading, fetch the matching names (debounced),
+// then re-render. Stale responses are dropped by sequence number.
 function applyMemberFilters() {
-  if (selectedMemberName) {
-    var still = memberListData.some(function (m) { return m.name === selectedMemberName && memberFilterMatch(m); });
+  var seq = ++memberFilterSeq;
+  if (memberFilterTimer) { clearTimeout(memberFilterTimer); memberFilterTimer = null; }
+  if (!activeMemberFilterCount() || !hasServerFn("getFilteredMemberNames")) {
+    memberFilterNames = null; memberFilterBusy = false;
+    settleMemberFilter();
+    refreshFilteredMemberCount();
+    return;
+  }
+  if (memberCountTimer) { clearTimeout(memberCountTimer); memberCountTimer = null; }
+  memberFilterBusy = true;
+  renderMemberList();
+  var el = document.getElementById("mfilterCount");
+  if (el) el.innerHTML = '<b>\u2026</b> filtering';
+  memberFilterTimer = setTimeout(function () {
+    memberFilterTimer = null;
+    google.script.run.withSuccessHandler(function (names) {
+      if (seq !== memberFilterSeq) return;
+      names = names || [];
+      memberFilterBusy = false;
+      memberFilterNames = {};
+      for (var i = 0; i < names.length; i++) memberFilterNames[names[i]] = true;
+      paintMemberCount(names.length);
+      settleMemberFilter();
+    }).withFailureHandler(function (e) {
+      if (seq !== memberFilterSeq) return;
+      memberFilterBusy = false; memberFilterNames = null;
+      showToast("Couldn\u2019t filter the roster: " + serverError(e), "error");
+      settleMemberFilter();
+      refreshFilteredMemberCount();
+    }).getFilteredMemberNames(memberFilterPayload());
+  }, 220);
+}
+// Re-render the list; drop a selection that no longer qualifies (never an open edit form).
+function settleMemberFilter() {
+  if (selectedMemberName && memberDetailMode === "view") {
+    var still = memberListData.some(function (m) { return m.name === selectedMemberName && memberPassesFilter(m); });
     if (!still) {
       selectedMemberName = null;
       var rp = document.getElementById("membersRosterPane");
       if (rp) rp.classList.remove("detail-open");
-      if (typeof renderMemberDetail === "function") renderMemberDetail();
+      renderMemberDetail();
     }
   }
-  if (typeof renderMemberList === "function") renderMemberList();
-  refreshFilteredMemberCount();
+  renderMemberList();
+}
+function paintMemberCount(n) {
+  n = Number(n) || 0;
+  var e2 = document.getElementById("mfilterCount");
+  if (e2) e2.innerHTML = '<b>' + n + '</b> member' + (n === 1 ? '' : 's') + ' match' + (n === 1 ? 'es' : '');
+  var csv = document.getElementById("mfilterCsv"), pdf = document.getElementById("mfilterPdf");
+  if (csv) csv.disabled = (n === 0);
+  if (pdf) pdf.disabled = (n === 0);
 }
 
 // Omitted or empty means "no filter on that field" — send only what is set.
@@ -5703,14 +5980,7 @@ function refreshFilteredMemberCount() {
   if (el) el.innerHTML = '<b>\u2026</b> counting';
   if (memberCountTimer) clearTimeout(memberCountTimer);
   memberCountTimer = setTimeout(function () {
-    google.script.run.withSuccessHandler(function (n) {
-      n = Number(n) || 0;
-      var e2 = document.getElementById("mfilterCount");
-      if (e2) e2.innerHTML = '<b>' + n + '</b> member' + (n === 1 ? '' : 's') + ' match' + (n === 1 ? 'es' : '');
-      var csv = document.getElementById("mfilterCsv"), pdf = document.getElementById("mfilterPdf");
-      if (csv) csv.disabled = (n === 0);
-      if (pdf) pdf.disabled = (n === 0);
-    }).withFailureHandler(function () {
+    google.script.run.withSuccessHandler(paintMemberCount).withFailureHandler(function () {
       var e3 = document.getElementById("mfilterCount");
       if (e3) e3.innerHTML = '<b>\u2014</b> members match';
     }).countFilteredMembers(memberFilterPayload());
@@ -6205,7 +6475,9 @@ function adminApprove(rowIndex) {
   if (roBlock()) return;
   var note = getReviewNote("Optional note (leave blank for none):");
   if (note === null) return;
+  var done = beginDecision(rowIndex); if (!done) return;
   google.script.run.withSuccessHandler(function (r) {
+    done();
     r = r || {};
     // Approval now cascades backwards: past registers get excused, the automatic
     // 3-AU offenses they caused are re-checked, and a removal that no longer holds
@@ -6214,6 +6486,8 @@ function adminApprove(rowIndex) {
     if (r.backfilled)      parts.push(r.backfilled + " past record" + (r.backfilled === 1 ? "" : "s") + " updated");
     if (r.offensesRemoved) parts.push(r.offensesRemoved + " offense" + (r.offensesRemoved === 1 ? "" : "s") + " removed");
     if (r.reinstatementFlagged) parts.push("flagged for reinstatement");
+    var pNote = probationFlagToastPart(r.probationFlag ? [r.probationFlag] : []);
+    if (pNote) parts.push(pNote);
     // backfillNote explains what the retroactive correction did (or why it couldn't),
     // e.g. for an emergency approved before the register was marked.
     var msg = parts.join(" \u00b7 ") + ".";
@@ -6222,8 +6496,9 @@ function adminApprove(rowIndex) {
     selectedApologyIdx = null;
     loadApologyQueue();
     loadReinstatementFlags();
+    loadProbationOutcomeFlags();
   })
-    .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
+    .withFailureHandler(function (e) { done(); showToast(serverError(e), "error"); })
     .approveApology(rowIndex, note || "");
 }
 
@@ -6231,11 +6506,13 @@ function adminReject(rowIndex) {
   if (roBlock()) return;
   var note = getReviewNote("Reason for rejection:");
   if (note === null) return;
+  var done = beginDecision(rowIndex); if (!done) return;
   google.script.run.withSuccessHandler(function (r) {
-    var msg = "Apology " + r.newStatus.toLowerCase() + ".";
+    done(); r = r || {};
+    var msg = "Apology " + String(r.newStatus || "rejected").toLowerCase() + ".";
     if (r.cascaded > 0) msg += " " + r.cascaded + " attendance record(s) updated.";
     showToast(msg, "success"); selectedApologyIdx = null; loadApologyQueue();
-  }).withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
+  }).withFailureHandler(function (e) { done(); showToast(serverError(e), "error"); })
     .rejectApology(rowIndex, note || "");
 }
 
@@ -6243,22 +6520,26 @@ function adminRevoke(rowIndex) {
   if (roBlock()) return;
   var note = prompt("Reason for revoking:");
   if (note === null) return;
+  var done = beginDecision(rowIndex); if (!done) return;
   google.script.run.withSuccessHandler(function (r) {
+    done(); r = r || {};
     var msg = "Apology revoked.";
     if (r.cascaded > 0) msg += " " + r.cascaded + " attendance record(s) updated.";
     showToast(msg, "success"); loadApologyQueue();
-  }).withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
+  }).withFailureHandler(function (e) { done(); showToast(serverError(e), "error"); })
     .rejectApology(rowIndex, note || "");
 }
 
 function adminApproveRestart(memberName, rowIndex) {
   if (roBlock()) return;
   if (!confirm("Approve probation restart for " + memberName + "? This resets their probation with today as the start date.")) return;
+  var done = beginDecision(rowIndex); if (!done) return;
   google.script.run.withSuccessHandler(function (r) {
     showToast(r.name + "'s probation restarted.", "success");
-    google.script.run.withSuccessHandler(function () { loadApologyQueue(); })
+    google.script.run.withSuccessHandler(function () { done(); loadApologyQueue(); })
+      .withFailureHandler(function (e) { done(); showToast(serverError(e), "error"); loadApologyQueue(); })
       .approveApology(rowIndex, "Restart approved");
-  }).withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
+  }).withFailureHandler(function (e) { done(); showToast(serverError(e), "error"); })
     .approveProbationRestart(memberName);
 }
 
@@ -6267,11 +6548,13 @@ function adminApproveRestart(memberName, rowIndex) {
 function approveRejoin(rowIndex, memberName) {
   if (roBlock()) return;
   if (!confirm("Approve " + memberName + "'s rejoin request? They return on a fresh re-entry probation.")) return;
+  var done = beginDecision(rowIndex); if (!done) return;
   google.script.run.withSuccessHandler(function () {
+    done();
     showToast(memberName + " reinstated \u2014 re-entry probation started.", "success");
     selectedApologyIdx = null;
     loadApologyQueue();
-  }).withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
+  }).withFailureHandler(function (e) { done(); showToast(serverError(e), "error"); })
     .approveRejoin(rowIndex, memberName);
 }
 
@@ -6320,11 +6603,15 @@ function reinstateFlagged(name, mode) {
   if (!confirm("Reinstate " + name + (mode === "active"
       ? " as active, with no probation?"
       : " on a fresh re-entry probation?"))) return;
+  var safeSel = String(name).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  var btns = [].filter.call(document.querySelectorAll('#reinstateFlagsPanel button[onclick]'), function (b) { return b.getAttribute("onclick").indexOf("('" + safeSel + "'") !== -1; });
+  var done = beginAction("reinstate:" + name, btns); if (!done) return;
   google.script.run.withSuccessHandler(function () {
+    done();
     showToast(name + (mode === "active" ? " reinstated as active." : " reinstated \u2014 re-entry probation started."), "success");
     loadReinstatementFlags();
     if (activeTab === "members" && typeof refreshMemberList === "function") refreshMemberList();
-  }).withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
+  }).withFailureHandler(function (e) { done(); showToast(serverError(e), "error"); })
     .adminReinstateMember(name, mode);
 }
 
@@ -6338,6 +6625,92 @@ function adminReinstateMember(memberName) {
     refreshMemberList();
   }).withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
     .adminReinstateMember(memberName, "probation");
+}
+
+// ─── PROBATION OUTCOME CORRECTIONS ──────────────────────────────────────────
+// A concluded probation result is never re-evaluated automatically, so an
+// attendance correction can leave it wrong. getProbationOutcomeFlags() lists
+// them; only improvements (canApply) can be applied here. A result getting
+// worse shows the backend note and no button — that one is left to a human.
+var probationOutcomeFlags = [];
+
+// "Brian’s probation result may need correcting" / "2 probation results …"
+function probationFlagToastPart(flags) {
+  flags = (flags || []).filter(Boolean);
+  if (!flags.length) return "";
+  if (flags.length === 1) {
+    var first = String(flags[0].name || "").split(/\s+/)[0] || "A member";
+    return first + "\u2019s probation result may need correcting";
+  }
+  return flags.length + " probation results may need correcting";
+}
+
+function loadProbationOutcomeFlags() {
+  if (!google.script.run || typeof google.script.run.getProbationOutcomeFlags !== "function") return;
+  google.script.run.withSuccessHandler(function (f) { probationOutcomeFlags = f || []; renderProbationOutcomeFlags(); })
+    .withFailureHandler(function () { probationOutcomeFlags = []; renderProbationOutcomeFlags(); })
+    .getProbationOutcomeFlags();
+}
+
+function renderProbationOutcomeFlags() {
+  var el = document.getElementById("probationFlagsPanel");
+  if (!el) return;
+  if (!probationOutcomeFlags.length) { el.style.display = "none"; el.innerHTML = ""; return; }
+  el.style.display = "";
+  var h = '<div class="stat-card" style="padding:16px 18px;margin-bottom:18px">'
+        +   '<div class="eyebrow">PROBATION RESULT MAY NEED CORRECTING \u00b7 ' + probationOutcomeFlags.length + '</div>'
+        +   '<p style="font-size:12.5px;color:var(--ink-600);line-height:1.5;margin:6px 0 4px">A concluded probation result is never re-evaluated automatically. After attendance corrections, these no longer match the register.</p>';
+  for (var i = 0; i < probationOutcomeFlags.length; i++) {
+    var f = probationOutcomeFlags[i], safe = String(f.name).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    var meta = esc((f.groups || []).join(" \u00b7 ")) + ' \u00b7 ' + esc(String(f.recordedLabel || "").toUpperCase())
+             + ' \u2192 ' + esc(String(f.recomputedLabel || "").toUpperCase())
+             + ' \u00b7 ATTENDED ' + f.attendedNow + '/' + f.required
+             + (f.recomputedPenalty ? ' \u00b7 PENALTY ' + f.recomputedPenalty : '');
+    h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:12px 0 0;margin-top:11px;border-top:1px solid var(--paper-200)">'
+      +    '<div style="flex:1;min-width:180px">'
+      +      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+      +        '<span style="font-size:13px;font-weight:600;color:var(--ink)">' + esc(f.name) + '</span>'
+      +        (f.canApply ? '' : '<span class="prob-tag">DECIDE MANUALLY</span>')
+      +      '</div>'
+      +      '<div style="font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;color:var(--ink-500);margin-top:4px">' + meta + '</div>'
+      +      '<div style="font-size:12px;color:var(--ink-600);line-height:1.45;margin-top:6px">' + esc(String(f.note || "").replace(/->/g, "\u2192")) + '</div>'
+      +    '</div>';
+    if (f.canApply) {
+      h += '<div class="pof-actions" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+        +    '<label class="pof-notify" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-600);cursor:pointer">'
+        +      '<input type="checkbox" id="pofNotify' + i + '" checked style="width:auto;margin:0;accent-color:var(--gold)"> Email the member'
+        +    '</label>'
+        +    '<button class="btn-export" id="pofApply' + i + '" onclick="applyProbationCorrection(\'' + safe + '\',' + i + ')">Apply correction</button>'
+        +  '</div>';
+    }
+    h += '</div>';
+  }
+  el.innerHTML = h + '</div>';
+}
+
+function applyProbationCorrection(name, i) {
+  if (roBlock()) return;
+  var f = probationOutcomeFlags[i] || {};
+  var cb = document.getElementById("pofNotify" + i);
+  var notify = cb ? !!cb.checked : true;
+  if (!confirm("Change " + name + "\u2019s probation result from " + (f.recordedLabel || "the recorded result") + " to "
+      + (f.recomputedLabel || "the corrected result") + "?" + (notify ? " They\u2019ll be emailed." : " No email will be sent."))) return;
+  var done = beginAction("overturn:" + name, [document.getElementById("pofApply" + i), cb], "Applying\u2026");
+  if (!done) return;
+  google.script.run.withSuccessHandler(function (r) {
+    done();
+    r = r || {};
+    var parts = [name + ": " + (r.from || f.recordedLabel) + " \u2192 " + (r.to || f.recomputedLabel)];
+    if (r.membershipRestored) parts.push("membership restored");
+    if (r.rejoinClosed) parts.push(r.rejoinClosed + " rejoin request" + (r.rejoinClosed === 1 ? "" : "s") + " closed");
+    if (r.emailed) parts.push("member emailed");
+    else if (notify) parts.push("email not sent");
+    showToast(parts.join(" \u00b7 ") + ".", "success");
+    loadProbationOutcomeFlags();
+    if (r.rejoinClosed) loadApologyQueue();
+    if (activeTab === "members" && typeof refreshMemberList === "function") refreshMemberList();
+  }).withFailureHandler(function (e) { done(); showToast(serverError(e), "error"); })
+    .overturnProbationOutcome(name, notify);
 }
 
 
@@ -6899,13 +7272,14 @@ function submitCommunique(){
 
 function sendCommuniqueNow(){
   var payload=buildCommuniquePayload();if(!payload)return;
+  if(inFlight.communique)return;
   if(!confirm("Send this message now? It will go out with the letterhead to the selected recipients."))return;
-  var btn=document.getElementById("btnSendComm");btn.disabled=true;btn.textContent="Sending\u2026";
+  var done=beginAction("communique",[document.getElementById("btnSendComm")],"Sending\u2026");if(!done)return;
   google.script.run.withSuccessHandler(function(r){
-    btn.disabled=false;btn.textContent="Send message";
+    done();
     showToast(commSentToast(r),"success");
     resetCommuniqueForm();
-  }).withFailureHandler(function(e){btn.disabled=false;btn.textContent="Send message";showToast("Failed: "+e.message,"error");
+  }).withFailureHandler(function(e){done();showToast(serverError(e),"error");
   }).sendCommunique(payload);
 }
 
@@ -6918,13 +7292,13 @@ function scheduleCommuniqueSend(){
   if(isNaN(when.getTime())){showToast("That date and time isn\u2019t valid.","error");return;}
   if(when.getTime()<Date.now()+60*1000){showToast("Please schedule at least a minute in the future.","error");return;}
   payload.sendAt=when.toISOString();
-  var btn=document.getElementById("btnSendComm");btn.disabled=true;btn.textContent="Scheduling\u2026";
+  var done=beginAction("communique",[document.getElementById("btnSendComm")],"Scheduling\u2026");if(!done)return;
   google.script.run.withSuccessHandler(function(r){
-    btn.disabled=false;btn.textContent="Schedule message";
+    done();
     showToast("Scheduled for "+fmtSchedWhen(r.sendAt)+" \u2014 "+r.recipientCount+" recipient"+(r.recipientCount===1?"":"s")+".","success");
     resetCommuniqueForm();
     showCommSubtab("scheduled");
-  }).withFailureHandler(function(e){btn.disabled=false;btn.textContent="Schedule message";showToast("Failed: "+e.message,"error");
+  }).withFailureHandler(function(e){done();showToast(serverError(e),"error");
   }).scheduleCommunique(payload);
 }
 
