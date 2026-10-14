@@ -34,7 +34,7 @@ don't fork the rules.
   devices:
 
   | Owner | Function | Returns |
-  |-------|----------|---------|
+  | ------- | ---------- | --------- |
   | `Code.gs` | `getUserRole()` | existing object, plus `theme: "system" \| "light" \| "dark"` |
   | `Code.gs` | `getThemePreference()` | `"system" \| "light" \| "dark"` (default `"system"`) — `PropertiesService.getUserProperties()` |
   | `Code.gs` | `setThemePreference(pref)` | `{ success, theme }` — rejects anything outside the three values |
@@ -96,7 +96,7 @@ Add a **fill** token per accent. Fills stay mid-tone in both themes; `--on-accen
 both themes.
 
 | Token | Use for |
-|-------|---------|
+| ------- | --------- |
 | `--gold-fill`, `--crimson-fill` | `.btn-gold`, `.btn-crimson`, `.btn-danger`, `.btn-save`, badges with white text |
 | `--present-fill`, `--late-exc-fill`, `--late-unexc-fill`, `--absent-exc-fill`, `--absent-unexc-fill` | Active P/L/A and 5-way status buttons, `.toast.success/.error` |
 | `--present-fill-hover` | replaces `#3E6A4A` in `.btn-green` |
@@ -107,7 +107,7 @@ Rule: **fg tokens are for text and strokes; `*-fill` tokens are for backgrounds 
 ## 2b. Additional role tokens (from the literal audit)
 
 | Token | Replaces | Where |
-|-------|----------|-------|
+| ------- | ---------- | ------- |
 | `--tint-soprano`, `--tint-alto`, `--tint-tenor`, `--tint-bass` | `#F3E9CE`, `#F0E0CE`, `#ECE7DE`, `#E1ECDF` | `Scripts.html` ~L1468, ~L4121 (section avatar tints) |
 | `--tint-choir`, `--tint-band`, `--tint-orchestra` | same hexes | `Scripts.html` ~L845, ~L4122 |
 | `--medal-silver`, `--medal-silver-ink`, `--medal-bronze` | `#A9A39A`, `#7E7972`, `#A56A3A` | `.podium-col.silver/.bronze` |
@@ -248,7 +248,7 @@ muted/disabled only). White on `--gold-fill` ≈ 3.5:1 in both themes, unchanged
 
 Lint (should return only the `:root` blocks, `.theme-light`, emails, and the signature palette):
 
-```
+```bash
 grep -nE "#[0-9a-fA-F]{3,8}\b|rgba?\(|\bwhite\b" Page.html Scripts.html
 grep -nE "(stroke|fill|stop-color)=\"#" Scripts.html Page.html
 ```
