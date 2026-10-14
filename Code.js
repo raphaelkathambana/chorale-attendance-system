@@ -179,6 +179,11 @@ function dailySchemaCheck_() {
 //  (Strings rep ↔ Violin/Cello/Viola...), mapped in the Config sheet via the
 //  "Instrument" and "Instrument Family" columns.
 // -------------------------------------------------------
+// Super Admin is NOT a rung above Admin - it is a different axis: full visibility
+// across every section, and zero ability to change anything. It therefore carries
+// admin-level REACH (level 3, so scoping treats it as unrestricted) together with
+// readOnly, which every write guard refuses. New write endpoints are blocked by
+// default: a guard that is forgotten denies rather than grants.
 var ROLE_LEVELS = { admin: 3, sectionAdmin: 2, elevated: 1, member: 0, unknown: -1 };
 
 /** Ensures the Admins sheet has the Role/Section/Rep Group columns (migration). */
@@ -259,21 +264,36 @@ function getAccess_(ss, emailOverride) {
     var data = adminSheet.getDataRange().getValues();
     var headers = data[0].map(function(x){ return x.toString().trim().toLowerCase(); });
     var rIdx = headers.indexOf("role"), sIdx = headers.indexOf("section"), gIdx = headers.indexOf("rep group");
+    // Optional display name for admins who have NO Members row (e.g. an oversight
+    // account). Without it, the only name available is the raw email address.
+    var nIdx = headers.indexOf("name");
     // Email column by HEADER (fall back to column 1 for legacy sheets with no header)
     var eIdx = headers.indexOf("email");
     if (eIdx === -1) eIdx = 0;
     for (var i = 1; i < data.length; i++) {
       if (data[i][eIdx].toString().trim().toLowerCase() !== emailLower) continue;
       var roleRaw = (rIdx !== -1 ? data[i][rIdx].toString().trim() : "");
+      var adminName = (nIdx !== -1 ? data[i][nIdx].toString().trim() : "");
       var section = (sIdx !== -1 ? data[i][sIdx].toString().trim() : "");
       var repGroup = (gIdx !== -1 ? data[i][gIdx].toString().trim() : "");
       var role;
       var rl = roleRaw.toLowerCase().replace(/[^a-z]/g, "");
-      if (rl === "" || rl === "admin") role = "admin";            // blank = full admin (legacy rows)
+      if (rl === "superadmin") role = "superAdmin";               // view + export, never write
+      else if (rl === "" || rl === "admin") role = "admin";        // blank = full admin (legacy rows)
       else if (rl === "sectionadmin") role = "sectionAdmin";
       else if (rl === "elevated" || rl === "elevatedmember") role = "elevated";
       else role = "member";                                        // unrecognized → LOWEST tier, never admin
       // Scoped roles need their scope; without it they can't be safely applied
+      if (role === "superAdmin") {
+        return {
+          role: "superAdmin", level: ROLE_LEVELS.admin, readOnly: true,
+          email: email, name: memberInfo ? memberInfo.name : (adminName || email),
+          groups: memberInfo ? memberInfo.groups : [],
+          section: "", repGroup: "", allowedSections: GROUPS.slice(),
+          membershipInactive: !!(memberInfo && !memberInfo.active),
+          detailStatus: (memberInfo && !memberInfo.active) ? getMemberDetailStatus_(ss, memberInfo.name) : ""
+        };
+      }
       if (role === "sectionAdmin" && !section) role = "member";
       if (role === "elevated" && (!section || !repGroup)) role = "member";
 
@@ -289,7 +309,7 @@ function getAccess_(ss, emailOverride) {
 
       return {
         role: role, level: ROLE_LEVELS[role],
-        email: email, name: memberInfo ? memberInfo.name : email,
+        email: email, name: memberInfo ? memberInfo.name : (adminName || email),
         groups: memberInfo ? memberInfo.groups : [],
         section: (role === "admin") ? "" : section,
         repGroup: (role === "elevated") ? repGroup : "",
@@ -326,6 +346,7 @@ function getAccess_(ss, emailOverride) {
 /** Throws unless the caller has at least section-scoped admin power over `section`. */
 function requireSectionPower_(section) {
   var a = getAccess_();
+  if (a.readOnly) throw new Error("Your access is view-only - this action changes data.");
   if (a.level >= ROLE_LEVELS.admin) return a;
   if (a.level >= ROLE_LEVELS.elevated && section && a.section === section) return a;
   if (a.level >= ROLE_LEVELS.elevated && !section) return a; // unscoped call by scoped role — caller must filter
@@ -335,13 +356,27 @@ function requireSectionPower_(section) {
 /** Throws unless the caller is a full admin. */
 function requireFullAdmin_() {
   var a = getAccess_();
+  if (a.readOnly) throw new Error("Your access is view-only - this action changes data.");
   if (a.level >= ROLE_LEVELS.admin) return a;
   throw new Error("This action requires full admin access.");
+}
+
+/**
+ * Read-only gate: admins, section admins and the view-only Super Admin.
+ * Used by endpoints that only REPORT. Anything that mutates must keep using
+ * requireManagement_ / requireFullAdmin_, which refuse view-only access.
+ */
+function requireView_(section) {
+  var a = getAccess_();
+  if (a.level >= ROLE_LEVELS.admin) return a;
+  if (a.role === "sectionAdmin" && (!section || a.section === section)) return a;
+  throw new Error("This view requires admin or section-admin access.");
 }
 
 /** Throws unless caller is admin or sectionAdmin (of the given section if provided). */
 function requireManagement_(section) {
   var a = getAccess_();
+  if (a.readOnly) throw new Error("Your access is view-only - this action changes data.");
   if (a.level >= ROLE_LEVELS.admin) return a;
   if (a.role === "sectionAdmin" && (!section || a.section === section)) return a;
   throw new Error("This action requires admin or section-admin access.");
@@ -454,7 +489,14 @@ function getUserRole() {
   var out = {
     role: a.role, email: a.email, name: a.name, groups: a.groups,
     section: a.section, repGroup: a.repGroup, allowedSections: a.allowedSections,
-    isAdminLike: a.level >= ROLE_LEVELS.elevated
+    isAdminLike: a.level >= ROLE_LEVELS.elevated,
+    // View-only (Super Admin): full visibility, every write refused server-side.
+    // The UI should hide action controls rather than let them fail.
+    readOnly: !!a.readOnly,
+    // Whether this account has a Members row at all. An oversight account has no
+    // roster entry, so it never appears on a register and has no personal
+    // attendance page - the UI should hide "My attendance" when this is false.
+    isMember: !!findMemberByEmail_(ss, (a.email || "").toLowerCase())
   };
   // Admin signed in while their OWN membership is inactive/on hiatus -> banner.
   if (a.membershipInactive) {
@@ -506,7 +548,12 @@ function getMyAttendance() {
   if (!email) throw new Error("Could not detect your email.");
 
   var member = findMemberByEmail_(ss, email.toLowerCase());
-  if (!member) throw new Error("No member found for " + email);
+  if (!member) {
+    // Oversight accounts (Super Admin) have no roster entry, so there is nothing
+    // personal to show. Return an empty shape instead of an error.
+    return { isMember: false, name: "", email: email, groups: [], history: [],
+             message: "This account has no membership record, so there is no personal attendance to show." };
+  }
 
   var attData = readAllAttendance_(ss);
   var history = getMemberHistory(member.name);
@@ -693,6 +740,30 @@ function saveAttendance(dateStr, selectedGroups, records, overwrite) {
 
   var sessionKey = buildSessionKey_(selectedGroups);
 
+  // Serialise saves. Without this, a double-click or two admins saving together
+  // could both pass the existence check before either wrote - two full registers.
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(30000); }
+  catch (e) { throw new Error("Another save is in progress. Please wait a moment and try again."); }
+
+  var rowsWritten = 0, sm = {};
+  try {
+    // Would this save collide with a register that already exists? Same condition
+    // the overwrite path uses to decide what to delete - so the two stay in step.
+    var existing = sheet.getDataRange().getValues();
+    var collisions = 0;
+    for (var x = 1; x < existing.length; x++) {
+      if (formatSheetDate_(existing[x][0]) !== dateStr) continue;
+      var xg = existing[x][2].toString();
+      var xs = (existing[x][7] && existing[x][7].toString().trim()) ? existing[x][7].toString().trim() : xg;
+      if (xs === sessionKey || selectedGroups.indexOf(xg) !== -1) collisions++;
+    }
+    if (collisions > 0 && !overwrite) {
+      throw new Error("Attendance for " + dateStr + " (" + selectedGroups.join(", ") +
+        ") is already recorded (" + collisions + " rows). Open it from Sessions to edit, " +
+        "or save again choosing to overwrite.");
+    }
+
   if (overwrite) {
     var data = sheet.getDataRange().getValues();
     for (var i = data.length-1; i >= 1; i--) {
@@ -706,7 +777,7 @@ function saveAttendance(dateStr, selectedGroups, records, overwrite) {
     }
   }
 
-  var user = Session.getActiveUser().getEmail()||"Unknown", now = new Date(), rows = [], sm = {};
+  var user = Session.getActiveUser().getEmail()||"Unknown", now = new Date(), rows = [];
   for (var j = 0; j < records.length; j++) {
     var rec = records[j];
     for (var k = 0; k < rec.groups.length; k++) {
@@ -716,12 +787,21 @@ function saveAttendance(dateStr, selectedGroups, records, overwrite) {
     }
   }
   if (rows.length > 0) sheet.getRange(sheet.getLastRow()+1, 1, rows.length, 8).setValues(rows);
+    rowsWritten = rows.length;
+    // Land the writes BEFORE releasing, so a waiting save reads the new rows
+    // rather than stale data and correctly sees a collision.
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
+  }
+
+  // Derived work below is idempotent, so it runs outside the lock.
   refreshAllRegisters_(ss);
   // Mark matching apologies as Applied
   markApologiesApplied_(ss, dateStr, records);
   var probEvals = evaluateProbation_(ss);
   try { syncConsecutiveAuOffenses_(ss); } catch(e) {}
-  return { success: true, summary: sm, date: dateStr, selectedGroups: selectedGroups, totalRows: rows.length, probationEvals: probEvals };
+  return { success: true, summary: sm, date: dateStr, selectedGroups: selectedGroups, totalRows: rowsWritten, probationEvals: probEvals };
 }
 
 // -------------------------------------------------------
@@ -773,10 +853,113 @@ function getMemberHistory(memberName) {
   return {records:records,stats:stats,profilePhoto:profilePhoto,groups:memberGroups,name:memberName};
 }
 
+/**
+ * DIAGNOSTIC - finds duplicated attendance rows: the same member, date, section and
+ * session recorded more than once. Writes nothing. Run from the editor.
+ */
+function findDuplicateAttendance() {
+  var r = scanDuplicateAttendance_();
+  var lines = ["DUPLICATE ATTENDANCE - DRY RUN\n",
+    "Duplicate groups: " + r.groups.length + "   extra rows that would be removed: " + r.extraRows];
+  var conflicts = r.groups.filter(function (g) { return g.statusesDiffer; });
+  if (conflicts.length) {
+    lines.push("\nWARNING - " + conflicts.length + " group(s) have DIFFERENT statuses between copies.");
+    lines.push("The most recently recorded copy will be kept; review these after cleanup:");
+    conflicts.slice(0, 30).forEach(function (g) {
+      lines.push("  " + g.date + "  " + g.name + " [" + g.group + "]  statuses: " + g.statuses.join(" / ") +
+                 "  -> keeping " + g.keepStatus);
+    });
+  }
+  var byDate = {};
+  r.groups.forEach(function (g) { byDate[g.date] = (byDate[g.date] || 0) + (g.count - 1); });
+  lines.push("\nExtra rows by date:");
+  Object.keys(byDate).sort().forEach(function (d) { lines.push("  " + d + ": " + byDate[d]); });
+  if (!r.groups.length) lines = ["No duplicate attendance rows found."];
+  var msg = lines.join("\n");
+  Logger.log(msg);
+  return msg;
+}
+
+/**
+ * Removes duplicated attendance rows, keeping the MOST RECENTLY RECORDED copy of
+ * each (the latest Timestamp). If a register was re-entered with corrections, the
+ * later copy is the corrected one; for an accidental double-save the copies are
+ * identical and it makes no difference. Run findDuplicateAttendance() first.
+ */
+function removeDuplicateAttendance() {
+  requireFullAdmin_();
+  var ss = getSpreadsheet_();
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(30000); }
+  catch (e) { throw new Error("A save is in progress - try again in a moment."); }
+  var r, removed = 0;
+  try {
+    r = scanDuplicateAttendance_();
+    var sheet = ss.getSheetByName(ATTENDANCE_SHEET);
+    // Delete bottom-up so earlier row numbers stay valid.
+    r.deleteRows.sort(function (a, b) { return b - a; }).forEach(function (row) {
+      sheet.deleteRow(row);
+      removed++;
+    });
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
+  }
+  // Counts changed, so rebuild everything derived from attendance.
+  refreshAllRegisters_(ss);
+  try { evaluateProbation_(ss); } catch (e) {}
+  try { syncConsecutiveAuOffenses_(ss); } catch (e) {}
+  var conflicts = r.groups.filter(function (g) { return g.statusesDiffer; }).length;
+  var msg = "Removed " + removed + " duplicate attendance row(s) across " + r.groups.length + " group(s)." +
+            (conflicts ? " " + conflicts + " had differing statuses - the latest copy was kept." : "");
+  Logger.log(msg);
+  return { success: true, removed: removed, message: msg };
+}
+
+/** Shared scan: groups rows by date + name + section + session. */
+function scanDuplicateAttendance_() {
+  var ss = getSpreadsheet_();
+  var sheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  var out = { groups: [], extraRows: 0, deleteRows: [] };
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var data = sheet.getDataRange().getValues();
+  var buckets = {};
+  for (var i = 1; i < data.length; i++) {
+    var date = formatSheetDate_(data[i][0]);
+    var name = data[i][1].toString().trim();
+    var group = data[i][2].toString().trim();
+    var session = (data[i][7] && data[i][7].toString().trim()) ? data[i][7].toString().trim() : group;
+    var key = date + "|" + name + "|" + group + "|" + session;
+    var ts = data[i][6] instanceof Date ? data[i][6].getTime() : (new Date(data[i][6]).getTime() || 0);
+    if (!buckets[key]) buckets[key] = [];
+    buckets[key].push({ row: i + 1, status: data[i][4].toString(), ts: ts,
+                        date: date, name: name, group: group });
+  }
+  Object.keys(buckets).forEach(function (k) {
+    var rows = buckets[k];
+    if (rows.length < 2) return;
+    rows.sort(function (a, b) { return b.ts - a.ts || b.row - a.row; }); // newest first
+    var statuses = rows.map(function (x) { return x.status; });
+    var distinct = statuses.filter(function (s, idx) { return statuses.indexOf(s) === idx; });
+    out.groups.push({ date: rows[0].date, name: rows[0].name, group: rows[0].group,
+                      count: rows.length, statuses: statuses, statusesDiffer: distinct.length > 1,
+                      keepStatus: rows[0].status });
+    for (var j = 1; j < rows.length; j++) out.deleteRows.push(rows[j].row);
+    out.extraRows += rows.length - 1;
+  });
+  return out;
+}
+
 function batchUpdateAttendance(updates) {
   var ss=getSpreadsheet_(),sheet=ss.getSheetByName(ATTENDANCE_SHEET); if(!sheet)throw new Error("Attendance sheet not found.");
   // Scope: editing history requires admin or sectionAdmin; sectionAdmin only their section's rows
   var access = requireManagement_();
+  // Share the save lock: an overwrite-save deletes rows, which would shift the row
+  // indexes this edit is about to write to.
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(30000); }
+  catch (e) { throw new Error("Another save is in progress. Please wait a moment and try again."); }
+  try {
   var user=Session.getActiveUser().getEmail()||"Unknown",now=new Date(),changed=0;
   for(var i=0;i<updates.length;i++){var row=updates[i].rowIndex;if(row<2||row>sheet.getLastRow())continue;
     if(access.level < ROLE_LEVELS.admin){
@@ -784,6 +967,10 @@ function batchUpdateAttendance(updates) {
       if(access.allowedSections.indexOf(rowGroup) === -1) continue; // silently skip out-of-scope rows
     }
     sheet.getRange(row,5).setValue(updates[i].newStatus);sheet.getRange(row,6).setValue(user);sheet.getRange(row,7).setValue(now);changed++;}
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
+  }
   if(changed>0)refreshAllRegisters_(ss);
   try { syncConsecutiveAuOffenses_(ss); } catch(e) {}
   return{success:true,changed:changed};
@@ -979,7 +1166,7 @@ function logProbationOutcome_(ss, member, stats, outcome, penalty) {
  * probation-performance panel; also useful to verify logging is working.
  */
 function getProbationHistory() {
-  requireManagement_();
+  requireView_();
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(PROBATION_HISTORY_SHEET);
   if (!sheet || sheet.getLastRow() < 2) return [];
@@ -1198,8 +1385,8 @@ function readAllAttendance_(ss) {
  */
 function getScoreboard(group) {
   // Members may no longer see points, rankings or the scoreboard - this is now
-  // restricted to full admins and section admins.
-  requireManagement_();
+  // restricted to full admins, section admins and the view-only Super Admin.
+  requireView_();
   return computeScoreboard_(group);
 }
 
@@ -1425,7 +1612,7 @@ function getOffenseList() {
   // The disciplinary log is management-only, same as the scoreboard, and section
   // admins see only their own section's members.
   var ss = getSpreadsheet_();
-  var access = requireManagement_();
+  var access = requireView_();
   var offenses = readOffenses_(ss);
   if (access.level < ROLE_LEVELS.admin) {
     var inScope = scopeMemberPredicate_(access, ss);
@@ -2616,8 +2803,14 @@ function auditDashboardNumbers(section, rangeMode) {
         attended + absent + " vs " + d.totalRecords);
 
   // 2. Attended and absent partition all records, so the rates must complete each other
-  check("overallRate + absenteeismRate = 100", Math.abs((d.overallRate + d.absenteeismRate) - 100) <= 1,
-        d.overallRate + " + " + d.absenteeismRate);
+  // With zero records both rates are 0 by definition - the identity only applies
+  // when there is something to measure.
+  if (d.totalRecords > 0) {
+    check("overallRate + absenteeismRate = 100", Math.abs((d.overallRate + d.absenteeismRate) - 100) <= 1,
+          d.overallRate + " + " + d.absenteeismRate);
+  } else {
+    notes.push("No records in range, so the rate checks do not apply.");
+  }
 
   // 3. Unexcused absence is a subset of all absence
   check("auRate <= absenteeismRate", d.auRate <= d.absenteeismRate, d.auRate + " <= " + d.absenteeismRate);
@@ -3281,7 +3474,7 @@ function exportProbationPDF() {
 }
 
 function exportScoreboardCSV(group) {
-  requireManagement_();
+  requireView_();
   // "Consec. Penalty" was removed: 3-AU penalties are recorded as offenses now, so
   // that column was always 0 and double-implied a deduction that lives in Offense Pts.
   var sb=getScoreboard(group),rows=[["Rank","Name","Groups","Total Points","Attendance Pts","Rewards","Reward Pts","Offenses","Offense Pts","Days"]];
@@ -3289,7 +3482,7 @@ function exportScoreboardCSV(group) {
   return arrayToCSV_(rows);
 }
 function exportScoreboardPDF(group) {
-  requireManagement_();
+  requireView_();
   var sb=getScoreboard(group),rows=[["Rank","Name","Groups","Total Points","Attendance Pts","Rewards","Reward Pts","Offenses","Offense Pts","Days"]];
   for(var i=0;i<sb.length;i++){var s=sb[i];rows.push([i+1,s.name,s.groups.join(", "),s.totalPoints,s.attPoints,s.rewardCount,s.rewardPts,s.offenseCount,s.offensePts,s.totalDays]);}
   return buildPrintHTML_("Scoreboard" + (group!=="All"?" — "+group:""),rows,group);
@@ -3359,95 +3552,98 @@ function acknowledgeProbation() {
 //  most recent session, within a short window, and never long-term.
 // =======================================================
 var EMERGENCY_APOLOGY_TYPE = "Emergency";
-// How long AFTER a session starts a member may still file an emergency apology.
-// Measured from the session's START TIME, not from the end of the day.
-var EMERGENCY_APOLOGY_WINDOW_HOURS = 24;
-// How long a session stays on the member's card after it has started, so the card
-// does not jump to the next session the instant the current one begins.
-var SESSION_GRACE_MINUTES = 60;
+// How long a session stays on the member's card after it starts. During this time the
+// emergency apology is offered PROMINENTLY. After it, the card moves to the next
+// session and the emergency route stays available but tucked away until end of day.
+var SESSION_GRACE_MINUTES = 120;
+// Emergency apologies close at the END OF THE SESSION'S DAY (23:59:59). This replaces
+// the old EMERGENCY_APOLOGY_WINDOW_HOURS, which measured a fixed span from session start.
 
 /**
- * The session a member may currently file an emergency apology for.
+ * Today's emergency-apology option for the signed-in member.
  *
- * Eligibility is keyed to the SESSION (from the schedule), not to an attendance
- * row. The register is often marked hours after a session ends, and keying off it
- * meant the window opened late - or never, if the card had already rolled on.
- * Now the window opens the moment a session starts and runs for
- * EMERGENCY_APOLOGY_WINDOW_HOURS, whether or not anyone has marked the register.
+ * Timeline for a session at time S (e.g. 18:00):
+ *   before S - deadline (17:30)   normal apology still open        -> not eligible
+ *   S - deadline .. S + grace     emergency PROMINENT on the card  -> phase "prominent"
+ *   S + grace (20:00) .. 23:59    card shows next session; emergency
+ *                                 still reachable from the apology page -> phase "hidden"
+ *   after midnight                closed                           -> not eligible
  *
- * @returns {Object} { eligible, reason, date, time, groups, sessionKey,
- *                     opensAt, closesAt, status, windowHours }
+ * Opens at the DEADLINE rather than session start, so there is no dead zone between
+ * "too late to apologise" and the session beginning. Keyed to the schedule, so it
+ * works whether or not the register has been marked.
+ *
+ * @returns {Object} { eligible, reason, phase, date, time, groups, sessionKey,
+ *                     opensAt, promptUntil, closesAt, status }
  */
 function getEmergencyApologyOption() {
   var ss = getSpreadsheet_();
   var email = Session.getActiveUser().getEmail();
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
-  if (!member) throw new Error("No member record found.");
+  if (!member) return { eligible: false, reason: "This account has no membership record." };
   var memberGroups = member.groups.filter(function (g) { return GROUPS.indexOf(g) !== -1; });
   if (!memberGroups.length) return { eligible: false, reason: "You are not in any section." };
 
   var tz = Session.getScriptTimeZone();
   var now = new Date();
-  var windowMs = EMERGENCY_APOLOGY_WINDOW_HOURS * 3600000;
+  var dateStr = Utilities.formatDate(now, tz, "yyyy-MM-dd");
+  var info = getSessionTime(dateStr, memberGroups);
+  if (!info.found) return { eligible: false, reason: "You have no session today." };
 
-  // Walk backwards day by day for the most recent STARTED session still in window.
-  var days = Math.ceil(EMERGENCY_APOLOGY_WINDOW_HOURS / 24) + 1;
-  var candidate = null;
-  for (var d = 0; d <= days; d++) {
-    var checkDate = new Date(now.getTime() - d * 86400000);
-    var dateStr = Utilities.formatDate(checkDate, tz, "yyyy-MM-dd");
-    var info = getSessionTime(dateStr, memberGroups);
-    if (!info.found) continue;
-    var timeStr = info.latest || info.time;
-    var tp = timeStr.split(":");
-    var sessionDT = new Date(checkDate.getFullYear(), checkDate.getMonth(), checkDate.getDate(),
-                             parseInt(tp[0], 10), parseInt(tp[1], 10));
-    if (sessionDT > now) continue;                       // not started yet
-    if ((now - sessionDT) > windowMs) break;             // older than this is out of window
-    candidate = { date: dateStr, time: timeStr, sessionDT: sessionDT, groups: memberGroups };
-    break;                                               // most recent wins
-  }
+  // Same convention as the normal deadline: the day's latest session time.
+  var timeStr = info.latest || info.time;
+  var tp = timeStr.split(":");
+  var sessionDT = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
+                           parseInt(tp[0], 10), parseInt(tp[1], 10));
+  var opensAt = new Date(sessionDT.getTime() - APOLOGY_DEADLINE_MINUTES * 60000);
+  var endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+  var promptUntil = new Date(Math.min(sessionDT.getTime() + SESSION_GRACE_MINUTES * 60000,
+                                      endOfDay.getTime()));
 
-  if (!candidate) {
-    return { eligible: false,
-             reason: "There is no recent session to file an emergency apology for." };
-  }
-
-  var closesAt = new Date(candidate.sessionDT.getTime() + windowMs);
+  function fmt(d) { return Utilities.formatDate(d, tz, "yyyy-MM-dd HH:mm"); }
   var base = {
-    date: candidate.date, time: candidate.time, groups: candidate.groups,
-    sessionKey: candidate.groups.join(", "),
-    opensAt: Utilities.formatDate(candidate.sessionDT, tz, "yyyy-MM-dd HH:mm"),
-    closesAt: Utilities.formatDate(closesAt, tz, "yyyy-MM-dd HH:mm"),
-    windowHours: EMERGENCY_APOLOGY_WINDOW_HOURS
+    date: dateStr, time: timeStr, groups: memberGroups, sessionKey: memberGroups.join(", "),
+    opensAt: fmt(opensAt), promptUntil: fmt(promptUntil), closesAt: fmt(endOfDay)
   };
 
-  // If the register IS marked and they turned up, there is nothing to excuse.
-  var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
+  if (now < opensAt) {
+    base.eligible = false;
+    base.reason = "The normal apology is open until " +
+                  Utilities.formatDate(opensAt, tz, "HH:mm") + " - use that instead.";
+    return base;
+  }
+  if (now > endOfDay) {
+    base.eligible = false;
+    base.reason = "The emergency window for that session has closed.";
+    return base;
+  }
+  base.phase = (now <= promptUntil) ? "prominent" : "hidden";
+
+  // If the register IS marked and nothing needs excusing, say so.
   var recorded = null;
+  var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
   if (attSheet && attSheet.getLastRow() > 1) {
     var ad = attSheet.getDataRange().getValues();
     for (var i = 1; i < ad.length; i++) {
       if (ad[i][1].toString().trim() !== member.name) continue;
-      if (formatSheetDate_(ad[i][0]) !== candidate.date) continue;
+      if (formatSheetDate_(ad[i][0]) !== dateStr) continue;
       recorded = bestStatus_(recorded, ad[i][4].toString());
     }
   }
   base.status = recorded || "Not yet recorded";
-  if (recorded === "Present" || recorded === "Late Excused") {
+  if (recorded === "Present" || recorded === "Late Excused" || recorded === "Absent Excused") {
     base.eligible = false;
-    base.reason = "You were marked " + recorded + " for that session.";
+    base.reason = "You are already marked " + recorded + " for that session.";
     return base;
   }
 
-  // Already has an apology on file for that date?
   var apSheet = ss.getSheetByName(APOLOGIES_SHEET);
   if (apSheet && apSheet.getLastRow() > 1) {
     var apd = apSheet.getDataRange().getValues();
     for (var a = 1; a < apd.length; a++) {
       if (apd[a][1].toString().trim() !== member.name) continue;
-      if (formatSheetDate_(apd[a][0]) !== candidate.date) continue;
+      if (formatSheetDate_(apd[a][0]) !== dateStr) continue;
       if (isRequestType_(apd[a][3])) continue;
       var st = apd[a][8].toString();
       if (st === "Rejected" || st === "Revoked" || st === "Not needed") continue;
@@ -3456,7 +3652,6 @@ function getEmergencyApologyOption() {
       return base;
     }
   }
-
   base.eligible = true;
   return base;
 }
@@ -3637,7 +3832,7 @@ function describeMemberFilters_(f) {
 /** Filtered member export as CSV. */
 function exportMembersCSV(filters) {
   var ss = getSpreadsheet_();
-  var access = requireManagement_();
+  var access = requireView_();
   var inScope = scopeMemberPredicate_(access, ss);
   var members = filterMembers_(readMembersWithDetails_(ss).filter(inScope), filters);
   return arrayToCSV_(buildMemberExportRows_(members));
@@ -3646,7 +3841,7 @@ function exportMembersCSV(filters) {
 /** Filtered member export as print-ready HTML (the browser prints it to PDF). */
 function exportMembersPDF(filters) {
   var ss = getSpreadsheet_();
-  var access = requireManagement_();
+  var access = requireView_();
   var inScope = scopeMemberPredicate_(access, ss);
   var members = filterMembers_(readMembersWithDetails_(ss).filter(inScope), filters);
   var rows = buildMemberExportRows_(members);
@@ -3657,7 +3852,7 @@ function exportMembersPDF(filters) {
 /** Preview count, so the UI can show "42 members match" before exporting. */
 function countFilteredMembers(filters) {
   var ss = getSpreadsheet_();
-  var access = requireManagement_();
+  var access = requireView_();
   var inScope = scopeMemberPredicate_(access, ss);
   return filterMembers_(readMembersWithDetails_(ss).filter(inScope), filters).length;
 }
@@ -4295,7 +4490,12 @@ function submitOnboarding(data) {
   var email = Session.getActiveUser().getEmail();
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
-  if (!member) throw new Error("No member found for " + email);
+  if (!member) {
+    // Oversight accounts (Super Admin) have no roster entry, so there is nothing
+    // personal to show. Return an empty shape instead of an error.
+    return { isMember: false, name: "", email: email, groups: [], history: [],
+             message: "This account has no membership record, so there is no personal attendance to show." };
+  }
 
   var d = {
     nationality: data.nationality || "",
@@ -4837,6 +5037,12 @@ function getCommuniqueRecipientOptions() {
 // =======================================================
 var ATTACH_MAX_TOTAL_MB      = 20;   // hard cap for real attachments (Gmail ~25MB)
 var ATTACH_PERSONALISED_BUDGET = 150; // recipients × MB — beyond this, force link mode
+// Retention. Files SENT AS REAL ATTACHMENTS are already in recipients' inboxes, so
+// the Drive copy is disposable. Files DELIVERED AS LINKS are not - deleting one
+// breaks a link in an email someone may still open, so they are kept far longer.
+var ATTACH_RETENTION_DAYS = 30;
+var ATTACH_LINK_RETENTION_DAYS = 365;
+var ATTACH_LINK_MARKER = "[link-delivered]";
 
 function getAttachmentFolder_() {
   var id = (ATTACHMENT_FOLDER_ID && ATTACHMENT_FOLDER_ID !== "YOUR_ATTACHMENT_FOLDER_ID_HERE")
@@ -4931,6 +5137,87 @@ function attachmentLinkBlockHtml_(files) {
          'text-transform:uppercase;color:#B08538;">Attachments</p>' +
          '<table role="presentation" cellpadding="0" cellspacing="0" border="0">' + rows + '</table>' +
          '</td></tr></table>';
+}
+
+
+/**
+ * Cleans up old communiqué attachments in Drive.
+ *  - Files still referenced by a PENDING scheduled email are never touched.
+ *  - Files delivered as LINKS are kept for ATTACH_LINK_RETENTION_DAYS, because a
+ *    recipient opening an old email still needs the link to resolve.
+ *  - Everything else goes after ATTACH_RETENTION_DAYS - those copies already
+ *    landed in recipients' inboxes.
+ * Files are TRASHED, not hard-deleted, so a mistake is recoverable from Drive.
+ * @param {boolean} dryRun — true (default) reports only; pass false to trash.
+ */
+function sweepAttachmentRetention_(dryRun) {
+  if (dryRun !== false) dryRun = true;
+  var ss = getSpreadsheet_();
+  var folder;
+  try { folder = getAttachmentFolder_(); }
+  catch (e) { return { checked: 0, trashed: 0, message: "No attachment folder configured." }; }
+
+  // Protect anything a scheduled email still needs.
+  var protectedIds = {};
+  var schedSheet = ss.getSheetByName(SCHEDULED_SHEET);
+  if (schedSheet && schedSheet.getLastRow() > 1) {
+    var c = scheduledColMap_(schedSheet);
+    var sd = schedSheet.getDataRange().getValues();
+    for (var i = 1; i < sd.length; i++) {
+      var status = sd[i][c.status].toString();
+      if (status !== "Scheduled" && status !== "Sending") continue;
+      try {
+        var payload = JSON.parse(sd[i][c.payload].toString());
+        (payload.attachments || []).forEach(function (a) {
+          var id = (typeof a === "string") ? a : a.id;
+          if (id) protectedIds[id] = true;
+        });
+      } catch (e) {}
+    }
+  }
+
+  var now = Date.now();
+  var files = folder.getFiles();
+  var checked = 0, trashed = 0, kept = [], removed = [];
+  while (files.hasNext()) {
+    var f = files.next();
+    checked++;
+    var id = f.getId();
+    if (protectedIds[id]) { kept.push(f.getName() + " (pending scheduled send)"); continue; }
+    var desc = "";
+    try { desc = f.getDescription() || ""; } catch (e) {}
+    var isLink = desc.indexOf(ATTACH_LINK_MARKER) !== -1;
+    var limitDays = isLink ? ATTACH_LINK_RETENTION_DAYS : ATTACH_RETENTION_DAYS;
+    var ageDays = (now - f.getDateCreated().getTime()) / 86400000;
+    if (ageDays < limitDays) {
+      kept.push(f.getName() + " (" + Math.floor(ageDays) + "d old, limit " + limitDays + "d" +
+                (isLink ? ", link-delivered" : "") + ")");
+      continue;
+    }
+    if (!dryRun) { try { f.setTrashed(true); } catch (e) { Logger.log("trash failed: " + e); continue; } }
+    trashed++;
+    removed.push(f.getName() + " (" + Math.floor(ageDays) + "d old" + (isLink ? ", link-delivered" : "") + ")");
+  }
+
+  var msg = (dryRun ? "DRY RUN — nothing trashed.\n\n" : "APPLIED.\n\n") +
+    "Checked " + checked + " file(s).\n" +
+    (dryRun ? "Would trash " : "Trashed ") + trashed + ":\n" +
+    (removed.length ? "  " + removed.join("\n  ") : "  (none)") +
+    "\n\nKept " + kept.length + ":\n" + (kept.length ? "  " + kept.join("\n  ") : "  (none)");
+  Logger.log(msg);
+  return { checked: checked, trashed: trashed, message: msg };
+}
+
+/** PUBLIC — dry run of the attachment retention sweep. Safe to run anytime. */
+function previewAttachmentRetention() {
+  requireFullAdmin_();
+  return sweepAttachmentRetention_(true).message;
+}
+
+/** PUBLIC — actually trash old attachments. Run previewAttachmentRetention() first. */
+function runAttachmentRetention() {
+  requireFullAdmin_();
+  return sweepAttachmentRetention_(false).message;
 }
 
 /**
@@ -5029,6 +5316,8 @@ function scheduleCommunique(payload) {
 
   // Near-exact: if it's within the horizon, add a one-time trigger now.
   maybeAddPreciseTrigger_(id, when);
+  // The safety-net checker only lives while something is queued - make sure it exists.
+  try { ensureScheduledEmailChecker_(); } catch (e) { Logger.log("ensure checker: " + e); }
   return { success: true, id: id, sendAt: when.toISOString(), recipientCount: recips.length };
 }
 
@@ -5174,15 +5463,72 @@ function cancelScheduledEmail(id) {
 
 /** One-time setup — creates the recurring 5-minute checker. Run from the editor. */
 function setupScheduledEmailChecker() {
-  ScriptApp.getProjectTriggers().forEach(function(t){
-    if (t.getHandlerFunction() === "scheduledEmailCheck_") ScriptApp.deleteTrigger(t);
-  });
+  // Manual restart. Normally unnecessary - scheduling an email creates the checker
+  // automatically - but useful if a queued send seems stuck.
+  removeScheduledEmailChecker_();
   ScriptApp.newTrigger("scheduledEmailCheck_").timeBased().everyMinutes(5).create();
-  return "Scheduled-email checker created (every 5 minutes).";
+  return "Scheduled-email checker created. It removes itself once the queue is empty.";
 }
 
-/** The recurring net — separate handler so cleanup never deletes it. */
-function scheduledEmailCheck_() { fireScheduledEmails_(); }
+/**
+ * PUBLIC - stops this account's scheduled-email checker immediately. Runnable from the
+ * editor (private "_" functions do not appear in the Run dropdown). Safe: scheduling
+ * an email recreates the checker automatically.
+ */
+function stopScheduledEmailChecker() {
+  var before = ScriptApp.getProjectTriggers().filter(function (t) {
+    return t.getHandlerFunction() === "scheduledEmailCheck_";
+  }).length;
+  removeScheduledEmailChecker_();
+  var msg = "Removed " + before + " scheduled-email checker trigger(s) owned by this account.";
+  Logger.log(msg);
+  return msg;
+}
+
+/** True if any scheduled email is still waiting to go out. Reads the shared sheet. */
+function hasPendingScheduledEmails_(ss) {
+  ss = ss || getSpreadsheet_();
+  var sheet = ss.getSheetByName(SCHEDULED_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return false;
+  var c = scheduledColMap_(sheet);
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    var st = data[i][c.status].toString();
+    if (st === "Scheduled" || st === "Sending") return true;
+  }
+  return false;
+}
+
+/**
+ * Ensures the 5-minute safety-net checker exists. Called whenever something is
+ * scheduled. Triggers are PER-USER: getProjectTriggers() only sees triggers owned by
+ * the account running it, so it cannot detect a checker another account created.
+ */
+function ensureScheduledEmailChecker_() {
+  var exists = ScriptApp.getProjectTriggers().some(function (t) {
+    return t.getHandlerFunction() === "scheduledEmailCheck_";
+  });
+  if (!exists) ScriptApp.newTrigger("scheduledEmailCheck_").timeBased().everyMinutes(5).create();
+}
+
+/** Removes this account's recurring checker. */
+function removeScheduledEmailChecker_() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "scheduledEmailCheck_") ScriptApp.deleteTrigger(t);
+  });
+}
+
+/**
+ * The recurring safety net. It RETIRES ITSELF once the queue is empty, so it only runs
+ * while there is something to send. Previously it ran every 5 minutes forever - 288
+ * executions a day with nothing scheduled. scheduleCommunique() re-creates it.
+ */
+function scheduledEmailCheck_() {
+  fireScheduledEmails_();
+  try {
+    if (!hasPendingScheduledEmails_(getSpreadsheet_())) removeScheduledEmailChecker_();
+  } catch (e) { Logger.log("checker self-retire: " + e); }
+}
 
 function sendCommunique(payload) {
   var ss = getSpreadsheet_();
@@ -5217,6 +5563,18 @@ function sendCommuniqueAs_(ss, payload, access) {
   var metas = readAttachmentMeta_(payload.attachments);
   var plan = planAttachments_(metas, recipients.length, personalised);
   var linkBlock = (plan.mode === "link") ? attachmentLinkBlockHtml_(plan.files) : "";
+  if (plan.mode === "link") {
+    // Recipients get a LINK, not a copy - record that so the retention sweep keeps
+    // the file alive long enough for those links to stay usable.
+    metas.forEach(function (m) {
+      try {
+        var d = m.file.getDescription() || "";
+        if (d.indexOf(ATTACH_LINK_MARKER) === -1) {
+          m.file.setDescription((d ? d + " " : "") + ATTACH_LINK_MARKER + " " + todayStr_());
+        }
+      } catch (e) { Logger.log("link marker: " + e); }
+    });
+  }
   var blobs = [];
   if (plan.mode === "attach") {
     metas.forEach(function (m) { try { blobs.push(m.file.getBlob()); } catch (e) {} });
@@ -5920,6 +6278,10 @@ function dailyTasks_() {
   try { autoCloseUnneededApologies_(getSpreadsheet_()); } catch (e) { Logger.log("Apology cleanup: " + e); }
   try { syncConsecutiveAuOffenses_(getSpreadsheet_()); } catch (e) { Logger.log("AU sweep: " + e); }
   try { syncAutomaticRewards_(getSpreadsheet_()); } catch (e) { Logger.log("Reward sweep: " + e); }
+  // Attachment retention runs weekly (Sundays) - daily Drive scanning is wasteful.
+  try {
+    if (new Date().getDay() === 0) sweepAttachmentRetention_(false);
+  } catch (e) { Logger.log("Attachment retention: " + e); }
   try { dailyBirthdayReminder_(); } catch (e) { Logger.log("Birthday: " + e); }
 }
 
@@ -6410,7 +6772,12 @@ function getMyProfile() {
   var email = Session.getActiveUser().getEmail();
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
-  if (!member) throw new Error("No member found for " + email);
+  if (!member) {
+    // Oversight accounts (Super Admin) have no roster entry, so there is nothing
+    // personal to show. Return an empty shape instead of an error.
+    return { isMember: false, name: "", email: email, groups: [], history: [],
+             message: "This account has no membership record, so there is no personal attendance to show." };
+  }
 
   // Get profile photo from Members sheet
   var membersSheet = ss.getSheetByName(MEMBERS_SHEET);
@@ -6823,7 +7190,7 @@ function setupMembershipStatusValidation() {
  * rejected the write. Writes nothing.
  */
 function findBrokenMembershipStates() {
-  requireManagement_();
+  requireView_();
   var ss = getSpreadsheet_();
   var problems = [];
   readAllMembers_(ss).forEach(function (m) {
@@ -7433,7 +7800,12 @@ function submitApology(dateStr, apologyType, reason, sessionTime, sessionLabel, 
   var email = Session.getActiveUser().getEmail();
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
-  if (!member) throw new Error("No member found for " + email);
+  if (!member) {
+    // Oversight accounts (Super Admin) have no roster entry, so there is nothing
+    // personal to show. Return an empty shape instead of an error.
+    return { isMember: false, name: "", email: email, groups: [], history: [],
+             message: "This account has no membership record, so there is no personal attendance to show." };
+  }
 
   var sheet = ensureApologiesSheet_(ss);
   var now = new Date();
@@ -7464,7 +7836,12 @@ function submitLongTermApology(startDate, endDate, reason) {
   var email = Session.getActiveUser().getEmail();
   if (!email) throw new Error("Could not detect your email.");
   var member = findMemberByEmail_(ss, email.toLowerCase());
-  if (!member) throw new Error("No member found for " + email);
+  if (!member) {
+    // Oversight accounts (Super Admin) have no roster entry, so there is nothing
+    // personal to show. Return an empty shape instead of an error.
+    return { isMember: false, name: "", email: email, groups: [], history: [],
+             message: "This account has no membership record, so there is no personal attendance to show." };
+  }
 
   // Validate range: max 3 months
   var sd = new Date(startDate), ed = new Date(endDate);
@@ -7608,7 +7985,7 @@ function getApologiesForDate(dateStr, selectedGroups) {
  * Returns all apologies for admin review queue.
  */
 function getApologyQueue() {
-  requireManagement_();
+  requireView_();
   var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(APOLOGIES_SHEET);
   if (!sheet) return [];
@@ -7766,26 +8143,40 @@ function backfillApologyAttendance_(ss, row) {
   var startDate = formatSheetDate_(row[0]);
   var endDate = row[9] ? formatSheetDate_(row[9]) : "";
   var groups = row[11] ? row[11].toString().split(",").map(function (x) { return x.trim(); }).filter(Boolean) : [];
-  var isLate = /late/i.test(type);
-  var from = isLate ? "Late Unexcused" : "Absent Unexcused";
-  var to   = isLate ? "Late Excused"   : "Absent Excused";
+  // An Emergency apology does not say whether the member was absent or merely late -
+  // it excuses whichever happened. Ordinary apologies excuse only their own kind.
+  var isEmergency = (type === EMERGENCY_APOLOGY_TYPE);
+  var isLate = !isEmergency && /late/i.test(type);
+  var flips = isEmergency
+    ? { "Absent Unexcused": "Absent Excused", "Late Unexcused": "Late Excused" }
+    : (isLate ? { "Late Unexcused": "Late Excused" } : { "Absent Unexcused": "Absent Excused" });
 
   var sheet = ss.getSheetByName(ATTENDANCE_SHEET);
   if (!sheet || sheet.getLastRow() < 2) return { changed: 0, name: name };
   var data = sheet.getDataRange().getValues();
-  var changed = 0;
+  var changed = 0, matched = 0, seen = {};
   for (var i = 1; i < data.length; i++) {
     if (data[i][1].toString().trim() !== name) continue;
     var ds = formatSheetDate_(data[i][0]);
     var inRange = endDate ? (ds >= startDate && ds <= endDate) : (ds === startDate);
     if (!inRange) continue;
     if (groups.length && groups.indexOf(data[i][2].toString().trim()) === -1) continue;
-    if (data[i][4].toString() !== from) continue;
-    sheet.getRange(i + 1, 5).setValue(to);
+    matched++;
+    var cur = data[i][4].toString();
+    seen[cur] = (seen[cur] || 0) + 1;
+    if (!flips[cur]) continue;
+    sheet.getRange(i + 1, 5).setValue(flips[cur]);
     changed++;
   }
   if (changed > 0) SpreadsheetApp.flush();
-  return { changed: changed, name: name };
+  // Explain a no-op instead of failing silently.
+  var note = "";
+  if (matched === 0) note = "No attendance recorded for " + name + " on " + startDate +
+                            (endDate ? " to " + endDate : "") +
+                            " yet - it will be excused automatically when the register is marked.";
+  else if (changed === 0) note = "Found " + matched + " record(s) but none needed excusing (" +
+                                 Object.keys(seen).join(", ") + ").";
+  return { changed: changed, name: name, matched: matched, statusesSeen: seen, note: note };
 }
 
 /**
@@ -7837,7 +8228,7 @@ function recalcConsecutiveAuOffenses_(ss, memberName) {
  * stays a deliberate admin action - this just surfaces the cases.
  */
 function getReinstatementFlags() {
-  requireManagement_();
+  requireView_();
   var ss = getSpreadsheet_();
   var attSheet = ss.getSheetByName(ATTENDANCE_SHEET);
   if (!attSheet || attSheet.getLastRow() < 2) return [];
@@ -7893,7 +8284,8 @@ function approveApology(rowIndex, note) {
   } catch (e) { Logger.log("apology backfill: " + e); }
 
   return { success: true, backfilled: backfill.changed,
-           offensesRemoved: offensesRemoved, reinstatementFlagged: flagged };
+           offensesRemoved: offensesRemoved, reinstatementFlagged: flagged,
+           backfillNote: backfill.note || "" };
 }
 
 /**
