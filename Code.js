@@ -909,6 +909,7 @@ function removeDuplicateAttendance() {
   refreshAllRegisters_(ss);
   try { evaluateProbation_(ss); } catch (e) {}
   try { syncConsecutiveAuOffenses_(ss); } catch (e) {}
+  try { syncProbationHistory_(ss, null, null); } catch (e) {}
   var conflicts = r.groups.filter(function (g) { return g.statusesDiffer; }).length;
   var msg = "Removed " + removed + " duplicate attendance row(s) across " + r.groups.length + " group(s)." +
             (conflicts ? " " + conflicts + " had differing statuses - the latest copy was kept." : "");
@@ -960,20 +961,43 @@ function batchUpdateAttendance(updates) {
   try { lock.waitLock(30000); }
   catch (e) { throw new Error("Another save is in progress. Please wait a moment and try again."); }
   try {
-  var user=Session.getActiveUser().getEmail()||"Unknown",now=new Date(),changed=0;
+  var user=Session.getActiveUser().getEmail()||"Unknown",now=new Date(),changed=0,affected={};
   for(var i=0;i<updates.length;i++){var row=updates[i].rowIndex;if(row<2||row>sheet.getLastRow())continue;
     if(access.level < ROLE_LEVELS.admin){
       var rowGroup = sheet.getRange(row,3).getValue().toString();
       if(access.allowedSections.indexOf(rowGroup) === -1) continue; // silently skip out-of-scope rows
     }
+    affected[sheet.getRange(row,2).getValue().toString().trim()] = true;
     sheet.getRange(row,5).setValue(updates[i].newStatus);sheet.getRange(row,6).setValue(user);sheet.getRange(row,7).setValue(now);changed++;}
     SpreadsheetApp.flush();
   } finally {
     lock.releaseLock();
   }
   if(changed>0)refreshAllRegisters_(ss);
+
+  // An edit can BREAK a 3-AU set as well as create one. The sweep only adds
+  // offenses, so re-check the edited members to remove any that no longer apply.
+  var offensesRemoved = 0;
+  Object.keys(affected).forEach(function (n) {
+    try { offensesRemoved += recalcConsecutiveAuOffenses_(ss, n); } catch (e) { Logger.log("recalc " + n + ": " + e); }
+  });
   try { syncConsecutiveAuOffenses_(ss); } catch(e) {}
-  return{success:true,changed:changed};
+
+  // A concluded probation result is never re-evaluated automatically. Report any
+  // that this edit has changed, so an admin can apply the correction deliberately.
+  var probationFlags = [], historyUpdated = 0;
+  if (changed > 0) {
+    try {
+      var attData = readAllAttendance_(ss);
+      historyUpdated = syncProbationHistory_(ss, affected, attData);
+      readAllMembers_(ss).forEach(function (m) {
+        if (!affected[m.name]) return;
+        var d = probationOutcomeDrift_(m, attData);
+        if (d) probationFlags.push(d);
+      });
+    } catch (e) { Logger.log("probation drift: " + e); }
+  }
+  return{success:true,changed:changed,offensesRemoved:offensesRemoved,probationFlags:probationFlags,historyUpdated:historyUpdated};
 }
 
 // -------------------------------------------------------
@@ -1216,6 +1240,316 @@ function backfillProbationHistory() {
   });
   Logger.log("Probation history backfill — added " + added + ", already logged " + skipped + ".");
   return { added: added, skipped: skipped };
+}
+
+// =======================================================
+//  PROBATION OUTCOME CORRECTIONS
+//  evaluateProbation_ only looks at members still ON probation, so once a run has
+//  concluded (Passed or Failed) a later attendance correction never re-evaluates it.
+//  A member failed on an AU that was later excused stays failed and inactive, with
+//  no signal anywhere. These functions detect that drift and let an admin apply a
+//  correction deliberately - nothing is changed or emailed automatically, because a
+//  correction can itself be corrected again and an email cannot be unsent.
+// =======================================================
+
+/** Outcome for a given attended count, using the same thresholds as evaluateProbation_. */
+function classifyProbationOutcome_(attended) {
+  var required = Math.ceil(PROBATION_SESSIONS * PROBATION_THRESHOLD);
+  var minRequired = Math.ceil(PROBATION_SESSIONS * PROBATION_CONDITIONAL);
+  if (attended >= required) return { outcome: "passed_clean", penalty: 0, required: required };
+  if (attended >= minRequired) {
+    return { outcome: "passed_conditional",
+             penalty: (required - attended) * PROBATION_PENALTY_MULTIPLIER, required: required };
+  }
+  return { outcome: "failed", penalty: 0, required: required };
+}
+
+var PROBATION_OUTCOME_RANK_ = { failed: 0, passed_conditional: 1, passed_clean: 2 };
+var PROBATION_OUTCOME_LABEL_ = { failed: "Failed", passed_conditional: "Conditional pass", passed_clean: "Passed" };
+
+/**
+ * For a member whose probation run has CONCLUDED, compares the recorded outcome with
+ * what current attendance gives. Returns null when they agree or do not apply.
+ */
+function probationOutcomeDrift_(m, attData) {
+  if (!m || !m.probationStart) return null;
+  if (m.probation) return null;                       // on a new run - the old one is superseded
+  if (!m.probationPassed && !m.probationFailed) return null;
+
+  var recordedPenalty = Math.abs(Number(m.probationPenalty) || 0);
+  var recorded = m.probationFailed ? "failed"
+               : (recordedPenalty > 0 ? "passed_conditional" : "passed_clean");
+
+  var stats;
+  try { stats = calculateProbationStats_(m, attData); } catch (e) { return null; }
+  if (!stats.complete) return null;                   // history no longer covers the run - leave alone
+  var now = classifyProbationOutcome_(stats.attended);
+
+  var sameOutcome = (now.outcome === recorded);
+  var samePenalty = (now.penalty === recordedPenalty);
+  if (sameOutcome && samePenalty) return null;
+
+  var rankDelta = PROBATION_OUTCOME_RANK_[now.outcome] - PROBATION_OUTCOME_RANK_[recorded];
+  var favourable = rankDelta > 0 || (rankDelta === 0 && now.penalty < recordedPenalty);
+  return {
+    name: m.name, groups: m.groups, probationStart: m.probationStart,
+    recorded: recorded, recordedLabel: PROBATION_OUTCOME_LABEL_[recorded], recordedPenalty: recordedPenalty,
+    recomputed: now.outcome, recomputedLabel: PROBATION_OUTCOME_LABEL_[now.outcome], recomputedPenalty: now.penalty,
+    attendedNow: stats.attended, required: now.required, rateNow: stats.rate,
+    favourable: favourable,
+    // Only improvements are applied through the app. Making a past result WORSE
+    // (e.g. un-passing someone who has been active for weeks) is a judgement call.
+    canApply: favourable,
+    note: favourable
+      ? "Corrected attendance improves this result: " + PROBATION_OUTCOME_LABEL_[recorded] +
+        " -> " + PROBATION_OUTCOME_LABEL_[now.outcome] + "."
+      : "Corrected attendance makes this result worse (" + PROBATION_OUTCOME_LABEL_[recorded] +
+        " -> " + PROBATION_OUTCOME_LABEL_[now.outcome] + "). Not applied automatically - decide manually."
+  };
+}
+
+/** Members whose concluded probation result no longer matches their corrected attendance. */
+function getProbationOutcomeFlags() {
+  requireView_();
+  var ss = getSpreadsheet_();
+  var attData = readAllAttendance_(ss);
+  var out = [];
+  readAllMembers_(ss).forEach(function (m) {
+    var d = probationOutcomeDrift_(m, attData);
+    if (d) out.push(d);
+  });
+  out.sort(function (a, b) { return (b.favourable ? 1 : 0) - (a.favourable ? 1 : 0); });
+  return out;
+}
+
+/**
+ * ADMIN - applies an IMPROVED probation result after an attendance correction.
+ *  - Failed -> pass: restores membership to Active (if the failure is what made them
+ *    inactive), closes any pending rejoin request, sets the pass and any penalty.
+ *  - Conditional -> clean, or a smaller penalty: updates the penalty.
+ * The Probation History row is updated in place and marked as corrected.
+ * @param {string}  memberName
+ * @param {boolean} notify  default true - send the member a short correction email
+ */
+function overturnProbationOutcome(memberName, notify) {
+  requireManagement_();
+  if (notify === undefined || notify === null) notify = true;
+  var ss = getSpreadsheet_();
+  var attData = readAllAttendance_(ss);
+  var m = null;
+  readAllMembers_(ss).forEach(function (x) { if (x.name === memberName) m = x; });
+  if (!m) throw new Error("Member not found: " + memberName);
+  var d = probationOutcomeDrift_(m, attData);
+  if (!d) throw new Error(memberName + "'s probation result already matches their attendance.");
+  if (!d.canApply) throw new Error(d.note);
+
+  var sheet = ss.getSheetByName(MEMBERS_SHEET);
+  var h = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+    .map(function (x) { return x.toString().trim().toLowerCase(); });
+  var probIdx = h.indexOf("probation"), penIdx = h.indexOf("probation penalty"),
+      ackIdx = h.indexOf("probation acknowledged");
+  var row = m.rowIndex;
+  if (probIdx !== -1) safeSetValue_(sheet, row, probIdx + 1, "Passed");
+  if (penIdx !== -1) safeSetValue_(sheet, row, penIdx + 1, d.recomputedPenalty ? -d.recomputedPenalty : 0);
+  if (ackIdx !== -1) safeSetValue_(sheet, row, ackIdx + 1, ""); // member sees the new result in-app
+
+  // A failure set them inactive. Undo that only if the failure is still the reason
+  // (Member Details "Left") - not if they've since gone on hiatus or similar.
+  var membershipRestored = false;
+  if (d.recorded === "failed" && !m.active && getMemberDetailStatus_(ss, m.name) === "Left") {
+    setMembershipState_(ss, m.name, "Active", "Active", "");
+    membershipRestored = true;
+  }
+
+  // Close a rejoin request they filed after failing - it is no longer needed.
+  var rejoinClosed = 0;
+  var ap = ss.getSheetByName(APOLOGIES_SHEET);
+  if (ap && ap.getLastRow() > 1) {
+    var ad = ap.getDataRange().getValues();
+    for (var i = 1; i < ad.length; i++) {
+      if (ad[i][1].toString().trim() !== m.name) continue;
+      var t = ad[i][3].toString();
+      if (t !== "Rejoin Request" && t !== "Restart Probation") continue;
+      if (ad[i][8].toString() !== "Pending") continue;
+      ap.getRange(i + 1, 9).setValue("Not needed");
+      ap.getRange(i + 1, 11).setValue("Probation result corrected - member reinstated");
+      rejoinClosed++;
+    }
+  }
+
+  // Update the Probation History row for this run (keyed by name + start).
+  var historyUpdated = false;
+  var ph = ss.getSheetByName(PROBATION_HISTORY_SHEET);
+  if (ph && ph.getLastRow() > 1) {
+    var pmap = headerIndexMap_(ph);
+    if (pmap["corrected"] == null) {
+      ph.getRange(1, ph.getLastColumn() + 1).setValue("Corrected").setFontWeight("bold");
+      pmap = headerIndexMap_(ph);
+    }
+    var pd = ph.getDataRange().getValues();
+    var startKey = formatSheetDate_(m.probationStart);
+    for (var r = pd.length - 1; r >= 1; r--) {
+      if (pd[r][pmap["name"]].toString().trim() !== m.name) continue;
+      if (formatSheetDate_(pd[r][pmap["probation start"]]) !== startKey) continue;
+      var outLabel = d.recomputed === "passed_clean" ? "Passed" : "Conditional";
+      if (pmap["outcome"] != null) ph.getRange(r + 1, pmap["outcome"] + 1).setValue(outLabel);
+      if (pmap["attended"] != null) ph.getRange(r + 1, pmap["attended"] + 1).setValue(d.attendedNow);
+      if (pmap["rate"] != null) ph.getRange(r + 1, pmap["rate"] + 1).setValue(d.rateNow);
+      if (pmap["penalty"] != null) ph.getRange(r + 1, pmap["penalty"] + 1).setValue(d.recomputedPenalty ? -d.recomputedPenalty : 0);
+      ph.getRange(r + 1, pmap["corrected"] + 1)
+        .setValue("From " + d.recordedLabel + " on " + todayStr_() + " after an attendance correction");
+      historyUpdated = true;
+      break;
+    }
+  }
+  SpreadsheetApp.flush();
+
+  var emailed = false;
+  if (notify && m.email) {
+    try {
+      var first = m.name.split(/\s+/)[0] || m.name;
+      var body;
+      if (d.recorded === "failed") {
+        body = "<p>Hi " + first + ",</p>" +
+          "<p>A correction was made to your attendance record, and with it your probation result has changed: " +
+          "<b>you have " + (d.recomputed === "passed_clean" ? "passed" : "passed, with a small points penalty") +
+          "</b>. Please disregard the earlier message saying you had not completed probation.</p>" +
+          (membershipRestored ? "<p>Your membership is active again - you can sign in as usual.</p>" : "") +
+          "<p>Apologies for the mix-up, and welcome back.</p>";
+      } else {
+        body = "<p>Hi " + first + ",</p>" +
+          "<p>A correction was made to your attendance record, and your probation result has been updated to <b>" +
+          d.recomputedLabel.toLowerCase() + "</b>" +
+          (d.recomputedPenalty ? " (penalty reduced to " + d.recomputedPenalty + " points)." : " with no penalty.") + "</p>";
+      }
+      MailApp.sendEmail({
+        to: m.email,
+        subject: "Correction: your probation result",
+        htmlBody: buildEmail_(body, { headerTitle: "Probation Result Corrected", signatureKey: "general" }),
+        name: EMAIL_FROM_NAME
+      });
+      emailed = true;
+    } catch (e) { Logger.log("probation correction email: " + e); }
+  }
+
+  return { success: true, name: m.name, from: d.recordedLabel, to: d.recomputedLabel,
+           membershipRestored: membershipRestored, rejoinClosed: rejoinClosed,
+           historyUpdated: historyUpdated, emailed: emailed };
+}
+
+/**
+ * Keeps Probation History's numbers in step with corrected attendance.
+ *
+ * Probation History is an event log written when a run concludes, so an attendance
+ * correction afterwards used to leave its Attended/Rate stale. This re-computes each
+ * concluded run (using that row's own start date) and:
+ *  - outcome UNCHANGED -> refreshes Attended / Total Sessions / Rate, and notes the
+ *    original figure in the "Corrected" column so the decision trail survives.
+ *  - outcome WOULD CHANGE -> leaves the row as recorded and writes a note only. The
+ *    outcome itself changes solely through overturnProbationOutcome(), deliberately.
+ * Nothing here sends email or changes membership.
+ *
+ * @param {Object} onlyNames  optional {name:true} set; omit to sync everyone
+ * @returns {number} rows updated
+ */
+function syncProbationHistory_(ss, onlyNames, attData) {
+  ss = ss || getSpreadsheet_();
+  var ph = ss.getSheetByName(PROBATION_HISTORY_SHEET);
+  if (!ph || ph.getLastRow() < 2) return 0;
+  var map = headerIndexMap_(ph);
+  if (map["corrected"] == null) {
+    ph.getRange(1, ph.getLastColumn() + 1).setValue("Corrected").setFontWeight("bold");
+    map = headerIndexMap_(ph);
+  }
+  var need = ["name", "probation start", "outcome", "attended"];
+  for (var n = 0; n < need.length; n++) if (map[need[n]] == null) return 0;
+
+  attData = attData || readAllAttendance_(ss);
+  var members = {};
+  readAllMembers_(ss).forEach(function (m) { members[m.name] = m; });
+  var LABEL_TO_OUTCOME = { "passed": "passed_clean", "conditional": "passed_conditional", "failed": "failed" };
+
+  var data = ph.getDataRange().getValues();
+  var updated = 0;
+  for (var r = 1; r < data.length; r++) {
+    var name = data[r][map["name"]].toString().trim();
+    if (!name || (onlyNames && !onlyNames[name])) continue;
+    var recordedLabel = data[r][map["outcome"]].toString().trim();
+    var recorded = LABEL_TO_OUTCOME[recordedLabel.toLowerCase()];
+    if (!recorded) continue;
+    var start = formatSheetDate_(data[r][map["probation start"]]);
+    if (!start) continue;
+
+    // Recompute THIS run with the groups recorded at the time (fall back to current).
+    var rowGroups = (map["groups"] != null && data[r][map["groups"]])
+      ? data[r][map["groups"]].toString().split(",").map(function (x) { return x.trim(); }).filter(Boolean)
+      : ((members[name] && members[name].groups) || []);
+    var stats;
+    try { stats = calculateProbationStats_({ name: name, groups: rowGroups, probationStart: start }, attData); }
+    catch (e) { continue; }
+    if (!stats.complete) continue;
+
+    var oldAttended = Number(data[r][map["attended"]]) || 0;
+    var recordedPenalty = map["penalty"] != null ? Math.abs(Number(data[r][map["penalty"]]) || 0) : 0;
+    var now = classifyProbationOutcome_(stats.attended);
+    var existingNote = data[r][map["corrected"]] ? data[r][map["corrected"]].toString() : "";
+    var origMatch = existingNote.match(/Originally attended (\d+)/);
+    var original = origMatch ? Number(origMatch[1]) : oldAttended;
+
+    var note;
+    if (now.outcome === recorded && now.penalty === recordedPenalty) {
+      if (stats.attended === oldAttended) continue;            // nothing changed
+      ph.getRange(r + 1, map["attended"] + 1).setValue(stats.attended);
+      if (map["total sessions"] != null) ph.getRange(r + 1, map["total sessions"] + 1).setValue(stats.totalSessions);
+      if (map["rate"] != null) ph.getRange(r + 1, map["rate"] + 1).setValue(stats.rate);
+      note = (stats.attended === original) ? "" :
+             "Originally attended " + original + "; corrected to " + stats.attended + " on " + todayStr_() +
+             " after an attendance correction (outcome unchanged)";
+    } else {
+      // Outcome would differ: record the finding, change nothing else.
+      var isCurrentRun = members[name] && formatSheetDate_(members[name].probationStart) === start;
+      note = "Corrected attendance (" + stats.attended + " attended) would give " +
+             PROBATION_OUTCOME_LABEL_[now.outcome] +
+             (now.penalty ? " with a " + now.penalty + "-point penalty" : "") + "; recorded outcome kept. " +
+             (isCurrentRun ? "See probation outcome flags to apply it." : "Older run - review manually.");
+      if (existingNote === note) continue;
+    }
+    ph.getRange(r + 1, map["corrected"] + 1).setValue(note);
+    updated++;
+  }
+  if (updated) SpreadsheetApp.flush();
+  return updated;
+}
+
+/** PUBLIC - re-syncs every Probation History row against current attendance. Editor-runnable. */
+function resyncProbationHistory() {
+  requireFullAdmin_();
+  var n = syncProbationHistory_(getSpreadsheet_(), null, null);
+  var msg = "Probation History: " + n + " row(s) updated to match corrected attendance.";
+  Logger.log(msg);
+  return msg;
+}
+
+/**
+ * PUBLIC - one-time. Marks every attachment already in the folder as link-delivered,
+ * giving it the long retention. Files uploaded before the marker existed have no
+ * record of how they were sent; this errs on the side of keeping links working.
+ */
+function markExistingAttachmentsAsLinkDelivered() {
+  requireFullAdmin_();
+  var folder = getAttachmentFolder_();
+  var files = folder.getFiles(), marked = 0, total = 0;
+  while (files.hasNext()) {
+    var f = files.next(); total++;
+    var d = f.getDescription() || "";
+    if (d.indexOf(ATTACH_LINK_MARKER) !== -1) continue;
+    f.setDescription((d ? d + " " : "") + ATTACH_LINK_MARKER + " " + todayStr_());
+    marked++;
+  }
+  var msg = "Marked " + marked + " of " + total + " attachment(s) as link-delivered (kept " +
+            ATTACH_LINK_RETENTION_DAYS + " days).";
+  Logger.log(msg);
+  return msg;
 }
 
 function evaluateProbation_(ss) {
@@ -8270,7 +8604,7 @@ function approveApology(rowIndex, note) {
 
   // Retroactively excuse anything already recorded for this apology, then re-check
   // the automatic 3-AU offenses that those absences may have triggered.
-  var backfill = { changed: 0 }, offensesRemoved = 0, flagged = false;
+  var backfill = { changed: 0 }, offensesRemoved = 0, flagged = false, probationFlag = null;
   try {
     backfill = backfillApologyAttendance_(ss, row);
     if (backfill.changed > 0) {
@@ -8280,12 +8614,21 @@ function approveApology(rowIndex, note) {
       var member = null;
       readAllMembers_(ss).forEach(function (m) { if (m.name === backfill.name) member = m; });
       if (member && !member.active) flagged = true;
+      // Same for a concluded probation result this backfill may have changed.
+      if (member) {
+        try {
+          var apAtt = readAllAttendance_(ss);
+          var only = {}; only[member.name] = true;
+          syncProbationHistory_(ss, only, apAtt);
+          probationFlag = probationOutcomeDrift_(member, apAtt);
+        } catch (e) { Logger.log("probation sync on approve: " + e); }
+      }
     }
   } catch (e) { Logger.log("apology backfill: " + e); }
 
   return { success: true, backfilled: backfill.changed,
            offensesRemoved: offensesRemoved, reinstatementFlagged: flagged,
-           backfillNote: backfill.note || "" };
+           backfillNote: backfill.note || "", probationFlag: probationFlag };
 }
 
 /**

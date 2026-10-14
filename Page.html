@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -183,6 +182,8 @@ body { padding-bottom: env(safe-area-inset-bottom); }
 .btn:hover { transform: translateY(-1px); }
 .btn:active { transform: translateY(0); }
 .btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+.btn-export:disabled { opacity: 0.55; cursor: not-allowed; }
+button[aria-busy="true"] { cursor: progress; }
 .btn-primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .btn-primary:hover { background: var(--ink-700); }
 .btn-secondary { background: var(--paper); color: var(--ink); border-color: var(--paper-300); }
@@ -1157,6 +1158,29 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .att-bar-track { width: 56px; height: 4px; border-radius: 4px; background: var(--paper-200); overflow: hidden; }
 .att-bar-fill { height: 100%; border-radius: 4px; }
 .att-bar-label { font-family: var(--f-mono); font-size: 11px; color: var(--ink-600); font-weight: 600; }
+.att-bar.is-empty .att-bar-label { color: var(--ink-300); }
+
+/* Members roster — profile pane: real attendance, scoreboard rank, additional info */
+.md-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+.md-stats.one { grid-template-columns: 1fr; }
+.md-stat { padding: 12px 14px; background: var(--paper); border-radius: 10px; border: 1px solid var(--paper-200); min-width: 0; }
+.md-stat .num { font-size: 26px; color: var(--ink); margin-top: 4px; }
+.md-stat-sub { font-family: var(--f-mono); font-size: 9px; letter-spacing: .1em; color: var(--ink-500); margin-top: 4px; }
+.md-box { padding: 4px 14px; background: var(--paper); border-radius: 10px; border: 1px solid var(--paper-200); }
+.md-kv { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; padding: 7px 0; }
+.md-kv + .md-kv { border-top: 1px solid var(--paper-100); }
+.md-kv .k { font-family: var(--f-mono); font-size: 10px; color: var(--ink-500); letter-spacing: .1em; flex-shrink: 0; }
+.md-kv .v { font-size: 12px; color: var(--ink); text-align: right; min-width: 0; overflow-wrap: anywhere; }
+.md-kv .nil { color: var(--ink-300); }
+.md-info-loading { padding: 18px 0 6px; text-align: center; }
+.md-info-note { font-size: 12px; color: var(--ink-500); line-height: 1.5; padding: 8px 0 2px; }
+.ep-actions { display: flex; gap: 8px; margin-top: 18px; }
+/* Desktop: the pane scrolls on its own (height fitted by fitMemberDetailPane());
+   Save / Cancel stay pinned to its bottom edge while the form scrolls. */
+@media (min-width: 1024px) {
+  #membersRosterPane .two-pane-detail { max-height: calc(100vh - 56px); overflow-y: auto; overscroll-behavior: contain; border-radius: 14px; scrollbar-width: thin; scrollbar-color: var(--paper-300) transparent; }
+  #membersRosterPane .ep-actions { position: sticky; bottom: 0; z-index: 2; background: #fff; margin: 18px -24px -22px; padding: 14px 24px 22px; border-top: 1px solid var(--paper-200); border-radius: 0 0 13px 13px; }
+}
 
 /* View & Edit — date list gold accent + dark tally strip */
 .date-item.selected { border-color: var(--ink); background: var(--paper-100); border-left: 3px solid var(--gold); }
@@ -1208,7 +1232,15 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .em-door > div { min-width: 0; }
 .em-door .em-door-win { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.08em; line-height: 1.5; color: var(--ink-500); margin-top: 5px; overflow-wrap: break-word; }
 
-/* Emergency apology form (member-facing, entered from the deadline-passed card) */
+/* Emergency entry on the apology page (after the deadline only) */
+.apol-emhint { display: flex; align-items: center; gap: 10px; width: 100%; margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--crimson-500); border-radius: 12px; background: var(--crimson-100); cursor: pointer; font-family: var(--f-sans); font-size: 12.5px; color: var(--ink-700); text-align: left; line-height: 1.45; }
+.apol-emhint:hover { border-color: var(--crimson); }
+.apol-emhint-mark { width: 22px; height: 22px; border-radius: 999px; background: var(--crimson); color: var(--paper); display: flex; align-items: center; justify-content: center; font-family: var(--f-mono); font-size: 11px; font-weight: 700; flex-shrink: 0; }
+.apol-emhint > span:nth-child(2) { flex: 1; min-width: 0; }
+.apol-emhint-go { font-weight: 600; color: var(--crimson); white-space: nowrap; }
+body.view-only #apolEmHint { display: none !important; }
+
+/* Emergency apology form (member-facing) */
 .em-card { border: 1px solid var(--crimson-500); border-radius: 14px; background: var(--paper); overflow: hidden; }
 .em-head { display: flex; align-items: center; gap: 10px; padding: 12px 20px; background: var(--crimson-100); border-bottom: 1px solid var(--crimson-500); }
 .em-head .eyebrow { color: var(--crimson-600); }
@@ -1542,6 +1574,8 @@ body.view-only [onclick*="approveNameChange"],
 body.view-only [onclick*="approveCourseDetailsChange"],
 body.view-only [onclick*="adminReinstateMember"],
 body.view-only [onclick*="reinstateFlagged"],
+body.view-only [onclick*="applyProbationCorrection"],
+body.view-only .pof-notify,
 body.view-only [onclick*="epSetHiatus"],
 body.view-only [onclick*="epSetInactive"],
 body.view-only [onclick*="epReactivate"],
@@ -1872,72 +1906,10 @@ body.view-only #myAttEmergencyDoor { display: none !important; }
       </div>
 
       <!-- LIST mount. renderSessionsList() replaces the inner HTML with .session-card rows.
-           The markup below is the canonical contract + the graceful pre-wiring demo. -->
+           Starts as a loading state: a static demo here was being mistaken for real data
+           whenever the loader didn't run. Card markup contract lives in renderSessionsList(). -->
       <div id="sessionsList">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-          <div class="eyebrow">3 sessions</div>
-          <span style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-400);letter-spacing:.1em">NEWEST FIRST</span>
-        </div>
-
-        <div class="session-card" onclick="openSession &amp;&amp; openSession('2026-06-10','Band,Choir,Orchestra')">
-          <div class="sess-datebox"><div class="sess-dow">WED</div><div class="sess-daynum">10</div><div class="sess-mon">JUN</div></div>
-          <div class="sess-body">
-            <div class="sess-cardhead"><span class="type-badge">PRACTICE</span><span class="grp-chips"><span class="grp-chip">CHOIR</span><span class="grp-chip">BAND</span><span class="grp-chip">ORCHESTRA</span></span></div>
-            <div class="sess-title">Practice</div>
-            <div class="sess-recmeta"><span>REC · WANJIRŨ MWANGI</span><span class="apol">✉ 6 APOLOGIES</span></div>
-          </div>
-          <div class="sess-breakdown">
-            <div class="ministat-bar"><span class="ministat-seg" style="flex:38;background:var(--present)"></span><span class="ministat-seg" style="flex:4;background:var(--late-exc)"></span><span class="ministat-seg" style="flex:2;background:var(--late-unexc)"></span><span class="ministat-seg" style="flex:3;background:var(--absent-exc)"></span><span class="ministat-seg" style="flex:5;background:var(--absent-unexc)"></span></div>
-            <div class="ministat-legend">
-              <span class="ministat-leg"><span class="sw" style="background:var(--present)"></span><span class="ab">P</span><span class="ct">38</span></span>
-              <span class="ministat-leg"><span class="sw" style="background:var(--late-exc)"></span><span class="ab">LE</span><span class="ct">4</span></span>
-              <span class="ministat-leg"><span class="sw" style="background:var(--late-unexc)"></span><span class="ab">LU</span><span class="ct">2</span></span>
-              <span class="ministat-leg"><span class="sw" style="background:var(--absent-exc)"></span><span class="ab">AE</span><span class="ct">3</span></span>
-              <span class="ministat-leg"><span class="sw" style="background:var(--absent-unexc)"></span><span class="ab">AU</span><span class="ct">5</span></span>
-            </div>
-          </div>
-          <div class="sess-rateblock"><div><div class="sess-rate-num">85%</div><div class="sess-rate-label">44/52 HERE</div></div><span class="sess-chev">›</span></div>
-        </div>
-
-        <div class="session-card" onclick="openSession &amp;&amp; openSession('2026-06-08','Band,Choir')">
-          <div class="sess-datebox"><div class="sess-dow">MON</div><div class="sess-daynum">08</div><div class="sess-mon">JUN</div></div>
-          <div class="sess-body">
-            <div class="sess-cardhead"><span class="type-badge meeting">MEETING</span><span class="grp-chips"><span class="grp-chip">CHOIR</span><span class="grp-chip">BAND</span></span></div>
-            <div class="sess-title">Committee briefing</div>
-            <div class="sess-recmeta"><span>REC · JAMES KARIŨKI</span><span class="apol">✉ 3 APOLOGIES</span></div>
-          </div>
-          <div class="sess-breakdown">
-            <div class="ministat-bar"><span class="ministat-seg" style="flex:22;background:var(--present)"></span><span class="ministat-seg" style="flex:2;background:var(--late-exc)"></span><span class="ministat-seg" style="flex:1;background:var(--late-unexc)"></span><span class="ministat-seg" style="flex:2;background:var(--absent-exc)"></span><span class="ministat-seg" style="flex:2;background:var(--absent-unexc)"></span></div>
-            <div class="ministat-legend">
-              <span class="ministat-leg"><span class="sw" style="background:var(--present)"></span><span class="ab">P</span><span class="ct">22</span></span>
-              <span class="ministat-leg"><span class="sw" style="background:var(--late-exc)"></span><span class="ab">LE</span><span class="ct">2</span></span>
-              <span class="ministat-leg"><span class="sw" style="background:var(--late-unexc)"></span><span class="ab">LU</span><span class="ct">1</span></span>
-              <span class="ministat-leg"><span class="sw" style="background:var(--absent-exc)"></span><span class="ab">AE</span><span class="ct">2</span></span>
-              <span class="ministat-leg"><span class="sw" style="background:var(--absent-unexc)"></span><span class="ab">AU</span><span class="ct">2</span></span>
-            </div>
-          </div>
-          <div class="sess-rateblock"><div><div class="sess-rate-num">86%</div><div class="sess-rate-label">25/29 HERE</div></div><span class="sess-chev">›</span></div>
-        </div>
-
-        <div class="session-card" onclick="openSession &amp;&amp; openSession('2026-06-05','Choir')">
-          <div class="sess-datebox"><div class="sess-dow">FRI</div><div class="sess-daynum">05</div><div class="sess-mon">JUN</div></div>
-          <div class="sess-body">
-            <div class="sess-cardhead"><span class="type-badge">PRACTICE</span><span class="grp-chips"><span class="grp-chip">CHOIR</span></span></div>
-            <div class="sess-title">Practice</div>
-            <div class="sess-recmeta"><span>REC · WANJIRŨ MWANGI</span><span class="apol">✉ 1 APOLOGY</span></div>
-          </div>
-          <div class="sess-breakdown">
-            <div class="ministat-bar"><span class="ministat-seg" style="flex:18;background:var(--present)"></span><span class="ministat-seg" style="flex:1;background:var(--late-exc)"></span><span class="ministat-seg" style="flex:1;background:var(--absent-exc)"></span><span class="ministat-seg" style="flex:1;background:var(--absent-unexc)"></span></div>
-            <div class="ministat-legend">
-              <span class="ministat-leg"><span class="sw" style="background:var(--present)"></span><span class="ab">P</span><span class="ct">18</span></span>
-              <span class="ministat-leg"><span class="sw" style="background:var(--late-exc)"></span><span class="ab">LE</span><span class="ct">1</span></span>
-              <span class="ministat-leg zero"><span class="sw" style="background:var(--late-unexc)"></span><span class="ab">LU</span><span class="ct">0</span></span>
-              <span class="ministat-leg"><span class="sw" style="background:var(--absent-exc)"></span><span class="ab">AE</span><span class="ct">1</span></span>
-              <span class="ministat-leg"><span class="sw" style="background:var(--absent-unexc)"></span><span class="ab">AU</span><span class="ct">1</span></span>
-            </div>
-          </div>
-          <div class="sess-rateblock"><div><div class="sess-rate-num">90%</div><div class="sess-rate-label">19/21 HERE</div></div><span class="sess-chev">›</span></div>
-        </div>
+        <div class="loading"><div class="spinner"></div><div>Loading sessions…</div></div>
       </div>
 
       <!-- DETAIL mount. openSession()/getSessionDetail wiring renders the editable register here
@@ -2545,6 +2517,12 @@ body.view-only #myAttEmergencyDoor { display: none !important; }
         <button class="active" onclick="setApologyKind('single')">One session</button>
         <button onclick="setApologyKind('extended')">Extended period</button>
       </div>
+      <!-- Emergency entry — shown only when getEmergencyApologyOption() says eligible -->
+      <button class="apol-emhint" id="apolEmHint" style="display:none" onclick="setApologyKind('emergency')">
+        <span class="apol-emhint-mark">!</span>
+        <span id="apolEmHintText"></span>
+        <span class="apol-emhint-go">File →</span>
+      </button>
 
       <!-- Two-pane on desktop: form left, context rail right -->
       <div class="two-pane">
