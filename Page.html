@@ -994,8 +994,10 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .hero-rank .hero-rate span { font-size: 15px; color: var(--ink-300); }
 .hero-rank .hero-bar { position: relative; margin-top: 14px; height: 4px; border-radius: 999px; background: rgba(243,233,206,0.16); overflow: hidden; }
 .hero-rank .hero-bar span { display: block; height: 100%; background: var(--gold-300); border-radius: 999px; }
-.hero-rank .breakdown { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(243,233,206,0.16); display: flex; gap: 14px; font-family: var(--f-sans); font-size: 11.5px; color: var(--ink-300); position: relative; }
-.hero-rank .breakdown b { color: var(--paper); font-weight: 600; }
+.hero-rank .breakdown { margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(243,233,206,0.16); display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; }
+.hero-rank .breakdown > span { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 3px; padding: 0 6px; font-family: var(--f-sans); font-size: 9.5px; letter-spacing: 0.06em; color: var(--ink-300); text-align: center; }
+.hero-rank .breakdown > span + span { border-left: 1px solid rgba(243,233,206,0.16); }
+.hero-rank .breakdown b { display: block; font-family: var(--f-display); font-style: normal; font-weight: 400; font-size: 26px; line-height: 1; color: var(--paper); }
 
 /* My Attendance — dashboard grids */
 .myatt-top-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin-bottom: 18px; }
@@ -1505,6 +1507,73 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .meeting-del { flex-shrink: 0; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--paper-300); background: var(--paper); color: var(--crimson-600); font-family: var(--f-sans); font-size: 11.5px; font-weight: 600; cursor: pointer; }
 .meeting-del:hover { border-color: var(--crimson); background: var(--crimson-100); }
 
+
+/* ── View-only access · Super Admin ─────────────────────────────────────────
+   getUserRole() returns role "superAdmin" with readOnly:true — admin-level
+   reach, zero write. Every action control is HIDDEN rather than disabled: the
+   backend refuses all of them, so a visible button could only produce an error.
+   Reports, dashboards, the scoreboard, the apology queue, probation views and
+   every export (CSV + print) are untouched — exporting is the point of the role. */
+.ro-badge { font-family: var(--f-mono); font-size: 8.5px; font-weight: 700; letter-spacing: 0.14em; padding: 2px 5px; border-radius: 3px; background: var(--paper-200); color: var(--ink-500); white-space: nowrap; }
+.topbar .topbar-id { display: flex; align-items: center; gap: 7px; }
+body.view-only [data-write],
+body.view-only [onclick*="handleSubmit"],
+body.view-only [onclick*="cancelRecording"],
+body.view-only [onclick*="confirmOverwrite"],
+body.view-only [onclick*="setAll("],
+body.view-only [onclick*="setPrimary("],
+body.view-only [onclick*="setSub("],
+body.view-only [onclick*="editStatus("],
+body.view-only [onclick*="saveChanges"],
+body.view-only [onclick*="discardChanges"],
+body.view-only [onclick*="sendReminder"],
+body.view-only [onclick*="scheduleMeeting"],
+body.view-only [onclick*="deleteMeeting"],
+body.view-only [onclick*="manualEvaluate"],
+body.view-only [onclick*="adminApprove"],
+body.view-only [onclick*="adminReject"],
+body.view-only [onclick*="adminRevoke"],
+body.view-only [onclick*="removeCommAttachment"],
+body.view-only [onclick*="insertCommToken"],
+body.view-only [onclick*="ackProbation"],
+body.view-only [onclick*="approveRejoin"],
+body.view-only [onclick*="approveSectionTransfer"],
+body.view-only [onclick*="approveNameChange"],
+body.view-only [onclick*="approveCourseDetailsChange"],
+body.view-only [onclick*="adminReinstateMember"],
+body.view-only [onclick*="reinstateFlagged"],
+body.view-only [onclick*="epSetHiatus"],
+body.view-only [onclick*="epSetInactive"],
+body.view-only [onclick*="epReactivate"],
+body.view-only [onclick*="epReinstate"],
+body.view-only [onclick*="showEditProfile"],
+body.view-only [onclick*="submitEditProfile"],
+body.view-only [onclick*="saveProfileEdits"],
+body.view-only [onclick*="setProfileMode('edit')"],
+body.view-only [onclick*="prefillOffense"],
+body.view-only [onclick*="prefillReward"],
+body.view-only [onclick*="submitOffense"],
+body.view-only [onclick*="submitReward"],
+body.view-only [onclick*="removeReward"],
+body.view-only [onclick*="submitAddMember"],
+body.view-only [onclick*="submitCommunique"],
+body.view-only [onclick*="cancelScheduled"],
+body.view-only [onclick*="requestRestart"],
+body.view-only [onclick*="openApology"],
+body.view-only [onclick*="submitMemberApology"],
+body.view-only [onclick*="submitLtApology"],
+body.view-only [onclick*="submitEmergencyApologyNow"],
+body.view-only [onclick*="submitOnboarding"],
+body.view-only [onclick*="sendBdayCard"],
+body.view-only #quickActions,
+body.view-only .submit-row,
+body.view-only #commSubtabCompose,
+body.view-only #commComposePane,
+body.view-only #membersModeToggle button[data-mode="add"],
+body.view-only #membersModeToggle button[data-mode="offense"],
+body.view-only #membersModeToggle button[data-mode="reward"],
+body.view-only #myAttEmergencyDoor { display: none !important; }
+
 </style>
 </head>
 <body>
@@ -1630,7 +1699,7 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
       <div class="avatar" id="sideAvatar">·</div>
       <div class="who">
         <div class="name-row" id="sideName">—</div>
-        <div class="meta"><span class="role-badge" id="sideRole">USER</span></div>
+        <div class="meta"><span class="role-badge" id="sideRole">USER</span><span class="ro-badge" id="sideViewOnly" style="display:none">VIEW ONLY</span></div>
       </div>
     </div>
   </aside>
@@ -1645,8 +1714,11 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
           <div class="sub" id="topbarSub">Attendance</div>
         </div>
       </div>
-      <div class="user-pill" onclick="openProfile()" style="cursor:pointer" title="My profile">
-        <div class="avatar" id="topAvatar">·</div>
+      <div class="topbar-id">
+        <span class="ro-badge" id="topViewOnly" style="display:none">VIEW ONLY</span>
+        <div class="user-pill" onclick="openProfile()" style="cursor:pointer" title="My profile">
+          <div class="avatar" id="topAvatar">·</div>
+        </div>
       </div>
     </header>
 
@@ -1811,7 +1883,7 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
           <div class="sess-datebox"><div class="sess-dow">WED</div><div class="sess-daynum">10</div><div class="sess-mon">JUN</div></div>
           <div class="sess-body">
             <div class="sess-cardhead"><span class="type-badge">PRACTICE</span><span class="grp-chips"><span class="grp-chip">CHOIR</span><span class="grp-chip">BAND</span><span class="grp-chip">ORCHESTRA</span></span></div>
-            <div class="sess-title">Mid-week practice</div>
+            <div class="sess-title">Practice</div>
             <div class="sess-recmeta"><span>REC · WANJIRŨ MWANGI</span><span class="apol">✉ 6 APOLOGIES</span></div>
           </div>
           <div class="sess-breakdown">
@@ -1851,7 +1923,7 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
           <div class="sess-datebox"><div class="sess-dow">FRI</div><div class="sess-daynum">05</div><div class="sess-mon">JUN</div></div>
           <div class="sess-body">
             <div class="sess-cardhead"><span class="type-badge">PRACTICE</span><span class="grp-chips"><span class="grp-chip">CHOIR</span></span></div>
-            <div class="sess-title">Sectional · sopranos &amp; altos</div>
+            <div class="sess-title">Practice</div>
             <div class="sess-recmeta"><span>REC · WANJIRŨ MWANGI</span><span class="apol">✉ 1 APOLOGY</span></div>
           </div>
           <div class="sess-breakdown">
@@ -2223,7 +2295,7 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
         <div class="eyebrow">Roster · admin</div>
         <span class="gold-rule"></span>
         <h2>Members.</h2>
-        <p class="subtitle">Browse the roster and each member’s history, watch the live scoreboard, add members and record offenses.</p>
+        <p class="subtitle" id="membersHeadSub">Browse the roster and each member’s history, watch the live scoreboard, add members and record offenses.</p>
       </div>
 
       <!-- Sub-mode toggle (By member + Scoreboard folded in from the old View & Edit tab) -->
@@ -2416,10 +2488,10 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
     <section id="tab-communique" class="tab-page" data-screen-label="Communiqué">
       <div class="comm-shell">
         <div class="section-head">
-          <div class="eyebrow">Compose · admin</div>
+          <div class="eyebrow" id="commHeadEyebrow">Compose · admin</div>
           <span class="gold-rule"></span>
-          <h2>Send a communiqué.</h2>
-          <p class="subtitle">Write once, send to the whole chorale or a chosen few. Every message goes out on the official chorale letterhead.</p>
+          <h2 id="commHeadTitle">Send a communiqué.</h2>
+          <p class="subtitle" id="commHeadSub">Write once, send to the whole chorale or a chosen few. Every message goes out on the official chorale letterhead.</p>
         </div>
         <div class="comm-subtabs">
           <button type="button" class="comm-subtab is-active" id="commSubtabCompose" onclick="showCommSubtab('compose')">Compose</button>

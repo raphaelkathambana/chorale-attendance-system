@@ -1209,7 +1209,8 @@ function renderApologyDetail() {
   if (emPending) {
     h += '<div class="em-callout" style="margin-top:0;margin-bottom:20px">'
       +    '<div class="em-callout-mark">!</div>'
-      +    '<div class="em-callout-body">Filed after the deadline had passed, so nothing has been applied. This one needs your decision either way \u2014 approving corrects the register for '
+      +    '<div class="em-callout-body">Filed after the deadline had passed, so nothing has been applied. This one needs '
+      +      (isReadOnly() ? 'an admin\u2019s' : 'your') + ' decision either way \u2014 approving corrects the register for '
       +      esc(formatDateDisplay(a.date)) + ' retroactively; rejecting leaves the record as it stands.</div>'
       + '</div>';
   }
@@ -1226,7 +1227,7 @@ function renderApologyDetail() {
   if (a.status === "Pending" && a.type === "Section Transfer") {
     var fromG = toGroupArr(pr.before);
     var toG   = toGroupArr(pr.after);
-    h += '<div class="eyebrow" style="margin-bottom:8px">If you approve</div>'
+    h += '<div class="eyebrow" style="margin-bottom:8px">' + (isReadOnly() ? 'If approved' : 'If you approve') + '</div>'
       +  '<div class="consequence-preview">'
       +    groupChipRow(fromG.length ? fromG : ['\u2014'])
       +    '<span class="consequence-arrow">\u2192</span>'
@@ -1235,7 +1236,7 @@ function renderApologyDetail() {
   } else if (a.status === "Pending" && a.type === "Name Change") {
     var oldN = pr.before || a.name || '';
     var newN = pr.after || '';
-    h += '<div class="eyebrow" style="margin-bottom:8px">If you approve</div>'
+    h += '<div class="eyebrow" style="margin-bottom:8px">' + (isReadOnly() ? 'If approved' : 'If you approve') + '</div>'
       +  '<div class="consequence-preview">'
       +    '<span style="font-size:14px;color:var(--ink-500);text-decoration:line-through">' + esc(oldN) + '</span>'
       +    '<span class="consequence-arrow">\u2192</span>'
@@ -1244,7 +1245,7 @@ function renderApologyDetail() {
   } else if (a.status === "Pending" && a.type === "Course Details") {
     var oldC = pr.before || '';
     var newC = pr.after || '';
-    h += '<div class="eyebrow" style="margin-bottom:8px">If you approve</div>'
+    h += '<div class="eyebrow" style="margin-bottom:8px">' + (isReadOnly() ? 'If approved' : 'If you approve') + '</div>'
       +  '<div class="consequence-preview">'
       +    (oldC ? '<span style="font-size:14px;color:var(--ink-500);text-decoration:line-through">' + esc(oldC) + '</span>'
       +            '<span class="consequence-arrow">\u2192</span>' : '')
@@ -1252,7 +1253,7 @@ function renderApologyDetail() {
       + '</div>';
   } else if (a.status === "Pending" && a.type === "Rejoin Request") {
     var rjFirst = ((a.name || "").trim().split(/\s+/)[0]) || "They";
-    h += '<div class="eyebrow" style="margin-bottom:8px">If you approve</div>'
+    h += '<div class="eyebrow" style="margin-bottom:8px">' + (isReadOnly() ? 'If approved' : 'If you approve') + '</div>'
       +  '<div class="consequence-preview">'
       +    '<span class="inactive-tag" style="font-size:11px;padding:4px 9px">INACTIVE</span>'
       +    '<span class="consequence-arrow">\u2192</span>'
@@ -1263,7 +1264,7 @@ function renderApologyDetail() {
     var fromStatus = a.kind === "late" ? "Late Unexcused" : "Absent Unexcused";
     var toStatus   = a.kind === "late" ? "Late Excused"   : "Absent Excused";
     if (a.kind === "emergency") { fromStatus = "Unexcused"; toStatus = "Excused"; }
-    h += '<div class="eyebrow" style="margin-bottom:8px">If you approve</div>'
+    h += '<div class="eyebrow" style="margin-bottom:8px">' + (isReadOnly() ? 'If approved' : 'If you approve') + '</div>'
       +  '<div class="consequence-preview">'
       +    '<span class="status-badge Absent">' + fromStatus + '</span>'
       +    '<span class="consequence-arrow">\u2192</span>'
@@ -1271,8 +1272,8 @@ function renderApologyDetail() {
       + '</div>';
   }
 
-  // Inline review note (replaces the prompt popup)
-  if (a.status === "Pending") {
+  // Inline review note (replaces the prompt popup) — never for view-only access
+  if (a.status === "Pending" && !isReadOnly()) {
     h += '<div style="margin-top:20px">'
       +    '<div class="eyebrow" style="margin-bottom:8px">Review note (optional)</div>'
       +    '<textarea id="apologyNote" placeholder="Add a note — shown to the member and kept on record." style="min-height:70px;resize:vertical;font-style:normal"></textarea>'
@@ -1280,7 +1281,11 @@ function renderApologyDetail() {
   }
 
   // Actions
-  if (a.status === "Pending") {
+  if (a.status === "Pending" && isReadOnly()) {
+    // View-only: the queue reports, it never decides. No note, no Skip, no verdict.
+    h += '<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--paper-200);text-align:right;'
+      +    'font-family:var(--f-mono);font-size:9.5px;letter-spacing:.1em;color:var(--ink-400)">VIEW ONLY \u00b7 NO DECISION FROM THIS ACCOUNT</div>';
+  } else if (a.status === "Pending") {
     h += '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">'
       +    '<button class="btn btn-secondary" style="padding:10px 18px;font-size:13px" onclick="selectApology(null)">Skip</button>';
     if (a.type === "Restart Probation") {
@@ -1694,6 +1699,7 @@ function renderMemberDetail() {
     actions += '<button class="btn btn-green" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="prefillReward(\'' + safeNm + '\')">Award reward</button>';
     actions += '<button class="btn btn-crimson" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="prefillOffense(\'' + safeNm + '\')">Record offense</button>';
   }
+  if (isReadOnly()) actions = "";   // view-only: roster detail reports, never acts
   if (actions) h += '<div style="display:flex;gap:8px">' + actions + '</div>';
   h += '</div>';
   c.innerHTML = h;
@@ -1702,6 +1708,7 @@ function renderMemberDetail() {
 // ─── ADMIN EDIT PROFILE ───────────────────────────────────────────────────
 
 function showEditProfile(name) {
+  if (roBlock()) return;
   selectedMemberName = name;
   var isDesktop = window.matchMedia && window.matchMedia('(min-width: 1024px)').matches;
   if (!isDesktop) {
@@ -1745,6 +1752,7 @@ function toggleEditProfileDetails() {
 }
 
 function submitEditProfile() {
+  if (roBlock()) return;
   var orig = document.getElementById('epOriginalName');
   if (!orig) return;
   var nameVal = (document.getElementById('epName') || {}).value || '';
@@ -2015,21 +2023,25 @@ function epMsDone(name, msg) {
 function epMsFail(e) { showToast('Failed: ' + ((e && e.message) || 'unknown error'), 'error'); }
 
 function epSetHiatus(name) {
+  if (roBlock()) return;
   if (!confirm('Set ' + name + ' on hiatus? Absences stop counting while they\'re on an approved break.')) return;
   google.script.run.withSuccessHandler(function () { epMsDone(name, name + ' set on hiatus.'); })
     .withFailureHandler(epMsFail).adminSetMemberOnHiatus(name, epMsReason());
 }
 function epReactivate(name) {
+  if (roBlock()) return;
   if (!confirm('Reactivate ' + name + '? They return to active with no probation.')) return;
   google.script.run.withSuccessHandler(function () { epMsDone(name, name + ' reactivated.'); })
     .withFailureHandler(epMsFail).adminReactivateFromHiatus(name);
 }
 function epSetInactive(name) {
+  if (roBlock()) return;
   if (!confirm('Set ' + name + ' inactive? They lose access and must rejoin to return. History and points are kept.')) return;
   google.script.run.withSuccessHandler(function () { epMsDone(name, name + ' set inactive.'); })
     .withFailureHandler(epMsFail).adminSetMemberInactive(name, epMsReason());
 }
 function epReinstate(name, forced) {
+  if (roBlock()) return;
   var sel = document.querySelector('input[name="epReinstateMode"]:checked');
   var mode = forced || (sel ? sel.value : 'probation');
   var msg = mode === 'active'
@@ -2120,6 +2132,8 @@ function renderAddMemberPreview() {
 function setMembersMode(mode) {
   // Scoreboard + the disciplinary log are management-only — reps land on the roster.
   if ((mode === 'scoreboard' || mode === 'offense') && !isManagement()) mode = 'roster';
+  // Add / Record offense / Award reward are write-only panes — view-only lands on the roster.
+  if (isReadOnly() && (mode === 'add' || mode === 'offense' || mode === 'reward')) mode = 'roster';
   var btns = document.querySelectorAll('#membersModeToggle button');
   for (var b = 0; b < btns.length; b++) btns[b].className = (btns[b].getAttribute('data-mode') === mode) ? 'active' : '';
   // Leaving the roster resets the mobile master-detail back to the list view.
@@ -2274,6 +2288,7 @@ function onRewardNameInput() {
 }
 
 function prefillReward(name) {
+  if (roBlock()) return;
   setMembersMode('reward');
   var i = document.getElementById('rwName');
   if (i) i.value = name;
@@ -2324,6 +2339,7 @@ function renderRewardLog() {
 }
 
 function removeReward(rowIndex, name) {
+  if (roBlock()) return;
   if (!confirm("Delete this reward for " + name + "? Their points go back down.")) return;
   google.script.run.withSuccessHandler(function () {
     showToast("Reward deleted.", "success");
@@ -2333,6 +2349,7 @@ function removeReward(rowIndex, name) {
 }
 
 function submitReward() {
+  if (roBlock()) return;
   var name = document.getElementById("rwName").value.trim();
   var date = document.getElementById("rwDate").value;
   var desc = document.getElementById("rwDesc").value.trim();
@@ -2369,6 +2386,7 @@ function loadOffenseLog() {
 var offenseLog = [];
 
 function prefillOffense(name) {
+  if (roBlock()) return;
   setMembersMode('offense');
   var i = document.getElementById('offName');
   if (i) i.value = name;
@@ -2643,6 +2661,9 @@ function paintMyAttNextSession() {
             ? 'Underway now \u2014 started ' + fmtTime12(info.time) + '. The apology deadline has passed.'
             : 'The apology deadline for this session has passed.')
       + '</div>';
+  } else if (isReadOnly()) {
+    // View-only: the deadline is information, not an instruction — there is no apology to file.
+    h += '<div style="margin-top:12px;font-family:var(--f-mono);font-size:10px;letter-spacing:.08em;color:var(--ink-400)">APOLOGY DEADLINE \u00b7 ' + fmtTime12(info.deadline, true).toUpperCase() + '</div>';
   } else {
     h += '<div style="margin-top:12px;font-size:11.5px;color:var(--ink-500);line-height:1.5">Can’t make it? Submit an apology before ' + fmtTime12(info.deadline, true) + ' to be counted as excused.</div>'
       +  '<div style="margin-top:10px;font-size:12.5px;font-weight:600;color:var(--crimson);cursor:pointer" onclick="openApology()">Submit apology →</div>';
@@ -2833,6 +2854,7 @@ function updateOnboardingMissingNote() {
 }
 
 function submitOnboarding() {
+  if (roBlock()) return;
   var payload = {
     courseFaculty:    obVal("obFaculty"),
     courseName:       obVal("obCourse"),
@@ -2919,12 +2941,13 @@ function openProfile() {
   switchTab("profile");
 }
 function closeProfile() {
-  switchTab(profileReturnTab || (userAccess.isAdminLike ? "record" : "myatt"));
+  switchTab(profileReturnTab || (userAccess.isAdminLike ? (isReadOnly() ? "sessions" : "record") : "myatt"));
 }
 function setProfileMode(m) { profileMode = m; renderProfile(); }
 
 // ─── Apology sub-page (opened from My attendance) ──────────────────────────
 function openApology(mode) {
+  if (roBlock()) return;
   switchTab("apology");
   // Emergency is only ever reached from the "deadline has passed" card, never from
   // the toggle — so opening in that mode locks the page to the emergency form.
@@ -2958,8 +2981,11 @@ function renderProfile() {
   var photo = p.profilePhoto
     ? '<img src="' + p.profilePhoto + '" style="width:64px;height:64px;border-radius:999px;object-fit:cover;border:1px solid var(--paper-300)">'
     : '<div style="width:64px;height:64px;border-radius:999px;background:var(--paper-200);border:1px solid var(--paper-300);display:flex;align-items:center;justify-content:center;font-family:var(--f-display);font-style:italic;font-size:30px;color:var(--ink)">' + esc(initial) + '</div>';
-  var avatarBlock =
-      '<div style="position:relative;flex-shrink:0">' + photo
+  // The photo swap is a write (uploadProfilePhoto) — view-only accounts get the
+  // avatar with no affordance on it at all.
+  var avatarBlock = isReadOnly()
+    ? '<div style="flex-shrink:0">' + photo + '</div>'
+    : '<div style="position:relative;flex-shrink:0">' + photo
     +   '<label style="position:absolute;right:-2px;bottom:-2px;width:24px;height:24px;border-radius:999px;background:var(--ink);color:var(--paper);border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer" title="Change photo">✎'
     +     '<input type="file" id="profilePhotoInput" accept="image/*" onchange="onProfilePhoto(this)" style="display:none">'
     +   '</label>'
@@ -2988,10 +3014,11 @@ function renderProfile() {
   var h = '';
 
   // ── Title row
+  var noRecord = !isMemberAccount();   // oversight account: no Members row, nothing personal
   h += '<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin-bottom:14px">'
-    +    '<div><div class="eyebrow">' + (profileMode === "edit" ? "Editing your record" : "Your record") + '</div>'
+    +    '<div><div class="eyebrow">' + (noRecord ? "Your account" : profileMode === "edit" ? "Editing your record" : "Your record") + '</div>'
     +    '<span class="gold-rule"></span>'
-    +    '<h2 style="margin:0">' + (profileMode === "edit" ? "Edit profile." : "My profile.") + '</h2></div>'
+    +    '<h2 style="margin:0">' + (noRecord ? "My account." : profileMode === "edit" ? "Edit profile." : "My profile.") + '</h2></div>'
     +    (profileMode === "view"
           ? '<button class="btn btn-primary" style="padding:9px 16px;font-size:12.5px" onclick="setProfileMode(\'edit\')">✎ Edit Profile</button>'
           : '<button class="btn btn-ghost" style="padding:9px 4px;font-size:12.5px;color:var(--ink-500)" onclick="setProfileMode(\'view\')">Cancel</button>')
@@ -3018,16 +3045,26 @@ function renderProfile() {
   h += '<div class="card" style="padding:18px">' + identity;
 
   if (profileMode === "view") {
-    h += '<div style="margin-top:16px;padding-top:6px">'
-      +    readRow('PHONE', p.phone)
-      +    readRow('ADM NO', p.admNo)
-      +    readRow('GENDER', d.gender)
-      +    readRow('COURSE', [d.courseFaculty, d.courseName, d.yearOfStudy ? 'Year ' + d.yearOfStudy : ''].filter(Boolean).join(' \u00b7 '))
-      +    readRow('NATIONALITY', d.nationality, true)
-      +  '</div>'
+    h += (noRecord
+          // No roster entry — there is no personal record to show, only the account.
+          ? '<div style="margin-top:16px;padding-top:6px">'
+            +    readRow('ACCESS', roleBadgeText() + ' \u00b7 view only')
+            +    readRow('SECTIONS', (userAccess.allowedSections || []).join(' \u00b7 '), true)
+            +  '</div>'
+          : '<div style="margin-top:16px;padding-top:6px">'
+            +    readRow('PHONE', p.phone)
+            +    readRow('ADM NO', p.admNo)
+            +    readRow('GENDER', d.gender)
+            +    readRow('COURSE', [d.courseFaculty, d.courseName, d.yearOfStudy ? 'Year ' + d.yearOfStudy : ''].filter(Boolean).join(' \u00b7 '))
+            +    readRow('NATIONALITY', d.nationality, true)
+            +  '</div>')
       + '</div>'
       + '<div style="margin-top:10px;font-size:10.5px;color:var(--ink-400);line-height:1.5;padding:0 4px">'
-      +   'Tap ✎ on your photo to change it. Phone updates instantly; faculty, course and year of study go to an admin for approval.'
+      +   (noRecord
+          ? 'This account has no membership record \u2014 no attendance, probation or apologies of its own. It reports on the chorale; it never appears on a register.'
+          : isReadOnly()
+          ? 'Your access is view only, so this record can\u2019t be edited from here.'
+          : 'Tap ✎ on your photo to change it. Phone updates instantly; faculty, course and year of study go to an admin for approval.')
       + '</div>'
       + '<div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--paper-200)">'
       +   '<button class="btn btn-secondary btn-block" onclick="signOut()" style="color:var(--crimson-600)">Sign out</button>'
@@ -3072,6 +3109,7 @@ function renderProfile() {
 
 // Diff against the loaded profile and route each change to the right server call.
 function saveProfileEdits() {
+  if (roBlock()) return;
   if (!profileData) return;
   var p = profileData;
   var newName  = (document.getElementById("newNameInput").value || "").trim();
@@ -3135,6 +3173,7 @@ function saveProfileEdits() {
 // ─── ADMIN: approve transfer / name-change requests from the queue ─────────
 
 function approveSectionTransfer(rowIndex, memberName) {
+  if (roBlock()) return;
   var note = getReviewNote("Optional note (leave blank for none):");
   if (note === null) return;
   google.script.run.withSuccessHandler(function () { showToast((memberName || "Member") + "\u2019s transfer approved.", "success"); selectedApologyIdx = null; loadApologyQueue(); })
@@ -3142,11 +3181,13 @@ function approveSectionTransfer(rowIndex, memberName) {
     .approveSectionTransfer(rowIndex, memberName);
 }
 function approveCourseDetailsChange(rowIndex, memberName) {
+  if (roBlock()) return;
   google.script.run.withSuccessHandler(function () { showToast((memberName || "Member") + "\u2019s academic details updated.", "success"); selectedApologyIdx = null; loadApologyQueue(); })
     .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
     .approveCourseDetailsChange(rowIndex, memberName);
 }
 function approveNameChange(rowIndex, memberName) {
+  if (roBlock()) return;
   var note = getReviewNote("Optional note (leave blank for none):");
   if (note === null) return;
   google.script.run.withSuccessHandler(function () { showToast("Name change approved.", "success"); selectedApologyIdx = null; loadApologyQueue(); })
@@ -3249,10 +3290,11 @@ function renderTabNav() {
   moreTabIds = [];
 
   // Mobile: more than 5 tabs → primary set + a "More" overflow sheet.
+  var mobilePrimary = isReadOnly() ? ["sessions", "members", "dashboard"] : MOBILE_PRIMARY;
   if (userAccess.isAdminLike && tabs.length > 5) {
-    var primary = tabs.filter(function (t) { return MOBILE_PRIMARY.indexOf(t.id) !== -1; })
-                      .sort(function (a, b) { return MOBILE_PRIMARY.indexOf(a.id) - MOBILE_PRIMARY.indexOf(b.id); });
-    tabs.forEach(function (t) { if (MOBILE_PRIMARY.indexOf(t.id) === -1) moreTabIds.push(t.id); });
+    var primary = tabs.filter(function (t) { return mobilePrimary.indexOf(t.id) !== -1; })
+                      .sort(function (a, b) { return mobilePrimary.indexOf(a.id) - mobilePrimary.indexOf(b.id); });
+    tabs.forEach(function (t) { if (mobilePrimary.indexOf(t.id) === -1) moreTabIds.push(t.id); });
     primary.forEach(function (t) { navHtml += navBtnHtml(t, t.id === current); });
     navHtml += '<button id="moreNavBtn" data-more="1" onclick="toggleMoreSheet()"'
             +    (moreTabIds.indexOf(current) !== -1 ? ' class="active"' : '') + '>'
@@ -3465,14 +3507,26 @@ var userRole = "unknown", userName = "", userEmail = "", activeTab = "";
 // Scope object from getUserRole — role tiers: admin | sectionAdmin | elevated | member.
 // isAdminLike gates the admin workspace; allowedSections locks the section pickers.
 // UI gating only — Code.gs re-checks every call server-side.
-var userAccess = { role: "unknown", section: "", repGroup: "", allowedSections: [], isAdminLike: false };
+var userAccess = { role: "unknown", section: "", repGroup: "", allowedSections: [], isAdminLike: false, readOnly: false };
 function isFullAdmin()    { return userRole === "admin"; }
+// Super Admin — a different axis, not a rung above admin: admin-level REACH
+// (every section, every dashboard, every export) with zero write. readOnly comes
+// straight from getUserRole(); Code.gs refuses every mutating call for it, so the
+// UI HIDES action controls rather than offering a button that can only fail.
+function isSuperAdmin()   { return userRole === "superAdmin"; }
+function isReadOnly()     { return !!userAccess.readOnly; }
+// isMember is false for an oversight account with no Members row — no roster entry,
+// so no personal attendance, probation progress or apology of their own. Gated on the
+// flag, not the role, so any future non-member admin account is covered too.
+function isMemberAccount() { return userAccess.isMember !== false; }
+// Defence in depth behind the hidden controls — guards every mutating handler.
+function roBlock() { if (!isReadOnly()) return false; showToast("Your access is view-only.", "error"); return true; }
 function canEditHistory() { return userRole === "admin" || userRole === "sectionAdmin"; }
 // Points, rankings, the scoreboard and the disciplinary log are MANAGEMENT-ONLY:
 // admin + sectionAdmin. Elevated reps keep their register and dashboards but lose
 // these (getScoreboard / getOffenseList throw for them server-side), and members
 // never see points, rankings or standings at all.
-function isManagement()   { return userRole === "admin" || userRole === "sectionAdmin"; }
+function isManagement()   { return userRole === "admin" || userRole === "sectionAdmin" || userRole === "superAdmin"; }
 function sectionAllowed(g) { return isFullAdmin() || userAccess.allowedSections.indexOf(g) !== -1; }
 // Elevated reps have no Requests queue — their register is record-only.
 function activeTabs() {
@@ -3481,15 +3535,25 @@ function activeTabs() {
   return adminTabs.filter(function (t) {
     if (t.id === "birthdays") return isFullAdmin();
     if (t.id === "requests")  return userRole !== "elevated";
+    // Record is an input surface only — view-only access has nothing to do there.
+    if (t.id === "record")    return !isReadOnly();
+    // Communiqués are deliberately excluded from view-only access: a mass send is
+    // irreversible and carries the Chorale letterhead and a signature block. An admin
+    // sends on an oversight account's behalf, under their own Signatures row.
+    if (t.id === "communique") return !isReadOnly();
+    // No Members row → no personal attendance page.
+    if (t.id === "myatt")     return isMemberAccount();
     return true;
   });
 }
 function roleBadgeText() {
+  if (userRole === "superAdmin")   return "SUPER ADMIN";
   if (userRole === "sectionAdmin") return ("Section Admin \u00b7 " + userAccess.section).toUpperCase();
   if (userRole === "elevated")     return (userAccess.repGroup + " Rep").toUpperCase();
   return userRole.toUpperCase();
 }
 function topbarSubText() {
+  if (userRole === "superAdmin")   return "Attendance \u00b7 view only";
   if (userRole === "admin")        return "Attendance \u00b7 admin";
   if (userRole === "sectionAdmin") return "Attendance \u00b7 " + (userAccess.section || "section").toLowerCase() + " admin";
   if (userRole === "elevated")     return "Attendance \u00b7 " + (userAccess.repGroup || "rep").toLowerCase() + " rep";
@@ -3497,7 +3561,8 @@ function topbarSubText() {
 }
 // Lock section pickers for scoped roles: pre-select their section, disable the rest.
 function applyRoleScopeUI() {
-  if (isFullAdmin()) return;
+  // Super Admin reaches every section — there is nothing to lock.
+  if (isFullAdmin() || isReadOnly()) return;
   var allowed = userAccess.allowedSections;
   [["grpChoir", "Choir"], ["grpBand", "Band"], ["grpOrchestra", "Orchestra"]].forEach(function (p) {
     var el = document.getElementById(p[0]);
@@ -3534,6 +3599,26 @@ function lockSectionChips(boxId) {
     }
   }
 }
+// ── View-only chrome (Super Admin) ────────────────────────────────────────
+// body.view-only in Page.html hides the action controls themselves (matched on
+// their handler). This handles what CSS can't: the write-only Members sub-modes,
+// the communiqué composer, and the "View only" badges beside the role label.
+function applyReadOnlyUI() {
+  document.body.classList.add("view-only");
+  ["sideViewOnly", "topViewOnly"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = "";
+  });
+  // Copy that instructs an action this role can't take is re-pointed at what it can.
+  var copy = {
+    membersHeadSub: "Browse the roster and each member\u2019s history, and watch the live scoreboard."
+  };
+  Object.keys(copy).forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = copy[id];
+  });
+}
+
 // Apology is NOT a top-level tab — it is a sub-page reached from My attendance
 // (keeps "My attendance" active in the nav, like the Profile sub-page).
 var adminTabs  = [{ id: "record", label: "Record" }, { id: "sessions", label: "Sessions" }, { id: "members", label: "Members" }, { id: "probation", label: "Probation", short: "Prob." }, { id: "requests", label: "Requests", short: "Reqs" }, { id: "dashboard", label: "Group Dashboard", short: "Stats" }, { id: "communique", label: "Communiqué", short: "Send" }, { id: "birthdays", label: "Birthdays", short: "Bdays" }, { id: "myatt", label: "My attendance", short: "Mine" }];
@@ -3548,8 +3633,12 @@ google.script.run.withSuccessHandler(function (r) {
     section: r.section || "",
     repGroup: r.repGroup || "",
     allowedSections: r.allowedSections || (r.role === "admin" ? ["Choir", "Band", "Orchestra"] : []),
-    isAdminLike: (r.isAdminLike !== undefined) ? !!r.isAdminLike : (r.role === "admin")
+    isAdminLike: (r.isAdminLike !== undefined) ? !!r.isAdminLike : (r.role === "admin"),
+    readOnly: !!r.readOnly,
+    // Defaults to true — other roles may not send the field at all.
+    isMember: (r.isMember !== undefined) ? !!r.isMember : true
   };
+  if (userAccess.readOnly) applyReadOnlyUI();
   // Globals read by emailDeniedAdmin() (§11). adminContactEmail comes from the
   // backend (getUserRole); deniedUserEmail is the signed-in user's address.
   window.deniedUserEmail = r.email || "";
@@ -3698,6 +3787,7 @@ function hideAppShell_() {
 }
 function setRejoinState(pending) { setRejoinMode(pending ? "pending" : "form"); }
 function submitRejoin() {
+  if (roBlock()) return;
   var ta = document.getElementById("rejoinReason");
   var reason = ta ? ta.value.trim() : "";
   var btn = document.getElementById("btnRejoin");
@@ -4823,6 +4913,7 @@ function renderMeetingsList(list) {
 }
 
 function scheduleMeeting() {
+  if (roBlock()) return;
   var date  = document.getElementById("mtgDate").value;
   var time  = document.getElementById("mtgTime").value;
   var title = document.getElementById("mtgTitle").value.trim();
@@ -4849,6 +4940,7 @@ function scheduleMeeting() {
 }
 
 function deleteMeeting(id) {
+  if (roBlock()) return;
   google.script.run.withSuccessHandler(function () {
     showToast("Meeting deleted.", "success");
     loadMeetings();
@@ -4930,6 +5022,7 @@ function setPrimary(name, type) {
 }
 function setSub(name, status) { attendance[name] = status; renderMembers(); updateSummary(); }
 function setAll(status) {
+  if (roBlock()) return;
   for (var i = 0; i < members.length; i++) attendance[members[i].name] = status;
   renderMembers(); updateSummary();
 }
@@ -4990,6 +5083,7 @@ function resetRecordTab() {
 }
 
 function handleSubmit() {
+  if (roBlock()) return;
   var ds = document.getElementById("attendanceDate").value;
   if (!ds)                          { showToast("Select a date.",  "error"); return; }
   if (selectedGroups.length === 0)  { showToast("Select a group.", "error"); return; }
@@ -5006,7 +5100,7 @@ function handleSubmit() {
   }).withFailureHandler(function (e) { setBusy(false); showToast("Error: " + e.message, "error"); })
     .checkExistingAttendance(ds, selectedGroups);
 }
-function confirmOverwrite() { closeDialog(); submitAttendance(true); }
+function confirmOverwrite() { if (roBlock()) return; closeDialog(); submitAttendance(true); }
 function closeDialog()      { document.getElementById("overwriteDialog").style.display = "none"; }
 
 function submitAttendance(ow) {
@@ -5196,6 +5290,7 @@ function loadProbationDashboard() {
     .getProbationDashboard();
 }
 function manualEvaluate() {
+  if (roBlock()) return;
   showToast("Evaluating probation…", "success");
   google.script.run.withSuccessHandler(function (r) {
     if (!r || r.evaluated === 0) {
@@ -5234,6 +5329,7 @@ function getChangeCount() {
 function hideChangesBar() { var b = document.getElementById("changesBar"); if (b) b.remove(); }
 function discardChanges() { viewEditedStatuses = {}; hideChangesBar(); if (sessDetailActive) paintSessionDetail(); else renderViewTab(); }
 function saveChanges() {
+  if (roBlock()) return;
   var u = [];
   for (var ri in viewEditedStatuses) {
     if (viewEditedStatuses[ri] !== viewOriginalStatuses[ri]) {
@@ -5275,6 +5371,7 @@ function onAmProbationToggle() {
 }
 
 function submitAddMember() {
+  if (roBlock()) return;
   var name = document.getElementById("amName").value.trim();
   if (!name) { showToast("Name required.", "error"); return; }
   var cbs = document.querySelectorAll('#addMemberForm input[type="checkbox"][value]');
@@ -5368,6 +5465,7 @@ function renderOffenseLog() {
 }
 
 function submitOffense() {
+  if (roBlock()) return;
   var name = document.getElementById("offName").value.trim();
   var desc = document.getElementById("offDesc").value.trim();
   var date = document.getElementById("offDate").value;
@@ -5867,6 +5965,7 @@ function renderEmergencyApology() {
 }
 
 function submitEmergencyApologyNow() {
+  if (roBlock()) return;
   var t = document.getElementById('emReason');
   var reason = t ? t.value.trim() : '';
   if (!reason) { showToast('Describe what happened \u2014 a reason is required.', 'error'); if (t) t.focus(); return; }
@@ -5933,6 +6032,7 @@ function loadMyApologies() {
 }
 
 function submitMemberApology() {
+  if (roBlock()) return;
   var dateStr = document.getElementById("apolDate").value;
   var type    = document.getElementById("apolType").value;
   var reason  = document.getElementById("apolReason").value.trim();
@@ -5980,6 +6080,7 @@ function ackProbation() {
 }
 
 function requestRestart() {
+  if (roBlock()) return;
   var reason = document.getElementById("restartReason");
   if (!reason || !reason.value.trim()) { showToast("Enter a reason.", "error"); return; }
   google.script.run.withSuccessHandler(function () {
@@ -5990,6 +6091,7 @@ function requestRestart() {
 }
 
 function submitLtApology() {
+  if (roBlock()) return;
   var start  = document.getElementById("ltStart").value;
   var end    = document.getElementById("ltEnd").value;
   var reason = document.getElementById("ltReason").value.trim();
@@ -6027,6 +6129,7 @@ function loadApologyQueue() {
 }
 
 function adminApprove(rowIndex) {
+  if (roBlock()) return;
   var note = getReviewNote("Optional note (leave blank for none):");
   if (note === null) return;
   google.script.run.withSuccessHandler(function (r) {
@@ -6048,6 +6151,7 @@ function adminApprove(rowIndex) {
 }
 
 function adminReject(rowIndex) {
+  if (roBlock()) return;
   var note = getReviewNote("Reason for rejection:");
   if (note === null) return;
   google.script.run.withSuccessHandler(function (r) {
@@ -6059,6 +6163,7 @@ function adminReject(rowIndex) {
 }
 
 function adminRevoke(rowIndex) {
+  if (roBlock()) return;
   var note = prompt("Reason for revoking:");
   if (note === null) return;
   google.script.run.withSuccessHandler(function (r) {
@@ -6070,6 +6175,7 @@ function adminRevoke(rowIndex) {
 }
 
 function adminApproveRestart(memberName, rowIndex) {
+  if (roBlock()) return;
   if (!confirm("Approve probation restart for " + memberName + "? This resets their probation with today as the start date.")) return;
   google.script.run.withSuccessHandler(function (r) {
     showToast(r.name + "'s probation restarted.", "success");
@@ -6082,6 +6188,7 @@ function adminApproveRestart(memberName, rowIndex) {
 // Rejoin: approve a returning member's request from the queue. The member re-enters
 // a fresh re-entry probation; approveRejoin also stamps the request row Approved.
 function approveRejoin(rowIndex, memberName) {
+  if (roBlock()) return;
   if (!confirm("Approve " + memberName + "'s rejoin request? They return on a fresh re-entry probation.")) return;
   google.script.run.withSuccessHandler(function () {
     showToast(memberName + " reinstated \u2014 re-entry probation started.", "success");
@@ -6132,6 +6239,7 @@ function renderReinstateFlags() {
 }
 
 function reinstateFlagged(name, mode) {
+  if (roBlock()) return;
   if (!confirm("Reinstate " + name + (mode === "active"
       ? " as active, with no probation?"
       : " on a fresh re-entry probation?"))) return;
@@ -6146,6 +6254,7 @@ function reinstateFlagged(name, mode) {
 // Reinstate: the direct admin route from the Members tab (no request needed).
 // Mode is explicit — this route always applies a fresh re-entry probation.
 function adminReinstateMember(memberName) {
+  if (roBlock()) return;
   if (!confirm("Reinstate " + memberName + "? They return on a fresh re-entry probation.")) return;
   google.script.run.withSuccessHandler(function () {
     showToast(memberName + " reinstated \u2014 re-entry probation started.", "success");
@@ -6266,6 +6375,7 @@ function signOut(){
 var reminderPending = null;
 
 function sendReminder(){
+  if (roBlock()) return;
   var ds=document.getElementById("attendanceDate").value;
   var groups=getSelectedGroups();
   var time=document.getElementById("sessionTime").value;
@@ -6302,6 +6412,7 @@ function closeReminderDialog(){
 }
 
 function confirmSendReminder(){
+  if (roBlock()) return;
   if(!reminderPending){closeReminderDialog();return;}
   var note=document.getElementById("reminderNote").value||"";
   var sig=document.getElementById("reminderSignature").value||"general";
@@ -6704,6 +6815,7 @@ function commSentToast(r){
 
 // Button dispatcher — branch on the send mode.
 function submitCommunique(){
+  if (roBlock()) return;
   if((communiqueData.sendMode||"now")==="later")return scheduleCommuniqueSend();
   return sendCommuniqueNow();
 }
@@ -6777,7 +6889,7 @@ function renderScheduledList(rows){
   var list=document.getElementById("commScheduledList");if(!list)return;
   updateScheduledCount(rows);
   if(!rows.length){
-    list.innerHTML='<div class="empty-pane">Nothing scheduled.<div style="font-family:var(--f-sans);font-style:normal;font-size:12.5px;color:var(--ink-500);margin-top:8px">Compose a message and choose \u201cSchedule for later\u201d to line one up.</div></div>';
+    list.innerHTML='<div class="empty-pane">Nothing scheduled.<div style="font-family:var(--f-sans);font-style:normal;font-size:12.5px;color:var(--ink-500);margin-top:8px">' + (isReadOnly() ? 'Scheduled messages appear here once an admin queues one.' : 'Compose a message and choose \u201cSchedule for later\u201d to line one up.') + '</div></div>';
     return;
   }
   var STATUS={Scheduled:"s-scheduled",Sending:"s-sending",Sent:"s-sent",Failed:"s-failed",Cancelled:"s-cancelled"};
@@ -6802,6 +6914,7 @@ function renderScheduledList(rows){
 }
 
 function cancelScheduled(id){
+  if (roBlock()) return;
   if(!confirm("Cancel this scheduled message? It will not be sent."))return;
   google.script.run.withSuccessHandler(function(){
     showToast("Scheduled message cancelled.","success");
@@ -7108,6 +7221,7 @@ function closeBdayEdit(id) {
 }
 
 function sendBdayCard(id) {
+  if (roBlock()) return;
   var p = bdayPeople[id];
   if (!p) return;
   var ta = document.getElementById(id + "-msg");
@@ -7135,6 +7249,7 @@ function copyBdayGroup(id) {
 
 // Default (un-edited) card send — distinct from the edited path (sendCustomBirthdayCard)
 function sendBdayCardNow(id, btn) {
+  if (roBlock()) return;
   var p = bdayPeople[id];
   if (!p) return;
   if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
@@ -7150,6 +7265,7 @@ function sendBdayCardNow(id, btn) {
 
 // Auto-send setting — optimistic UI, reverts on failure, re-renders cards to swap states
 function toggleAutoSend(el) {
+  if (roBlock()) return;
   var next = el.getAttribute("aria-checked") !== "true";
   el.disabled = true;
   google.script.run.withSuccessHandler(function () {
