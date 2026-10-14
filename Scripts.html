@@ -1,4 +1,3 @@
-
 <script>
 // ═══════════════════════════════════════════════════════════════════════════
 //  STRATHMORE CHORALE · ATTENDANCE · CLIENT SCRIPTS
@@ -2672,16 +2671,53 @@ function paintMyAttNextSession() {
   paintEmergencyDoor();
 }
 
-// The emergency route is keyed to its OWN session, not to the one on the card:
-// getEmergencyApologyOption() opens at that session's start time and runs for
-// windowHours (24) whether or not the register is marked. So the door lives in its
-// own strip under the card and shows whenever the backend says eligible — including
-// once the card has moved on to the next session.
+// The page can sit open past closesAt, so arm one timer for that moment: on expiry,
+// re-ask the backend (which is authoritative) and repaint. Re-armed on every paint;
+// cleared when there is nothing eligible to expire.
+var emergencyExpiryTimer = null, emergencyLastBoundary = null;
+function scheduleEmergencyExpiry(o) {
+  if (emergencyExpiryTimer) { clearTimeout(emergencyExpiryTimer); emergencyExpiryTimer = null; }
+  if (!o || !o.eligible) { emergencyLastBoundary = null; return; }
+  // Two boundaries: "prominent" ends at promptUntil (door leaves the card, route
+  // moves to the apology page); "hidden" ends at closesAt (route closes).
+  var at = (o.phase === 'prominent' && o.promptUntil) ? o.promptUntil : o.closesAt;
+  if (!at) return;
+  var m = String(at).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})/);
+  if (!m) return;
+  var ms = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime() - Date.now();
+  // setTimeout caps at ~24.8 days; windows end the same day, but guard anyway.
+  if (ms > 2147000000) return;
+  // Already past on this clock: allow ONE immediate re-check per boundary. If the
+  // server still answers with the same boundary (client clock ahead of server),
+  // stop — otherwise this re-arms every 1.5 s forever.
+  var key = (o.phase || '') + '|' + at;
+  if (ms <= 0) {
+    if (emergencyLastBoundary === key) return;
+  }
+  emergencyLastBoundary = key;
+  emergencyExpiryTimer = setTimeout(function () {
+    emergencyExpiryTimer = null;
+    loadEmergencyApologyOption();
+    // The card holds a session for SESSION_GRACE_MINUTES; refetch so it rolls over too.
+    if (typeof myAttLoaded !== "undefined" && myAttLoaded) {
+      google.script.run.withSuccessHandler(setMyAttNextSession)
+        .withFailureHandler(function () {}).getUpcomingSessions();
+    }
+  }, Math.max(0, ms) + 1500);
+}
+
+// The emergency door on the card. getEmergencyApologyOption() returns a phase:
+//   "prominent"  deadline → session start + 2 h  → door shows under the card
+//   "hidden"     after that → midnight            → door gone; route stays on the
+//                                                    apology page (syncEmergencyHint)
+// The backend decides the phase; the client never computes it.
 function paintEmergencyDoor() {
   var el = document.getElementById("myAttEmergencyDoor");
   if (!el) return;
   var o = emergencyOption;
-  if (!o || !o.eligible) { el.style.display = "none"; el.innerHTML = ""; return; }
+  scheduleEmergencyExpiry(o);
+  syncEmergencyHint();
+  if (!o || !o.eligible || o.phase !== "prominent") { el.style.display = "none"; el.innerHTML = ""; return; }
   var closes = o.closesAt ? String(o.closesAt).split(" ") : null;
   el.style.display = "block";
   el.innerHTML = '<div class="em-door" onclick="openApology(&#39;emergency&#39;)">'
@@ -2691,8 +2727,8 @@ function paintEmergencyDoor() {
     +       esc(formatDateShort(o.date)) + '</b> below</div>'
     +     '<div class="em-door-win">'
     +       (closes && closes.length === 2
-              ? 'WINDOW CLOSES ' + esc(formatDateShort(closes[0]).toUpperCase()) + ' \u00b7 ' + fmtTime12(closes[1])
-              : 'WITHIN ' + (o.windowHours || 24) + ' HOURS OF THE SESSION')
+              ? 'OPEN UNTIL ' + emClosesLabel(closes)
+              : 'OPEN UNTIL MIDNIGHT')
     +     '</div>'
     +     '<div style="font-size:12.5px;font-weight:600;color:var(--crimson);margin-top:8px">File an emergency apology \u2192</div>'
     +   '</div>'
@@ -3668,6 +3704,10 @@ google.script.run.withSuccessHandler(function (r) {
 
   if (userAccess.isAdminLike) { initAdmin(); applyRoleScopeUI(); }
   else initMember();
+  // Run the landing tab's loader. Setting the class alone skipped it, which is why
+  // Super Admin (whose first tab is Sessions — there is no Record tab for a
+  // view-only role) saw the static pre-wiring demo instead of getSessionsList().
+  switchTab(firstTab);
 }).withFailureHandler(function (e) {
   document.getElementById("authScreen").style.display = "none";
   document.getElementById("deniedScreen").style.display = "block";
@@ -5875,11 +5915,11 @@ function setApologyKind(kind) {
   }
   if (sub) {
     sub.textContent = isEm
-      ? 'The ordinary deadline for this session has gone. This route is for genuine emergencies only, covers your most recent session, and always waits on an admin\u2019s decision.'
+      ? 'The ordinary deadline for this session has gone. This route is for genuine emergencies only, covers today\u2019s session until midnight, and always waits on an admin\u2019s decision.'
       : 'Tell admins ahead of time. Apologies submitted before the cut-off on the day are auto-accepted as Late or Absent \u00b7 Excused.';
   }
-  // Re-check on every entry: the window opens at session start and runs 24 hours,
-  // so eligibility can change between visits.
+  syncEmergencyHint();
+  // Re-check on every entry: eligibility and phase change with the clock.
   if (isEm) loadEmergencyApologyOption();
 }
 
@@ -5894,6 +5934,8 @@ function loadEmergencyApologyOption() {
       emergencyOption = o || { eligible: false, reason: 'Emergency apologies are unavailable right now.' };
       renderEmergencyApology();
       paintMyAttNextSession();
+      syncEmergencyHint();
+      scheduleEmergencyExpiry(emergencyOption);
     })
     .withFailureHandler(function (e) {
       emergencyOption = { eligible: false, reason: (e && e.message) ? e.message : 'Could not check your last session.' };
@@ -5903,9 +5945,42 @@ function loadEmergencyApologyOption() {
     .getEmergencyApologyOption();
 }
 
-// The crimson strip under the ordinary form is gone — kept as a no-op so any
-// older call site can't throw.
-function syncEmergencyHint() {}
+// "11:59 PM TONIGHT" when closesAt is today, else "SUN · 14 JUN · 11:59 PM".
+function emClosesLabel(closes) {
+  if (!closes || closes.length !== 2) return 'MIDNIGHT';
+  var d = new Date(), pad = function (n) { return (n < 10 ? '0' : '') + n; };
+  var today = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  return closes[0] === today
+    ? fmtTime12(closes[1]).toUpperCase() + ' TONIGHT'
+    : formatDateShort(closes[0]).toUpperCase() + ' \u00b7 ' + fmtTime12(closes[1]).toUpperCase();
+}
+
+// Sentence-case twin of emClosesLabel for running copy: "11:59 PM tonight" or
+// "Thu · 18 Jun · 11:59 PM".
+function emClosesSentence(closesAt) {
+  var c = closesAt ? String(closesAt).split(' ') : null;
+  if (!c || c.length !== 2) return 'midnight';
+  var d = new Date(), pad = function (n) { return (n < 10 ? '0' : '') + n; };
+  var today = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  return c[0] === today ? fmtTime12(c[1]) + ' tonight' : formatDateShort(c[0]) + ' \u00b7 ' + fmtTime12(c[1]);
+}
+
+// Apology-page entry to the emergency route. Only ever shown when the backend says
+// eligible — which it never does before the deadline — so a normal apology cycle
+// still shows just One session / Extended period. It matters most in the "hidden"
+// phase, when the card has moved on and this is the only door left.
+function syncEmergencyHint() {
+  var eh = document.getElementById('apolEmHint');
+  if (!eh) return;
+  var o = emergencyOption;
+  var show = !!(o && o.eligible) && apologyKind !== 'emergency';
+  eh.style.display = show ? 'flex' : 'none';
+  var t = document.getElementById('apolEmHintText');
+  if (t && show) {
+    t.innerHTML = 'Kept away from <b>' + esc(formatDateShort(o.date)) + '</b> by a genuine emergency? '
+                + 'You can still file for it until ' + esc(emClosesSentence(o.closesAt)) + '.';
+  }
+}
 
 function renderEmergencyApology() {
   var c = document.getElementById('emergencyApolMount');
@@ -5923,7 +5998,7 @@ function renderEmergencyApology() {
       +       (o.date ? esc(formatDateDisplay(o.date)) : 'Nothing to file for') + '</div>'
       +       '<div style="font-size:12.5px;color:var(--ink-600);line-height:1.55">' + esc(o.reason || '') + '</div></div>'
       +   '</div>'
-      +   '<p style="font-size:12px;color:var(--ink-500);line-height:1.55;margin-top:14px">Emergency apologies cover your most recent session only, and only for a short window after it. For anything still to come, use <b>One session</b> before the deadline.</p>'
+      +   '<p style="font-size:12px;color:var(--ink-500);line-height:1.55;margin-top:14px">Emergency apologies cover today\u2019s session only, and close at midnight. For anything still to come, use <b>One session</b> before the deadline.</p>'
       + '</div></div>';
     return;
   }
@@ -5932,9 +6007,7 @@ function renderEmergencyApology() {
   // closesAt is an absolute "yyyy-MM-dd HH:mm" from the backend — state the real
   // cut-off rather than a vague "within N hours".
   var closes = o.closesAt ? String(o.closesAt).split(' ') : null;
-  var win = (closes && closes.length === 2)
-            ? ('CLOSES ' + formatDateShort(closes[0]).toUpperCase() + ' \u00b7 ' + fmtTime12(closes[1]))
-            : ('WITHIN ' + (o.windowHours || 24) + ' HOURS OF THE SESSION');
+  var win = 'OPEN UNTIL ' + emClosesLabel(closes);
   var recorded = (o.status && o.status !== 'Not yet recorded')
                  ? ('RECORDED AS ' + esc(o.status).toUpperCase())
                  : 'REGISTER NOT YET MARKED';
@@ -6141,7 +6214,11 @@ function adminApprove(rowIndex) {
     if (r.backfilled)      parts.push(r.backfilled + " past record" + (r.backfilled === 1 ? "" : "s") + " updated");
     if (r.offensesRemoved) parts.push(r.offensesRemoved + " offense" + (r.offensesRemoved === 1 ? "" : "s") + " removed");
     if (r.reinstatementFlagged) parts.push("flagged for reinstatement");
-    showToast(parts.join(" \u00b7 ") + ".", "success");
+    // backfillNote explains what the retroactive correction did (or why it couldn't),
+    // e.g. for an emergency approved before the register was marked.
+    var msg = parts.join(" \u00b7 ") + ".";
+    if (r.backfillNote) msg += " " + String(r.backfillNote);
+    showToast(msg, "success");
     selectedApologyIdx = null;
     loadApologyQueue();
     loadReinstatementFlags();
