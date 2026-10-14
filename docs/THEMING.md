@@ -16,6 +16,23 @@ don't fork the rules.
 5. **Concrete dark values** supplied (§6).
 6. **Phased rollout + lint** so a 600 KB sweep doesn't land as one diff (§7).
 
+## Review round 2 (code side) — checked against `main` @ `3411714`
+
+1. **Storage fixed — `getUserProperties()` would share one theme across everyone.** The web app
+   runs `executeAs: USER_DEPLOYING`, so user properties belong to the deploying account, not the
+   visitor. Theme is stored in Script Properties keyed by email instead (§1).
+2. **§3a token fixed.** Dark `--surface` (`#1A1714`) is *darker* than the `--paper-100` track
+   (`#211D19`), so a `--surface` chip still looks sunken. New `--seg-active` token (§3a).
+3. **Alpha washes keep their alpha.** Page.html has ~15 distinct shadow / wash alphas; collapsing
+   them into `--shadow-1/2` breaks rollout step 1's "pixel-identical". RGB-triplet tokens fix
+   that (§2c).
+4. **`--absent-unexc` dark nudged** to `#E8666E`: `#E04D56` on its bg is 4.28:1, under 4.5 for
+   the small mono pill text (now 5.23:1). Contrast notes corrected with measured values (§6).
+5. **Lint fixed.** `\bwhite\b` matches `white-space` (25 hits, all false), so the check could
+   never come back clean (§7).
+6. **Line numbers refreshed** to `main` @ `3411714`; they were 40–80 lines off. Where possible,
+   rules now name the function instead.
+
 ---
 
 ## 1. How the theme is chosen
@@ -36,8 +53,14 @@ don't fork the rules.
   | Owner | Function | Returns |
   | ------- | ---------- | --------- |
   | `Code.gs` | `getUserRole()` | existing object, plus `theme: "system" \| "light" \| "dark"` |
-  | `Code.gs` | `getThemePreference()` | `"system" \| "light" \| "dark"` (default `"system"`) — `PropertiesService.getUserProperties()` |
+  | `Code.gs` | `getThemePreference()` | `"system" \| "light" \| "dark"` (default `"system"`) |
   | `Code.gs` | `setThemePreference(pref)` | `{ success, theme }` — rejects anything outside the three values |
+
+- **Storage:** Script Properties, key `theme_<email lowercased>` — the same pattern as the
+  existing `bdsent_<year>_<email>` keys. **Not** `getUserProperties()`: the web app runs as
+  `USER_DEPLOYING`, so user properties belong to the deploying account and every visitor would
+  share one theme. The email comes from the same resolution `getAccess_()` uses, so superAdmin
+  and other non-member accounts work too.
 
 - **Load path:** the client applies `getUserRole().theme` in the same callback that boots the app.
   `getThemePreference()` can exist, but the client must **not** call it on load — every extra
@@ -84,6 +107,31 @@ their meaning and contrast.
 
 `--card` stays as an alias of `--surface` so old code keeps working; new code uses `--surface`.
 
+## 2c. Alpha washes — RGB-triplet tokens
+
+`rgba()` washes and shadows keep their own alpha at the call site and take the colour from a
+triplet token:
+
+```css
+box-shadow: 0 10px 26px rgba(var(--shadow-rgb), 0.3);
+background: rgba(var(--gold-rgb), 0.10);
+```
+
+| Token | Light | Dark | Replaces |
+| ------- | ------- | ------ | ---------- |
+| `--shadow-rgb` | `20,17,15` | `0,0,0` | `rgba(20,17,15,…)` and `rgba(43,38,32,…)` shadows |
+| `--scrim-rgb` | `43,38,32` | `0,0,0` | dialog / sheet backdrops |
+| `--gold-rgb` | `176,133,56` | `201,166,88` | gold washes and focus rings |
+| `--on-inverse-rgb` | `243,233,206` | `237,232,221` | washes and lines inside dark cards |
+| `--present-rgb` | `74,124,89` | `109,181,123` | green washes |
+
+This keeps light mode pixel-identical (every alpha is unchanged) without a token per alpha.
+Shadows on a dark page read weaker. If one needs more weight in dark mode, raise that call site's
+alpha under `:root[data-theme="dark"]`. Don't add a new shadow token.
+The named tokens (`--shadow-1`, `--shadow-2`, `--scrim`, `--focus-ring`, `--inverse-raised`,
+`--on-inverse-line`) stay as shorthands for **new** code, defined in terms of the triplets.
+`rgba(var(--…-rgb), a)` is the only `rgba(` form the lint allows.
+
 ## 2a. Filled controls — fill tokens
 
 In dark mode `--gold`, `--crimson`, `--present` etc. are **lightened** for text legibility. White
@@ -108,14 +156,15 @@ Rule: **fg tokens are for text and strokes; `*-fill` tokens are for backgrounds 
 
 | Token | Replaces | Where |
 | ------- | ---------- | ------- |
-| `--tint-soprano`, `--tint-alto`, `--tint-tenor`, `--tint-bass` | `#F3E9CE`, `#F0E0CE`, `#ECE7DE`, `#E1ECDF` | `Scripts.html` ~L1468, ~L4121 (section avatar tints) |
-| `--tint-choir`, `--tint-band`, `--tint-orchestra` | same hexes | `Scripts.html` ~L845, ~L4122 |
+| `--tint-soprano`, `--tint-alto`, `--tint-tenor`, `--tint-bass` | `#F3E9CE`, `#F0E0CE`, `#ECE7DE`, `#E1ECDF` | `Scripts.html` ~L1469, ~L4081 (section avatar tints) |
+| `--tint-choir`, `--tint-band`, `--tint-orchestra` | same hexes | `Scripts.html` ~L846, ~L4082 |
 | `--medal-silver`, `--medal-silver-ink`, `--medal-bronze` | `#A9A39A`, `#7E7972`, `#A56A3A` | `.podium-col.silver/.bronze` |
 | `--on-inverse-ok`, `--on-inverse-bad` | `#A6D7B4`, `#E8A6AB` | `.trend-tip .tip-p/.tip-au`, `.apol-cell .num.ok/.bad`, `.dash-hero-delta .tag.down` |
 | `--crimson-wash` | `#F1D6D2` | `.apology-queue-item.emergency:hover/.selected` |
 | `--switch-on` | `#2A7D52` | `.bswitch[aria-checked="true"]` |
-| `--focus-ring` | `rgba(176,133,56,0.10–0.25)` | `.needs-attention`, `:focus` box-shadows in communiqué |
-| `--chart-grid`, `--chart-label`, `--chart-line`, `--chart-dot-ring`, `--chart-value` | `#E8DEC6`, `#8C8478`, `#B08538`, `#FBF7EE`, `#14110F` | Trend SVG in `Scripts.html` ~L4700–4723 and the static one in `Page.html` ~L1981–1993. Gradient `stop-color` must also move to `style="stop-color:var(--chart-line)"`. |
+| `--focus-ring` | `rgba(176,133,56,0.10–0.25)` | `.needs-attention`, `:focus` box-shadows in communiqué. Existing call sites use `rgba(var(--gold-rgb), a)` (§2c) to keep their alphas. |
+| `--chart-grid`, `--chart-label`, `--chart-line`, `--chart-dot-ring`, `--chart-value` | `#E8DEC6`, `#8C8478`, `#B08538`, `#FBF7EE`, `#14110F` | Trend SVG in `Scripts.html` (the trend renderer, ~L4662–4683) and the static one in `Page.html` ~L2036–2048. Gradient `stop-color` must also move to `style="stop-color:var(--chart-line)"`. `.trend-card` sits on `--paper`, so `--chart-dot-ring` must always equal `--paper`. |
+| `--seg-active` | `#fff` | Active chip of a segmented toggle (§3a) |
 
 `.bbtn--accent { border-color: color-mix(in srgb, var(--accent) 76%, #000) }` is allowed — `#000`
 inside `color-mix` as a darkening operand is the one permitted literal.
@@ -151,8 +200,10 @@ inside `color-mix` as a darkening operand is the one permitted literal.
    - **In-app previews of emails** (welcome-email preview in Add member, communiqué preview): wrap
      the preview root in `class="theme-light"`. That class re-declares the light token values, so
      the preview looks like the inbox in both themes. This also covers the communiqué signature
-     palette (`var BL=…` ~L6697) and the `background:#fff` preview sheets around ~L6806 — leave
-     those literals as is.
+     palette (`var BL=…` in `commSignatureBlock()`, ~L6620), the `background:#fff` preview sheets
+     in the communiqué preview (~L6729–6730) and the welcome-email preview (~L2111). Leave those
+     literals as they are. Other `background:#fff` in `Scripts.html` (~L1656, ~L2479, ~L5155) are
+     **not** previews and get swept.
    - Print / PDF windows (`openPrintHTML()`): separate document, always light.
    - Member photos and the gold logo images.
 9. **Native controls follow the theme.** `color-scheme` is set on `:root` per theme so date
@@ -165,8 +216,12 @@ inside `color-mix` as a darkening operand is the one permitted literal.
 
 `.view-mode-toggle button.active`, `.seg-control button.active`, `.comm-subtab.is-active`,
 `.comm-mode-btn.is-active` use a light chip on a `--paper-100` track. In dark mode `--paper` is
-*darker* than `--paper-100`, so the active chip would look sunken. Use `--surface` + `--shadow-1`
-for these "raised chip" actives. Rule 3 (ink/paper inversion) still applies to `.btn-primary`,
+*darker* than `--paper-100`, so the active chip would look sunken. `--surface` doesn't fix it
+either: dark `--surface` (`#1A1714`) is also darker than the dark track (`#211D19`). Use
+**`--seg-active`** + `--shadow-1` for these "raised chip" actives. It's `#fff` in light and
+`#3A342E` in dark, which separates from the track by 1.36:1, more than light mode's 1.18:1.
+Light-mode note: `.view-mode-toggle` and `.seg-control` change from `--paper` to `#fff`. That's
+barely visible, and it's the one accepted light-mode change in rollout step 1. Rule 3 (ink/paper inversion) still applies to `.btn-primary`,
 `.chip.active`, `.nav-item.active` and checkboxes.
 
 ## 4. Before handing back a UI change
@@ -207,7 +262,9 @@ Light values are today's `:root`. Dark values:
 --late-exc:#C9A658;--late-exc-bg:#2A2316;
 --late-unexc:#D9934A;--late-unexc-bg:#2B2015;
 --absent-exc:#A0968A;--absent-exc-bg:#28241F;
---absent-unexc:#E04D56;--absent-unexc-bg:#2E1719;
+--absent-unexc:#E8666E;--absent-unexc-bg:#2E1719;
+--seg-active:#3A342E;
+--shadow-rgb:0,0,0;--scrim-rgb:0,0,0;--gold-rgb:201,166,88;--on-inverse-rgb:237,232,221;--present-rgb:109,181,123;
 --gold-fill:#A07A32;--crimson-fill:#B6202A;
 --present-fill:#467654;--present-fill-hover:#3E6A4A;--late-exc-fill:#A07A32;--late-unexc-fill:#B36B2B;--absent-exc-fill:#6E6458;--absent-unexc-fill:#B6202A;
 --on-accent:#FFFFFF;
@@ -230,25 +287,44 @@ Light-mode values for the new tokens: `--surface:#fff; --surface-sunk:var(--pape
 `--on-inverse-ok:#A6D7B4; --on-inverse-bad:#E8A6AB;` tints/medals/wash/switch/chart = current literals;
 `--focus-ring:rgba(176,133,56,0.18); --shadow-1:0 1px 2px rgba(20,17,15,0.06); --shadow-2:0 16px 40px rgba(20,17,15,0.32); --scrim:rgba(20,17,15,0.45);`
 
+`--seg-active:#fff;` plus the light triplets in §2c.
+
 `.theme-light` must redeclare **all** of the above at light values plus `color-scheme:light`.
 
-Contrast notes: `--ink-500` on `--paper` ≈ 5.2:1; `--ink-400` ≈ 3.1:1 (same as light mode —
-muted/disabled only). White on `--gold-fill` ≈ 3.5:1 in both themes, unchanged from today.
+Contrast (measured, WCAG 2.x):
+
+| Pair | Light | Dark |
+| ------ | ------- | ------ |
+| `--ink-500` on `--paper` | 5.71 | 5.06 |
+| `--ink-400` on `--paper` (muted / disabled only) | 3.45 | 3.06 |
+| `--ink-400` on `--paper-100` | 3.14 | 2.74 ⚠ (muted only, never body text) |
+| white on `--gold-fill` | 3.36 | 3.94 (pre-existing: large / bold text only) |
+| white on `--late-unexc-fill` | 3.47 | 4.15 |
+| white on `--present-fill` / `--absent-exc-fill` / `--crimson-fill` | 4.86 / 4.91 / 6.5 | 5.28 / 5.79 / 6.50 |
+| `--absent-unexc` on `--absent-unexc-bg` | — | 5.23 (was 4.28 with `#E04D56`) |
+| other status fg on bg | — | 5.3–6.7 |
+| `--on-inverse-muted` on `--inverse` | — | 5.74 |
 
 ## 7. Rollout
 
 1. **Tokens + plumbing** — dark block, new tokens at light values, pre-paint script,
    `getUserRole().theme`, `setThemePreference`, Appearance row. Ship with the Appearance row
-   hidden. Light mode must be pixel-identical.
+   hidden. Light mode must be pixel-identical, except the §3a segmented-toggle chip.
 2. **Page.html sweep** — ~120 hex, ~37 rgba, ~24 `#fff/white` literals; ~24
    `background:var(--ink)` and ~36 `color:var(--paper)` that need the rule-3-vs-rule-4 call.
 3. **Scripts.html sweep** — ~22 literal lines (list in §2b), plus every generated
    `background:var(--ink)` (6) / `color:var(--paper)` (11) checked against rule 4.
-4. **QA** — unhide Appearance. Check every role's port preview in both themes.
+4. **QA** — unhide Appearance. Check every role's port preview in both themes. Also check the
+   birthday colourways: their `--bday-accent` / `--accent` values are fixed hexes mixed with
+   `--paper` via `color-mix`, so the mixes go dark automatically. The white text on
+   `.bbtn--accent` still needs checking against each of the 7 accents.
 
-Lint (should return only the `:root` blocks, `.theme-light`, emails, and the signature palette):
+Lint (should return only the `:root` blocks, `.theme-light`, the email previews, and the
+signature palette). It needs `grep -P`. `rgba(var(--…-rgb), a)` and `white-space` don't match:
 
 ```bash
-grep -nE "#[0-9a-fA-F]{3,8}\b|rgba?\(|\bwhite\b" Page.html Scripts.html
+grep -nP "(?<!&)#[0-9a-fA-F]{3,8}\b|rgba?\((?!var\()|\bwhite\b(?!-)" Page.html Scripts.html
 grep -nE "(stroke|fill|stop-color)=\"#" Scripts.html Page.html
 ```
+
+Baseline on `main` @ `3411714`: 142 hits from the first command.
