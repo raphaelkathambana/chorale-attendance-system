@@ -3182,6 +3182,45 @@ function loadProfile() {
 // One renderer, two modes. View = read-only record + "Edit Profile".
 // Edit = approval banner + a single form: phone saves instantly,
 // name → "Name Change" request, sections → "Transfer" request.
+// ── Appearance (light / dark) — contract: docs/THEMING.md §1 ──
+// The theme runtime (window.ScTheme) lives in the boot script at the top of Page.html.
+// Not a data write: no roBlock(), and every role — readOnly included — may change it.
+// Hidden until the dark-mode rollout is switched on (ScTheme.enabled()).
+function appearanceRowHtml() {
+  if (!window.ScTheme || !ScTheme.enabled()) return '';
+  var cur = ScTheme.get();
+  var opt = function (v, label) {
+    return '<button type="button" class="' + (cur === v ? 'active' : '') + '" aria-pressed="' + (cur === v) + '" onclick="setAppearance(\'' + v + '\')">' + label + '</button>';
+  };
+  return '<div id="appearanceRow" style="margin-top:18px;padding-top:16px;border-top:1px solid var(--paper-200);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">'
+    +   '<div>'
+    +     '<div style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-500);letter-spacing:.1em">APPEARANCE</div>'
+    +     '<div style="font-size:11px;color:var(--ink-400);margin-top:2px">Saved to your account</div>'
+    +   '</div>'
+    +   '<div class="seg-control" role="group" aria-label="Appearance">' + opt('system', 'System') + opt('light', 'Light') + opt('dark', 'Dark') + '</div>'
+    + '</div>';
+}
+
+function refreshAppearanceRow() {
+  var row = document.getElementById("appearanceRow");
+  if (row) row.outerHTML = appearanceRowHtml();
+}
+
+// Applies instantly, then saves; a failed save rolls the theme back.
+function setAppearance(pref) {
+  if (!window.ScTheme || pref === ScTheme.get()) return;
+  var prev = ScTheme.get();
+  ScTheme.use(pref);
+  refreshAppearanceRow();
+  google.script.run
+    .withFailureHandler(function (e) {
+      ScTheme.use(prev);
+      refreshAppearanceRow();
+      showToast("Couldn't save your appearance setting: " + (e && e.message ? e.message : e), "error");
+    })
+    .setThemePreference(pref);
+}
+
 function renderProfile() {
   var box = document.getElementById("profileContent");
   if (!box || !profileData) return;
@@ -3278,6 +3317,7 @@ function renderProfile() {
           ? 'Your access is view only, so this record can\u2019t be edited from here.'
           : 'Tap ✎ on your photo to change it. Phone updates instantly; faculty, course and year of study go to an admin for approval.')
       + '</div>'
+      + appearanceRowHtml()
       + '<div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--paper-200)">'
       +   '<button class="btn btn-secondary btn-block" onclick="signOut()" style="color:var(--crimson-600)">Sign out</button>'
       +   '<div style="margin-top:8px;font-size:10.5px;color:var(--ink-400);line-height:1.5;text-align:center">'
@@ -3876,6 +3916,8 @@ var adminTabs  = [{ id: "record", label: "Record" }, { id: "sessions", label: "S
 var memberTabs = [{ id: "myatt", label: "My attendance", short: "Attendance" }];
 
 google.script.run.withSuccessHandler(function (r) {
+  // Theme first: the server's saved preference overrides the pre-paint hint.
+  if (window.ScTheme) ScTheme.fromServer(r.theme);
   userRole = r.role;
   userName = r.name;
   userEmail = r.email || "";

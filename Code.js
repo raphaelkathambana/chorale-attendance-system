@@ -482,7 +482,7 @@ function getUserRole() {
   var ss = getSpreadsheet_();
   var a = getAccess_(ss);
   if (a.role === "unknown" && a.email) {
-    return { role: "unknown", email: a.email, name: "", groups: [], adminContact: ADMIN_CONTACT_EMAIL };
+    return { role: "unknown", email: a.email, name: "", groups: [], adminContact: ADMIN_CONTACT_EMAIL, theme: readThemePreference_() };
   }
   // Backward compatible: role "admin" | "member" as before, PLUS the new tiers
   // "sectionAdmin" | "elevated" and scope fields the client can use to gate UI.
@@ -496,7 +496,9 @@ function getUserRole() {
     // Whether this account has a Members row at all. An oversight account has no
     // roster entry, so it never appears on a register and has no personal
     // attendance page - the UI should hide "My attendance" when this is false.
-    isMember: !!findMemberByEmail_(ss, (a.email || "").toLowerCase())
+    isMember: !!findMemberByEmail_(ss, (a.email || "").toLowerCase()),
+    // Appearance preference, sent here so the client needs no extra round trip on load.
+    theme: readThemePreference_()
   };
   // Admin signed in while their OWN membership is inactive/on hiatus -> banner.
   if (a.membershipInactive) {
@@ -523,6 +525,48 @@ function getUserRole() {
     } catch(e) {}
   }
   return out;
+}
+
+// ── Appearance (light / dark theme) ─────────────────────────────────────────
+// Contract: docs/THEMING.md §1. Stored in Script Properties keyed by email — NOT
+// getUserProperties(): the web app runs as USER_DEPLOYING, so user properties
+// belong to the deploying account and every visitor would share one theme.
+// Only the active user's own email is used (no effective-user fallback), so a
+// session without a detectable email reads "system" and cannot write anyone's key.
+// Deliberately not role-gated: every account, including readOnly, owns its theme.
+var THEME_PREFERENCES = ["system", "light", "dark"];
+
+function themeKey_(email) {
+  return "theme_" + String(email).trim().toLowerCase();
+}
+
+function activeEmailForTheme_() {
+  try { return Session.getActiveUser().getEmail() || ""; } catch (e) { return ""; }
+}
+
+function readThemePreference_() {
+  var email = activeEmailForTheme_();
+  if (!email) return "system";
+  try {
+    var v = PropertiesService.getScriptProperties().getProperty(themeKey_(email));
+    return THEME_PREFERENCES.indexOf(v) !== -1 ? v : "system";
+  } catch (e) { return "system"; }
+}
+
+function getThemePreference() {
+  return readThemePreference_();
+}
+
+function setThemePreference(pref) {
+  pref = String(pref || "").toLowerCase();
+  if (THEME_PREFERENCES.indexOf(pref) === -1) throw new Error("Unknown theme: " + pref);
+  var email = activeEmailForTheme_();
+  if (!email) throw new Error("Could not detect your email.");
+  var props = PropertiesService.getScriptProperties();
+  // "system" is the default, so it is stored as the absence of a key.
+  if (pref === "system") props.deleteProperty(themeKey_(email));
+  else props.setProperty(themeKey_(email), pref);
+  return { success: true, theme: pref };
 }
 
 /**

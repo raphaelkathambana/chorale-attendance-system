@@ -7,6 +7,19 @@ preference endpoints to `Code.gs`. Read this before changing any colour.
 token block in `Page.html` `:root` is the implementation. If the two disagree, fix one of them —
 don't fork the rules.
 
+| Rollout step (§7) | State |
+| ------------------- | ------- |
+| 1 · Tokens + plumbing | **Done.** Tokens (light + dark), `.theme-light`, the pre-paint script with `window.ScTheme`, `theme` on `getUserRole()`, `get/setThemePreference()`, and the Appearance row on My Profile. Light mode is pixel-identical to `main` on all 12 screens tested (6 tabs at 390 px and 1440 px). |
+| 2 · Page.html sweep | Next |
+| 3 · Scripts.html sweep | — |
+| 4 · QA + switch on | — |
+
+**The rollout gate.** `DARK_READY` in the boot script at the top of `Page.html` is `false`, so
+everyone gets light, whatever their device or saved preference, and the Appearance row is hidden.
+Step 4 flips it to `true`. To preview dark mode before then, run this in the browser console
+(app frame selected), then reload:
+`localStorage.setItem("sc-theme-preview", "1")`. Remove the key to go back.
+
 ## Review changes (summary)
 
 1. **Theme travels in `getUserRole()`**, not a separate first-load call (§1).
@@ -226,8 +239,8 @@ barely visible, and it's the one accepted light-mode change in rollout step 1. R
 
 ## 4. Before handing back a UI change
 
-- Flip the theme (the Appearance control, or set `document.documentElement.dataset.theme = 'dark'`
-  in devtools) and look at every screen you touched.
+- Flip the theme (the Appearance control, `ScTheme.use("dark")` in the console, or the preview key
+  above while the gate is closed) and look at every screen you touched.
 - Search your diff for `#`, `rgb`, `white` and `fff` in colour positions — rule 1.
 - Dark cards: still dark in light mode, still readable in dark mode — rule 4.
 - Status pills, the probation bars and the trend chart read clearly in both.

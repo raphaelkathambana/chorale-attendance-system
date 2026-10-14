@@ -2,6 +2,44 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script>
+/* THEME BOOT — keep this the first script in <head> (only the charset meta goes above it). Contract: docs/THEMING.md.
+   Sets <html data-theme="light|dark"> before first paint from a localStorage hint
+   (falls back to the system setting); getUserRole().theme then corrects it via
+   ScTheme.fromServer(). Storage can be blocked in the Apps Script iframe, so every
+   access is wrapped. DARK_READY is the rollout gate (THEMING.md §7): while false the
+   app always renders light, unless localStorage "sc-theme-preview" is "1". */
+(function () {
+  var DARK_READY = false;
+  var KEY = "sc-theme", PREVIEW_KEY = "sc-theme-preview";
+  var root = document.documentElement;
+  var mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  function read(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function write(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function valid(p) { return p === "system" || p === "light" || p === "dark"; }
+  function enabled() { return DARK_READY || read(PREVIEW_KEY) === "1"; }
+  var pref = valid(read(KEY)) ? read(KEY) : "system";
+  function apply() {
+    var t = !enabled() ? "light" : pref === "system" ? (mq && mq.matches ? "dark" : "light") : pref;
+    root.setAttribute("data-theme", t);
+    root.style.colorScheme = t;
+  }
+  apply();
+  if (mq) {
+    var onSystemChange = function () { if (pref === "system") apply(); };
+    if (mq.addEventListener) mq.addEventListener("change", onSystemChange); else if (mq.addListener) mq.addListener(onSystemChange);
+  }
+  window.ScTheme = {
+    get: function () { return pref; },          // "system" | "light" | "dark"
+    resolved: function () { return root.getAttribute("data-theme"); },
+    enabled: enabled,                            // false → Appearance control stays hidden
+    // Apply locally and remember the hint. Persisting is the caller's job (setThemePreference).
+    use: function (p) { if (!valid(p)) return; pref = p; write(KEY, p); apply(); },
+    // The server value (getUserRole().theme) wins over the hint.
+    fromServer: function (p) { if (valid(p)) this.use(p); }
+  };
+})();
+</script>
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Strathmore Chorale · Attendance</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -20,7 +58,14 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── 1. TOKENS ──────────────────────────────────────────────────────────── */
-:root {
+/* THEMING — read docs/THEMING.md before touching colour.
+   · Shade tokens (--ink-*, --paper-*, --gold-*, --crimson-*, status pairs) flip in dark mode.
+   · Role tokens (--surface, --inverse*, --on-*, *-fill, tints, chart, *-rgb) keep their job.
+   · No colour literals outside these blocks: use var(--…), and rgba(var(--…-rgb), a) for washes.
+   · A new token needs its dark value in :root[data-theme="dark"] in the same edit.
+   · .theme-light shares this block, so an email preview wrapped in it stays light in dark mode. */
+:root, .theme-light {
+  color-scheme: light;
   /* Ink (text/structure) */
   --ink: #14110F; --ink-700: #2A2522; --ink-600: #4A4239; --ink-500: #6B6058;
   --ink-400: #8C8478; --ink-300: #B5AC9D; --ink-200: #D6CFC1;
@@ -36,15 +81,73 @@
   --late-unexc: #C57730;     --late-unexc-bg: #F7E2CF;
   --absent-exc: #7A6F62;     --absent-exc-bg: #E8DEC6;
   --absent-unexc: #B6202A;   --absent-unexc-bg: #F6E1DE;
+  /* Fills under --on-accent text — mid-tone in both themes (THEMING.md §2a) */
+  --gold-fill: #B08538; --crimson-fill: #B6202A;
+  --present-fill: #4A7C59; --present-fill-hover: #3E6A4A;
+  --late-exc-fill: #B08538; --late-unexc-fill: #C57730; --absent-exc-fill: #7A6F62; --absent-unexc-fill: #B6202A;
+  --on-accent: #fff;
+  /* Surfaces */
+  --surface: #fff; --surface-sunk: var(--paper-100); --seg-active: #fff;
+  /* RGB triplets for alpha washes: rgba(var(--shadow-rgb), 0.22) (THEMING.md §2c) */
+  --shadow-rgb: 20,17,15; --scrim-rgb: 43,38,32; --gold-rgb: 176,133,56;
+  --on-inverse-rgb: 243,233,206; --present-rgb: 74,124,89;
+  --shadow-1: 0 1px 2px rgba(var(--shadow-rgb), 0.06); --shadow-2: 0 16px 40px rgba(var(--shadow-rgb), 0.32);
+  --scrim: rgba(var(--scrim-rgb), 0.45); --focus-ring: rgba(var(--gold-rgb), 0.18);
+  /* Dark cards — dark in light mode, raised in dark mode (THEMING.md §4, §4a) */
+  --inverse: #14110F; --inverse-raised: rgba(var(--on-inverse-rgb), 0.08);
+  --on-inverse: #FBF7EE; --on-inverse-muted: #B5AC9D; --on-inverse-accent: #E2C988;
+  --on-inverse-line: rgba(var(--on-inverse-rgb), 0.18);
+  --on-inverse-ok: #A6D7B4; --on-inverse-bad: #E8A6AB;
+  /* Section tints (avatars, chips) */
+  --tint-soprano: #F3E9CE; --tint-alto: #F0E0CE; --tint-tenor: #ECE7DE; --tint-bass: #E1ECDF;
+  --tint-choir: #F3E9CE; --tint-band: #F0E0CE; --tint-orchestra: #E1ECDF;
+  /* One-offs from the literal audit (THEMING.md §2b) */
+  --medal-silver: #A9A39A; --medal-silver-ink: #7E7972; --medal-bronze: #A56A3A;
+  --crimson-wash: #F1D6D2; --switch-on: #2A7D52;
+  /* Trend chart — .trend-card sits on --paper, so the dot ring is --paper */
+  --chart-grid: #E8DEC6; --chart-label: #8C8478; --chart-line: #B08538; --chart-dot-ring: var(--paper); --chart-value: #14110F;
   /* Legacy aliases (so any leftover var(--primary…) refs keep working) */
   --primary: var(--ink); --primary-hover: var(--ink-700); --primary-light: var(--paper-100);
-  --bg: var(--paper); --card: #fff; --border: var(--paper-200);
+  --bg: var(--paper); --card: var(--surface); --border: var(--paper-200);
   --text: var(--ink); --text-muted: var(--ink-500);
   --radius: 10px;
   /* Type */
   --f-display: "Instrument Serif", "Cormorant Garamond", Georgia, serif;
   --f-sans:    "Manrope", ui-sans-serif, system-ui, sans-serif;
   --f-mono:    "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
+}
+
+/* Dark values. Only colour tokens change here; type/radius stay in the block above. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #EDE8DD; --ink-700: #D6CFC1; --ink-600: #B5AC9D; --ink-500: #8C8478;
+  --ink-400: #6B6058; --ink-300: #504840; --ink-200: #3A342E;
+  --paper: #141210; --paper-100: #211D19; --paper-200: #2E2924; --paper-300: #403A33;
+  --crimson: #E04D56; --crimson-600: #CF2D37; --crimson-500: #E8666E; --crimson-100: #2E1719;
+  --gold: #C9A658; --gold-700: #D9BC72; --gold-500: #B39350; --gold-300: #5E4E25; --gold-100: #2A2316;
+  --present: #6DB57B;        --present-bg: #172A1C;
+  --late-exc: #C9A658;       --late-exc-bg: #2A2316;
+  --late-unexc: #D9934A;     --late-unexc-bg: #2B2015;
+  --absent-exc: #A0968A;     --absent-exc-bg: #28241F;
+  --absent-unexc: #E8666E;   --absent-unexc-bg: #2E1719;
+  --gold-fill: #A07A32; --crimson-fill: #B6202A;
+  --present-fill: #467654; --present-fill-hover: #3E6A4A;
+  --late-exc-fill: #A07A32; --late-unexc-fill: #B36B2B; --absent-exc-fill: #6E6458; --absent-unexc-fill: #B6202A;
+  --on-accent: #fff;
+  --surface: #1A1714; --surface-sunk: #100E0C; --seg-active: #3A342E;
+  --shadow-rgb: 0,0,0; --scrim-rgb: 0,0,0; --gold-rgb: 201,166,88;
+  --on-inverse-rgb: 237,232,221; --present-rgb: 109,181,123;
+  --shadow-1: 0 1px 2px rgba(var(--shadow-rgb), 0.4); --shadow-2: 0 16px 40px rgba(var(--shadow-rgb), 0.55);
+  --scrim: rgba(var(--scrim-rgb), 0.6); --focus-ring: rgba(var(--gold-rgb), 0.30);
+  --inverse: #26211C; --inverse-raised: rgba(var(--on-inverse-rgb), 0.06);
+  --on-inverse: #EDE8DD; --on-inverse-muted: #A39A8C; --on-inverse-accent: #D9BC72;
+  --on-inverse-line: rgba(var(--on-inverse-rgb), 0.12);
+  --on-inverse-ok: #A6D7B4; --on-inverse-bad: #E8A6AB;
+  --tint-soprano: #302818; --tint-alto: #302218; --tint-tenor: #2A2820; --tint-bass: #1E2A20;
+  --tint-choir: #302818; --tint-band: #302218; --tint-orchestra: #1E2A20;
+  --medal-silver: #B5AFA6; --medal-silver-ink: #B5AFA6; --medal-bronze: #C08050;
+  --crimson-wash: #3A1C1E; --switch-on: #3C9A68;
+  --chart-grid: #2E2924; --chart-label: #8C8478; --chart-line: #C9A658; --chart-value: #EDE8DD;
 }
 
 /* ── 2. BASE ────────────────────────────────────────────────────────────── */
