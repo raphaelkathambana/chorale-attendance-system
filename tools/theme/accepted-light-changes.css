@@ -1,0 +1,6 @@
+/*
+ * Light-mode changes the dark-mode work makes ON PURPOSE, relative to main.
+ * render.cjs injects this into the BASE render before comparing, so these differences
+ * don't count as regressions. Each rule must name the THEMING.md section that accepts it.
+ * Once the dark-mode branch is merged into main, empty this file: main then already has them.
+ */
