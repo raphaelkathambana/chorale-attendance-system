@@ -56,13 +56,14 @@ function historyFor(name) {
   return { records, stats, profilePhoto: "", groups: person.groups, name: person.name };
 }
 
+const SESSIONS_10 = SESSION_DATES.concat(["2026-10-11", "2026-10-12"]);
 const probationInfo = (name, seq) => {
   const done = seq.length, att = seq.filter(attended).length;
   return {
     name, probationStart: "2026-09-01", attended: att, totalSessions: done, maxSessions: 10, remaining: 10 - done,
     rate: done ? Math.round((att / done) * 100) : 0, onTrack: att >= Math.ceil(done * 0.7), threshold: 70, required: 7,
-    complete: done >= 10, passed: false, lastSessionDate: SESSION_DATES[done - 1] || "",
-    sessionSequence: seq.map((s, k) => ({ date: SESSION_DATES[k], status: s, sessionKey: "Choir", groups: ["Choir"] })),
+    complete: done >= 10, passed: false, lastSessionDate: SESSIONS_10[done - 1] || "",
+    sessionSequence: seq.map((s, k) => ({ date: SESSIONS_10[k], status: s, sessionKey: "Choir", groups: ["Choir"] })),
     pendingSlots: 10 - done, scopedSection: null, groups: ["Choir"], profilePhoto: "",
   };
 };
@@ -179,7 +180,8 @@ function memberList() {
 }
 
 function fixtures(scenario) {
-  const isMember = scenario === "member";
+  const isMember = scenario === "member" || scenario === "member-failed";
+  const failed = scenario === "member-failed";
   const role = isMember
     ? { role: "member", email: SELF.email, name: SELF.name, groups: SELF.groups, section: "", repGroup: "", allowedSections: [], isAdminLike: false, readOnly: false, isMember: true }
     : { role: "admin", email: SELF.email, name: SELF.name, groups: SELF.groups, section: "", repGroup: "", allowedSections: ["Choir", "Band", "Orchestra"], isAdminLike: true, readOnly: false, isMember: true };
@@ -205,7 +207,7 @@ function fixtures(scenario) {
     getSessionDetail: sessionDetail,
     getGroupDashboard: groupDashboard,
     getScoreboard: scoreboard,
-    getProbationDashboard: () => [probationInfo("Joy Wambui", [AU, P, AU, AE, AU]), probationInfo("George Kamau", [P, LU, P, P, LU, P, P]), probationInfo("Ian Mwangi", [P, P, P, P, P, P, P, P, P])],
+    getProbationDashboard: () => [probationInfo("Joy Wambui", [AU, P, AU, AE, AU]), probationInfo("George Kamau", [P, LU, P, P, LU, P, P]), probationInfo("Ian Mwangi", [P, P, P, P, P, P, P, P, P, P])],
     getProbationOutcomeFlags: () => [],
     getApologyQueue: apologyQueue,
     getReinstatementFlags: () => [{ name: "Victor Otieno", groups: ["Choir"], currentStreak: 1, reason: "Removed for consecutive unexcused absences, but the current streak is now 1 after an approved apology." }],
@@ -213,8 +215,9 @@ function fixtures(scenario) {
       { rowIndex: 3, date: "2026-09-30", name: "Dennis Ouma", description: "Disruptive during rehearsal", recordedBy: "Test Admin", points: -2 }],
     getRewardCategories: () => [{ category: "Perfect attendance (month)", points: 5, variable: false }, { category: "Extra effort", points: "", variable: true }],
     getRewardList: () => [{ rowIndex: 2, date: "2026-10-01", name: "Amani Wanjiru", category: "Perfect attendance (month)", description: "[auto:perfect] September", points: 5, recordedBy: "System" }],
-    getMyAttendance: () => ({ name: SELF.name, email: SELF.email, groups: SELF.groups, roles: SELF.roles, probation: false, probationPassed: true, probationFailed: false,
-      probationPenalty: 0, probationAcknowledged: true, probationInfo: null, onboardingCompleted: true, history: historyFor("Brian Otieno") }),
+    getMyAttendance: () => ({ name: SELF.name, email: SELF.email, groups: SELF.groups, roles: SELF.roles, probation: false, probationPassed: !failed, probationFailed: failed,
+      probationPenalty: failed ? -5 : 0, probationAcknowledged: !failed, probationInfo: failed ? probationInfo(SELF.name, [AU, P, AU, AE, AU, AU, P, AU, AE, AU]) : null,
+      onboardingCompleted: true, history: historyFor(failed ? "Victor Otieno" : "Brian Otieno") }),
     getMyApologies: () => apologyQueue().slice(1, 4),
     getMyProfile: () => ({ name: SELF.name, email: SELF.email, phone: "+254 700 000000", admNo: "140001", groups: SELF.groups, roles: SELF.roles, profilePhoto: "",
       details: { gender: "F", courseFaculty: "SCES", courseName: "BBIT", yearOfStudy: "2", nationality: "Kenyan" } }),

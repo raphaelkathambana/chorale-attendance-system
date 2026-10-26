@@ -11,7 +11,7 @@
  *   dark    The working tree with dark mode previewed. Not compared against anything — these
  *           are the screenshots to review by eye (index.html shows light and dark side by side).
  *
- *   node tools/theme/render.cjs [--base <git-ref>] [--out <dir>] [--scenario admin|member]
+ *   node tools/theme/render.cjs [--base <git-ref>] [--out <dir>] [--scenario admin|member|member-failed]
  *                               [--screens record,sessions,…] [--no-base]
  *
  * Exit code 1 on any unexpected light difference or a failed gated check.
@@ -40,6 +40,8 @@ const SCREENS = {
     { id: "session-detail", go: "switchTab('sessions'); openSession('2026-10-07', 'Choir')" },
     { id: "members", go: "switchTab('members')" },
     { id: "member-detail", go: "switchTab('members'); selectMember('Victor Otieno')" },
+    { id: "member-history", go: "switchTab('members'); setMembersMode('member'); loadMemberHistory('Brian Otieno')" },
+    { id: "scoreboard", go: "switchTab('members'); setMembersMode('scoreboard')" },
     { id: "probation", go: "switchTab('probation')" },
     { id: "requests", go: "switchTab('requests')" },
     { id: "dashboard", go: "switchTab('dashboard')" },
@@ -47,6 +49,10 @@ const SCREENS = {
     { id: "myatt", go: "switchTab('myatt')" },
     { id: "apology", go: "switchTab('myatt'); openApology('session')" },
     { id: "profile", go: "openProfile()" },
+    { id: "members-add", go: "switchTab('members'); setMembersMode('add'); document.getElementById('amName').value = 'Wanjiku Mwende'; " +
+        "document.getElementById('amEmail').value = 'wanjiku.mwende@example.org'; renderAddMemberPreview()" },
+    { id: "post-save", go: "switchTab('record'); showPostSubmit({ summary: { Choir: { 'Present': 8, 'Late Excused': 1, 'Absent Unexcused': 2 } }, " +
+        "probationEvals: [{ name: 'Ian Mwangi', result: 'passed_clean', attended: 9, rate: 90 }, { name: 'Joy Wambui', result: 'Failed', attended: 3, rate: 30, penalty: -5 }] })" },
   ],
   member: [
     { id: "myatt", go: "switchTab('myatt')" },
@@ -54,6 +60,7 @@ const SCREENS = {
     { id: "profile", go: "openProfile()" },
   ],
 };
+SCREENS["member-failed"] = SCREENS.member; // a member whose probation failed: the crimson restart card
 
 function parseArgs(argv) {
   const o = { base: "origin/main", out: null, scenario: "admin", screens: null, noBase: false };
