@@ -241,7 +241,8 @@ barely visible, and it's the one accepted light-mode change in rollout step 1. R
 
 - Flip the theme (the Appearance control, `ScTheme.use("dark")` in the console, or the preview key
   above while the gate is closed) and look at every screen you touched.
-- Search your diff for `#`, `rgb`, `white` and `fff` in colour positions — rule 1.
+- Run `node tools/theme/lint.cjs --since <last commit>`: no new literals, and every judgment call
+  decided (rule 1, §7a).
 - Dark cards: still dark in light mode, still readable in dark mode — rule 4.
 - Status pills, the probation bars and the trend chart read clearly in both.
 
@@ -332,12 +333,33 @@ Contrast (measured, WCAG 2.x):
    `--paper` via `color-mix`, so the mixes go dark automatically. The white text on
    `.bbtn--accent` still needs checking against each of the 7 accents.
 
-Lint (should return only the `:root` blocks, `.theme-light`, the email previews, and the
-signature palette). It needs `grep -P`. `rgba(var(--…-rgb), a)` and `white-space` don't match:
+## 7a. Tools
 
-```bash
-grep -nP "(?<!&)#[0-9a-fA-F]{3,8}\b|rgba?\((?!var\()|\bwhite\b(?!-)" Page.html Scripts.html
-grep -nE "(stroke|fill|stop-color)=\"#" Scripts.html Page.html
-```
+Dev-only tooling in `tools/theme/`. These are `.cjs` files, so `clasp push` never uploads them.
 
-Baseline on `main` @ `3411714`: 142 hits from the first command.
+| Command | Checks |
+| --------- | -------- |
+| `node tools/theme/lint.cjs` | Colour literals outside allowed regions (rule 1). Exit 1 if any. `--summary` for counts. |
+| `node tools/theme/lint.cjs --since <sha>` | Literals on lines added since `<sha>`, plus the judgment calls (rules 3–5, §3a). |
+| `node tools/theme/render.cjs` | Light pixel-identical to `origin/main` (12 screens × phone/desktop), the `DARK_READY` gate holds, and dark screenshots for review. |
+
+**Allowed regions** are marked in the source rather than listed in the tool, so they move with
+the code: `theme-lint: off` … `theme-lint: on` around a block, or `theme-lint: allow` on one
+line. Use them only for the token blocks and rule 8 exceptions.
+
+`tools/theme/accepted-light-changes.css` lists light-mode changes this work makes on purpose
+(e.g. §3a). The render check applies it to the `main` render before comparing. Empty it once
+dark mode is merged into `main`.
+
+Lint baseline (`lint.cjs --summary`) on `main` @ `8ea7d54`, with the stage 1 token blocks not
+yet marked: Page.html 216 hex + 37 rgb, Scripts.html 39 hex.
+
+## 8. Sync log
+
+New UI keeps landing on `main` without dark-mode support. The procedure for catching up is the
+`dark-mode-sync` skill (`.claude/skills/dark-mode-sync/SKILL.md`). Each sync adds a row here; the
+newest row's commit is `$LAST` for the next sync.
+
+| Date | `main` commit synced | New on main | Notes / judgment calls |
+| ------ | ---------------------- | ------------- | ------------------------ |
+| 2026-10-14 | `8ea7d54` | Emergency apology expiry, sessions loading state, button states, member roster styling | Stage 1 only: tokens and plumbing, no sweep yet. Lines added in `8ea7d54` are covered by the stage 2–3 sweep. |
