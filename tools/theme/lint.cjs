@@ -32,9 +32,9 @@ const LITERAL_RULES = [
 // Patterns that are valid code but need a human decision when they are NEW (THEMING.md §3).
 const JUDGMENT_RULES = [
   { id: "ink-background", re: /background(?:-color)?\s*:\s*var\(--ink(?:-\d+)?\)/g,
-    ask: "Selected/primary state that should invert (rule 3: keep) or a card that is dark by design (rule 4: --inverse)?" },
+    ask: "Selected/primary state that should invert (rule 3: keep) or a card that is dark by design (rule 4: background --inverse + add it to the light-token island list)?" },
   { id: "paper-text", re: /(?<![-\w])color\s*:\s*var\(--paper(?:-\d+)?\)/g,
-    ask: "Text on an inverting state (rule 3: keep) or on a dark card (rule 4: --on-inverse)?" },
+    ask: "Text on an inverting state (rule 3: keep), inside a dark-card island (rule 4: keep), or on a colour fill (--on-inverse / --on-accent)?" },
   { id: "fg-as-fill", re: /background(?:-color)?\s*:\s*var\(--(?:gold|crimson|present|late-exc|late-unexc|absent-exc|absent-unexc)\)/g,
     ask: "Filled control under --on-accent text? Use the *-fill token (§2a). A small dot or bar can keep the fg token." },
   { id: "active-chip", re: /(?:\.active|is-active|aria-pressed)[^{]*\{[^}]*background\s*:\s*var\(--(?:paper|surface)\)/g,
@@ -109,6 +109,10 @@ function main() {
     const scope = added ? (added[file] || new Set()) : null;
     lines.forEach((line, i) => {
       const n = i + 1;
+      // A token defined as itself is a cycle: the value becomes invalid and the colour silently
+      // falls back. Checked everywhere, token blocks included (a find-and-replace can cause it).
+      const cyc = /--([\w-]+)\s*:\s*var\(\s*--\1\s*[,)]/.exec(line);
+      if (cyc) literals.push({ file, n, line, rule: { id: "token-cycle", fix: "restore the token's real value" }, match: cyc[0] });
       if (skip.has(n) || (scope && !scope.has(n))) return;
       for (const h of matchRules(LITERAL_RULES, line)) literals.push({ file, n, line, ...h });
       if (scope) for (const h of matchRules(JUDGMENT_RULES, line)) judgments.push({ file, n, line, ...h });
