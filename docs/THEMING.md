@@ -11,9 +11,8 @@ don't fork the rules.
 | ------------------- | ------- |
 | 1 · Tokens + plumbing | **Done.** Tokens (light + dark), `.theme-light`, the pre-paint script with `window.ScTheme`, `theme` on `getUserRole()`, `get/setThemePreference()`, and the Appearance row on My Profile. Light mode is pixel-identical to `main` on all 12 screens tested (6 tabs at 390 px and 1440 px). |
 | 2 · Page.html sweep | **Done.** 0 colour literals left in `Page.html` (`lint.cjs`). Rule 4 is now implemented as light-token islands (see the rule). Light mode is pixel-identical to `main` on 24 renders (12 screens × phone/desktop), apart from the accepted §3a chip. |
-| 3 · Scripts.html sweep | Next. 39 literals left: avatar tints, trend chart SVG, inline `#fff`, the welcome/communiqué previews. Plus the inline-styled dark cards (`background:var(--ink)` in generated HTML), which need `class="theme-inverse"`. |
-| 3 · Scripts.html sweep | — |
-| 4 · QA + switch on | — |
+| 3 · Scripts.html sweep | **Done.** 0 colour literals in either file (`lint.cjs`). Section tints, the trend chart, badges and surfaces are on tokens. The two generated dark cards (By-member stat card, post-save tally) carry `class="theme-inverse"`. The welcome-email preview's header and body carry `class="theme-light"`, and the signature palette has an allow marker. Dark `--crimson-600` lightened for legibility (§6). Light mode is pixel-identical to `main` on 44 renders (3 scenarios, 22 screens, phone and desktop). |
+| 4 · QA + switch on | **Next.** Review on a real device in both themes, then set `DARK_READY = true` in `Page.html`, which also shows the Appearance row. |
 
 **The rollout gate.** `DARK_READY` in the boot script at the top of `Page.html` is `false`, so
 everyone gets light, whatever their device or saved preference, and the Appearance row is hidden.
@@ -213,7 +212,9 @@ inside `color-mix` as a darkening operand is the one permitted literal.
 
    Islands today: `.card-dark`, `.dash-hero`, `.sess-tally`, `.tally-strip`, `.apol-strip`,
    `.trend-tip`, `.podium-block`, `.changes-bar`, `.hero-rank`, the meeting `.type-badge`,
-   `.dash-busy-pill` (not its `.dash-busy-wait` variant), the failed-probation badge.
+   `.dash-busy-pill` (not its `.dash-busy-wait` variant), the failed-probation badge. Generated
+   with `class="theme-inverse"`: the By-member stat card (`renderMemberHistory`) and the
+   post-save tally (`showPostSubmit`).
    Quick test: *"Should this be dark even in light mode?"* Yes → island. It's a selected state
    → rule 3.
    *Why islands instead of `--on-inverse-*` everywhere (the earlier draft of this rule):* dark
@@ -232,13 +233,14 @@ inside `color-mix` as a darkening operand is the one permitted literal.
 8. **Things that never theme:**
    - Email templates (`EmailLayout.html`, `SignatureFooter.html`, `welcome-invite.html`, …) and
      the communiqué signature block (`commSignatureBlock()`): they render in the recipient's inbox.
-   - **In-app previews of emails** (welcome-email preview in Add member, communiqué preview): wrap
-     the preview root in `class="theme-light"`. That class re-declares the light token values, so
-     the preview looks like the inbox in both themes. This also covers the communiqué signature
-     palette (`var BL=…` in `commSignatureBlock()`, ~L6620), the `background:#fff` preview sheets
-     in the communiqué preview (~L6729–6730) and the welcome-email preview (~L2111). Leave those
-     literals as they are. Other `background:#fff` in `Scripts.html` (~L1656, ~L2479, ~L5155) are
-     **not** previews and get swept.
+   - **In-app previews of emails** render as the inbox shows them in both themes, while the
+     preview chrome around them (the "live preview" bar) stays themed. The email parts are
+     light-token islands: `class="theme-light"` on the welcome-email header and body
+     (`renderAddMemberPreview`), and `#communiquePreview .cp-sheet` (in the `Page.html` island
+     list) for the communiqué letterhead. Inside them use tokens as usual: `--surface` is white
+     and `--ink` is dark there. Light islands also reset `color`, because inherited text colour
+     doesn't re-resolve. The signature palette (`var BL=…` in `commSignatureBlock()`) is the
+     email's brand colours and carries a `theme-lint: allow` marker.
    - Print / PDF windows (`openPrintHTML()`): separate document, always light.
    - Member photos and the gold logo images.
 9. **Native controls follow the theme.** `color-scheme` is set on `:root` per theme so date
@@ -296,7 +298,7 @@ Light values are today's `:root`. Dark values:
 --paper:#141210;--paper-100:#211D19;--paper-200:#2E2924;--paper-300:#403A33;
 --surface:#1A1714;--surface-sunk:#100E0C;--card:var(--surface);
 --gold:#C9A658;--gold-700:#D9BC72;--gold-500:#B39350;--gold-300:#5E4E25;--gold-100:#2A2316;
---crimson:#E04D56;--crimson-600:#CF2D37;--crimson-500:#E8666E;--crimson-100:#2E1719;
+--crimson:#E04D56;--crimson-600:#EC7078;--crimson-500:#E8666E;--crimson-100:#2E1719;
 --present:#6DB57B;--present-bg:#172A1C;
 --late-exc:#C9A658;--late-exc-bg:#2A2316;
 --late-unexc:#D9934A;--late-unexc-bg:#2B2015;
@@ -348,6 +350,7 @@ Contrast (measured, WCAG 2.x):
 | `--absent-unexc` on `--absent-unexc-bg` | — | 5.23 (was 4.28 with `#E04D56`) |
 | other status fg on bg | — | 5.3–6.7 |
 | `--on-inverse-muted` on `--inverse` | — | 5.74 |
+| `--crimson-600` text on `--crimson-100` / `--paper` / `--crimson-wash` | 6.58 (on `-100`) | 5.71 / 6.37 / 5.24. Was 3.26 / 3.63 / 2.99 with `#CF2D37`; changed in stage 3. Like `--gold-700`, the text shade must be the *lighter* one in dark mode. |
 
 ## 7. Rollout
 
@@ -371,7 +374,7 @@ Dev-only tooling in `tools/theme/`. These are `.cjs` files, so `clasp push` neve
 | --------- | -------- |
 | `node tools/theme/lint.cjs` | Colour literals outside allowed regions (rule 1). Exit 1 if any. `--summary` for counts. |
 | `node tools/theme/lint.cjs --since <sha>` | Literals on lines added since `<sha>`, plus the judgment calls (rules 3–5, §3a). |
-| `node tools/theme/render.cjs` | Light pixel-identical to `origin/main` (12 screens × phone/desktop), the `DARK_READY` gate holds, and dark screenshots for review. |
+| `node tools/theme/render.cjs [--scenario admin\|member\|member-failed]` | Light pixel-identical to `origin/main` (admin: 16 screens; member and member-failed: 3 each; phone and desktop), the `DARK_READY` gate holds, and dark screenshots for review. |
 
 **Allowed regions** are marked in the source rather than listed in the tool, so they move with
 the code: `theme-lint: off` … `theme-lint: on` around a block, or `theme-lint: allow` on one
@@ -383,7 +386,7 @@ dark mode is merged into `main`.
 
 Lint baseline (`lint.cjs --summary`): `main` @ `8ea7d54` with the stage 1 token blocks unmarked
 had Page.html 216 hex + 37 rgb and Scripts.html 39 hex. After stage 2: **Page.html 0**,
-Scripts.html 39. The lint also flags a token defined as itself (`--x: var(--x)`), which is a
+Scripts.html 39. After stage 3: **0 in both files.** From here, any hit is new UI. The lint also flags a token defined as itself (`--x: var(--x)`), which is a
 cycle that silently invalidates the colour; a find-and-replace can introduce one.
 
 ## 8. Sync log
@@ -395,3 +398,4 @@ newest row's commit is `$LAST` for the next sync.
 | Date | `main` commit synced | New on main | Notes / judgment calls |
 | ------ | ---------------------- | ------------- | ------------------------ |
 | 2026-10-14 | `8ea7d54` | Emergency apology expiry, sessions loading state, button states, member roster styling | Stage 1 only: tokens and plumbing, no sweep yet. Lines added in `8ea7d54` are covered by the stage 2–3 sweep. |
+| 2026-10-26 | `8ea7d54` | (no new commits) | Stages 2–3 complete: all UI on `main` up to `8ea7d54` is covered, including the crimson emergency marks and member-roster styling added in that commit. Calls: dark cards → islands (rule 4 rewrite); crimson marks → `--crimson-fill` + `--on-inverse`; email previews → light islands; dark `--crimson-600` → `#EC7078`. |

@@ -17,7 +17,7 @@ procedure, and THEMING.md wins if the two disagree.
 | --------- | ------------------- |
 | `node tools/theme/lint.cjs` | Every colour literal outside the allowed regions in `Page.html` / `Scripts.html`. Once the sweep is complete this is 0. Any hit is UI with no dark equivalent. |
 | `node tools/theme/lint.cjs --since <sha>` | Literals on lines added since `<sha>`, plus **judgment calls**: new `background: var(--ink)`, `color: var(--paper)`, fg-token fills, active chips. |
-| `node tools/theme/render.cjs [--base <ref>]` | Renders 12 screens × phone/desktop with sample data (`fixtures.cjs`). Fails if light mode differs from `<ref>` (default `origin/main`) or dark mode leaks past the `DARK_READY` gate. It writes dark screenshots and an `index.html` gallery to `$TMPDIR/theme-render` (or `--out`). |
+| `node tools/theme/render.cjs [--base <ref>] [--scenario admin\|member\|member-failed]` | Renders every screen in `SCREENS` (admin: 16) × phone/desktop with sample data (`fixtures.cjs`). Fails if light mode differs from `<ref>` (default `origin/main`) or dark mode leaks past the `DARK_READY` gate. It writes dark screenshots and an `index.html` gallery to `$TMPDIR/theme-render` (or `--out`). |
 
 Allowed regions are marked in the source with `theme-lint: off` / `theme-lint: on`, or
 `theme-lint: allow` for a single line: the token blocks, email previews, and the signature palette.
@@ -64,7 +64,8 @@ Change colour only. Don't reflow markup, rename classes or reformat lines Design
 diffs keep Design's next edit merging cleanly.
 
 ### 5. Prove it
-- `node tools/theme/render.cjs`. **Every light screen must say `light identical`.** A light
+- `node tools/theme/render.cjs`, plus `--scenario member` and `--scenario member-failed` if the change
+  touches member-facing screens. **Every light screen must say `light identical`.** A light
   difference means a token was mapped to the wrong value. Fix the mapping. Only list a change in
   `tools/theme/accepted-light-changes.css` when THEMING.md explicitly accepts it.
 - Open the gallery and **look at every dark screenshot the change touches**. Common problems:

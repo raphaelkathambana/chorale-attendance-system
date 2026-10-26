@@ -134,7 +134,7 @@
   --ink: #EDE8DD; --ink-700: #D6CFC1; --ink-600: #B5AC9D; --ink-500: #8C8478;
   --ink-400: #6B6058; --ink-300: #504840; --ink-200: #3A342E;
   --paper: #141210; --paper-100: #211D19; --paper-200: #2E2924; --paper-300: #403A33;
-  --crimson: #E04D56; --crimson-600: #CF2D37; --crimson-500: #E8666E; --crimson-100: #2E1719;
+  --crimson: #E04D56; --crimson-600: #EC7078; --crimson-500: #E8666E; --crimson-100: #2E1719;
   --gold: #C9A658; --gold-700: #D9BC72; --gold-500: #B39350; --gold-300: #5E4E25; --gold-100: #2A2316;
   --present: #6DB57B;        --present-bg: #172A1C;
   --late-exc: #C9A658;       --late-exc-bg: #2A2316;
@@ -162,6 +162,10 @@
 }
 
 /* theme-lint: on */
+
+/* Email previews are light islands for text too: the tokens inside re-resolve, but an inherited
+   `color` arrives already computed from the dark page, so reset it to the island's own ink. */
+.theme-light, #communiquePreview .cp-sheet { color: var(--ink); }
 
 /* ── 2. BASE ────────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
