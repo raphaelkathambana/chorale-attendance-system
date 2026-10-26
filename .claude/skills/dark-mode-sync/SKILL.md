@@ -52,7 +52,10 @@ For each hit, apply THEMING.md §3:
 - Literal → the existing token whose *job* matches (§2, §2a–c). If no token fits, add one
   **with both light and dark values in the same edit** (rule 10), and list it in THEMING.md.
 - `background: var(--ink)`: is it a selected state (rule 3, keep) or a card that's dark by design
-  (rule 4, `--inverse` + `--on-inverse*`)? Ask: "should this be dark in light mode too?"
+  (rule 4)? Ask: "should this be dark in light mode too?" A dark card becomes a light-token
+  island: change its background to `var(--inverse)` and add its selector to the island list in
+  the `Page.html` token header. For an inline-styled card in `Scripts.html`, add
+  `class="theme-inverse"` instead. Leave its content as Design wrote it.
 - Text on a filled colour → `--on-accent` on a `*-fill` token (§2a).
 - An email preview → wrap it in `class="theme-light"` and mark its literals (rule 8).
 - SVG → `style="stroke:var(--…)"`, never `stroke="#…"` (rule 7).
@@ -65,8 +68,8 @@ diffs keep Design's next edit merging cleanly.
   difference means a token was mapped to the wrong value. Fix the mapping. Only list a change in
   `tools/theme/accepted-light-changes.css` when THEMING.md explicitly accepts it.
 - Open the gallery and **look at every dark screenshot the change touches**. Common problems:
-  a light card on the dark page, dark text on a dark fill, a dark card that disappeared (§4a
-  border), unreadable status pills.
+  a light card on the dark page, dark text on a dark fill, a dark card that turned light (it's
+  missing from the island list), unreadable status pills.
 - Check the render log at the end of the output. A new endpoint or field Design added appears
   as a gap: extend `tools/theme/fixtures.cjs`. A new tab or screen: add it to `SCREENS` in
   `render.cjs`. A screen you can't render is a screen you haven't checked.

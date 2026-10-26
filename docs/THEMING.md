@@ -10,7 +10,8 @@ don't fork the rules.
 | Rollout step (§7) | State |
 | ------------------- | ------- |
 | 1 · Tokens + plumbing | **Done.** Tokens (light + dark), `.theme-light`, the pre-paint script with `window.ScTheme`, `theme` on `getUserRole()`, `get/setThemePreference()`, and the Appearance row on My Profile. Light mode is pixel-identical to `main` on all 12 screens tested (6 tabs at 390 px and 1440 px). |
-| 2 · Page.html sweep | Next |
+| 2 · Page.html sweep | **Done.** 0 colour literals left in `Page.html` (`lint.cjs`). Rule 4 is now implemented as light-token islands (see the rule). Light mode is pixel-identical to `main` on 24 renders (12 screens × phone/desktop), apart from the accepted §3a chip. |
+| 3 · Scripts.html sweep | Next. 39 literals left: avatar tints, trend chart SVG, inline `#fff`, the welcome/communiqué previews. Plus the inline-styled dark cards (`background:var(--ink)` in generated HTML), which need `class="theme-inverse"`. |
 | 3 · Scripts.html sweep | — |
 | 4 · QA + switch on | — |
 
@@ -108,7 +109,7 @@ their meaning and contrast.
 | ------- | ----- | ---------- |
 | `--surface` | Card / sheet / input background that sits on the page | `#fff`, `#FFF`, `white`, `--card` |
 | `--surface-sunk` | Recessed well inside a surface | ad-hoc `--paper-100` wells (optional) |
-| `--inverse` | **Dark card** background — dark in light mode, *raised* (lighter than the page) in dark mode, see §4a | `background: var(--ink)` on cards |
+| `--inverse` | **Dark card** background: dark in light mode, *raised* (lighter than the page) in dark mode, see rule 4 and §4a | `background: var(--ink)` on cards |
 | `--inverse-raised` | A tile or row inside a dark card | `rgba(243,233,206,0.0x)` washes |
 | `--on-inverse` | Main text on a dark card | `color: var(--paper)` on cards |
 | `--on-inverse-muted` | Secondary text / labels on a dark card | `--ink-300`/`--ink-400` on cards |
@@ -137,6 +138,11 @@ background: rgba(var(--gold-rgb), 0.10);
 | `--gold-rgb` | `176,133,56` | `201,166,88` | gold washes and focus rings |
 | `--on-inverse-rgb` | `243,233,206` | `237,232,221` | washes and lines inside dark cards |
 | `--present-rgb` | `74,124,89` | `109,181,123` | green washes |
+| `--crimson-rgb` | `182,32,42` | `224,77,86` | crimson washes (e.g. the down-trend tag) |
+| `--paper-rgb` | `251,247,238` | `20,18,16` | paper-coloured washes that should flip (text on probation-bar segments, spinner track) |
+
+`--scrim-rgb` (`43,38,32`) is also used for the few shadows built on that colour, so their light
+pixels stay unchanged.
 
 This keeps light mode pixel-identical (every alpha is unchanged) without a token per alpha.
 Shadows on a dark page read weaker. If one needs more weight in dark mode, raise that call site's
@@ -175,6 +181,7 @@ Rule: **fg tokens are for text and strokes; `*-fill` tokens are for backgrounds 
 | `--on-inverse-ok`, `--on-inverse-bad` | `#A6D7B4`, `#E8A6AB` | `.trend-tip .tip-p/.tip-au`, `.apol-cell .num.ok/.bad`, `.dash-hero-delta .tag.down` |
 | `--crimson-wash` | `#F1D6D2` | `.apology-queue-item.emergency:hover/.selected` |
 | `--switch-on` | `#2A7D52` | `.bswitch[aria-checked="true"]` |
+| `--success` | `#2A7D52` | Birthday "sent" text and chip (`.bperson__sent`, `.bperson__auto`). Dark value `#4FAE7C` (6.5:1 on `--surface`). |
 | `--focus-ring` | `rgba(176,133,56,0.10–0.25)` | `.needs-attention`, `:focus` box-shadows in communiqué. Existing call sites use `rgba(var(--gold-rgb), a)` (§2c) to keep their alphas. |
 | `--chart-grid`, `--chart-label`, `--chart-line`, `--chart-dot-ring`, `--chart-value` | `#E8DEC6`, `#8C8478`, `#B08538`, `#FBF7EE`, `#14110F` | Trend SVG in `Scripts.html` (the trend renderer, ~L4662–4683) and the static one in `Page.html` ~L2036–2048. Gradient `stop-color` must also move to `style="stop-color:var(--chart-line)"`. `.trend-card` sits on `--paper`, so `--chart-dot-ring` must always equal `--paper`. |
 | `--seg-active` | `#fff` | Active chip of a segmented toggle (§3a) |
@@ -193,13 +200,28 @@ inside `color-mix` as a darkening operand is the one permitted literal.
    `.nav-item.active`, checked checkboxes: keep `background: var(--ink); color: var(--paper)`.
    In dark mode they become a light pill with dark text, which is the intended inverted look.
    Segmented toggles are the exception — see §3a.
-4. **Dark cards stay dark — use the inverse tokens.** Hero cards and strips that are dark *by
-   design* — `.card-dark`, `.dash-hero`, `.sess-tally`, `.tally-strip`, `.apol-strip`,
-   `.trend-tip`, `.podium-block`, `.dash-busy-pill`, the meeting `.type-badge`, and any inline
-   equivalent in `Scripts.html` — use `--inverse` + `--on-inverse*`. **Never** `--ink`/`--paper`
-   inside them: those flip, and the card would turn light-on-light.
-   Quick test: *"Should this be dark even in light mode?"* Yes → inverse tokens. It's a
-   selected state → rule 3.
+4. **Dark cards stay dark: they are light-token islands.** Hero cards and strips that are dark
+   *by design* look the same in both themes. In dark mode every token inside them keeps its
+   **light** value, so a dark card's content is written exactly as in light mode
+   (`color: var(--paper)`, `var(--gold-300)`, `rgba(var(--on-inverse-rgb), .18)` …). Two things
+   make a card an island:
+   - its background is `var(--inverse)`, not `var(--ink)`. `--inverse` is the one token an island
+     doesn't reset, so the card lifts off the dark page (§4a);
+   - its selector is in the island list in the `Page.html` token header (`:root[data-theme="dark"]
+     :is(…)`), or the element has `class="theme-inverse"`. Use the class for dark cards built
+     with inline styles in `Scripts.html`.
+
+   Islands today: `.card-dark`, `.dash-hero`, `.sess-tally`, `.tally-strip`, `.apol-strip`,
+   `.trend-tip`, `.podium-block`, `.changes-bar`, `.hero-rank`, the meeting `.type-badge`,
+   `.dash-busy-pill` (not its `.dash-busy-wait` variant), the failed-probation badge.
+   Quick test: *"Should this be dark even in light mode?"* Yes → island. It's a selected state
+   → rule 3.
+   *Why islands instead of `--on-inverse-*` everywhere (the earlier draft of this rule):* dark
+   cards use half a dozen shades for their content. Mapping each to an `--on-inverse-*` token
+   whose light value matches the shade exactly would need a token per shade. Islands keep light
+   mode pixel-identical with no new tokens, and Design writes dark cards the way it always has.
+   The `--on-inverse-*` tokens still exist for **light text on a colour fill outside a card**,
+   e.g. the crimson emergency marks (`--crimson-fill` + `--on-inverse`).
 5. **Surfaces are `--surface`, never white.** Text on a filled gold/crimson/green button is
    `--on-accent`, never `#fff`, and the fill is a `*-fill` token (§2a), never a fg token.
 6. **Status colours always travel as a pair.** `--absent-unexc` text sits on
@@ -248,9 +270,12 @@ barely visible, and it's the one accepted light-mode change in rollout step 1. R
 
 ## 4a. Dark cards in dark mode
 
-`--inverse` in dark mode is **raised** (lighter than the page), not darker: a `#141210` card on a
-`#141210` page disappears. Give inverse cards a `1px solid var(--on-inverse-line)` border in dark
-mode via `:root[data-theme="dark"] .card-dark, … { border: … }` or bake it into the components.
+`--inverse` in dark mode is **raised** (`#26211C`, lighter than the `#141210` page), not darker: a
+card the same colour as the page disappears. `--inverse` is declared in its own `:root` rule,
+outside the light-token block, so islands inherit the page's value instead of resetting it.
+At `#26211C` the cards separate from the page without a border, so none is added. A border would
+also shift layout by a pixel in light mode. If a card ever needs more separation in dark mode,
+use `outline` (no layout effect), not `border`.
 
 ## 5. Ownership
 
@@ -303,7 +328,12 @@ Light-mode values for the new tokens: `--surface:#fff; --surface-sunk:var(--pape
 
 `--seg-active:#fff;` plus the light triplets in §2c.
 
-`.theme-light` must redeclare **all** of the above at light values plus `color-scheme:light`.
+Added in stage 2. Light: `--crimson-rgb:182,32,42; --paper-rgb:251,247,238; --success:#2A7D52`.
+Dark: `--crimson-rgb:224,77,86; --paper-rgb:20,18,16; --success:#4FAE7C`.
+
+The light block is shared by `.theme-light`, `#communiquePreview .cp-sheet` and the dark-card
+islands (rule 4), so all of them get every light value plus `color-scheme:light` automatically.
+`--inverse` is the exception, declared in its own `:root` rule (§4a).
 
 Contrast (measured, WCAG 2.x):
 
@@ -351,8 +381,10 @@ line. Use them only for the token blocks and rule 8 exceptions.
 (e.g. §3a). The render check applies it to the `main` render before comparing. Empty it once
 dark mode is merged into `main`.
 
-Lint baseline (`lint.cjs --summary`) on `main` @ `8ea7d54`, with the stage 1 token blocks not
-yet marked: Page.html 216 hex + 37 rgb, Scripts.html 39 hex.
+Lint baseline (`lint.cjs --summary`): `main` @ `8ea7d54` with the stage 1 token blocks unmarked
+had Page.html 216 hex + 37 rgb and Scripts.html 39 hex. After stage 2: **Page.html 0**,
+Scripts.html 39. The lint also flags a token defined as itself (`--x: var(--x)`), which is a
+cycle that silently invalidates the colour; a find-and-replace can introduce one.
 
 ## 8. Sync log
 
