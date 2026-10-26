@@ -14,6 +14,10 @@ don't fork the rules.
 | 3 · Scripts.html sweep | **Done.** 0 colour literals in either file (`lint.cjs`). Section tints, the trend chart, badges and surfaces are on tokens. The two generated dark cards (By-member stat card, post-save tally) carry `class="theme-inverse"`. The welcome-email preview's header and body carry `class="theme-light"`, and the signature palette has an allow marker. Dark `--crimson-600` lightened for legibility (§6). Light mode is pixel-identical to `main` on 44 renders (3 scenarios, 22 screens, phone and desktop). |
 | 4 · QA + switch on | **Next.** Review on a real device in both themes, then set `DARK_READY = true` in `Page.html`, which also shows the Appearance row. |
 
+**Handoff notes:** `docs/handoff/DESIGN-dark-mode.md` (decisions D1–D11 for Claude Design to
+respond to, components, changelog) and `docs/handoff/BACKEND-theme-endpoints.md` (the `Code.gs`
+contract).
+
 **The rollout gate.** `DARK_READY` in the boot script at the top of `Page.html` is `false`, so
 everyone gets light, whatever their device or saved preference, and the Appearance row is hidden.
 Step 4 flips it to `true`. To preview dark mode before then, run this in the browser console
