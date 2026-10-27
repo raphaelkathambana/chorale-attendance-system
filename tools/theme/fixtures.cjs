@@ -63,7 +63,7 @@ const probationInfo = (name, seq) => {
     name, probationStart: "2026-09-01", attended: att, totalSessions: done, maxSessions: 10, remaining: 10 - done,
     rate: done ? Math.round((att / done) * 100) : 0, onTrack: att >= Math.ceil(done * 0.7), threshold: 70, required: 7,
     complete: done >= 10, passed: false, lastSessionDate: SESSIONS_10[done - 1] || "",
-    sessionSequence: seq.map((s, k) => ({ date: SESSIONS_10[k], status: s, sessionKey: "Choir", groups: ["Choir"] })),
+    sessionSequence: seq.map((s, k) => ({ date: SESSIONS_10[k], status: s, sessionKey: "Choir", groups: ["Choir"], carried: name === "George Kamau" && k < 2 })),
     pendingSlots: 10 - done, scopedSection: null, groups: ["Choir"], profilePhoto: "",
   };
 };
@@ -81,11 +81,12 @@ function sessionsList() {
   });
 }
 
-function sessionDetail(dateStr) {
+function sessionDetail(dateStr, sessionKey) {
   const k = Math.max(0, SESSION_DATES.indexOf(dateStr));
   const col = GRID.map(r => r[k]);
   return {
-    date: dateStr, sessionKey: "Choir", groups: ["Choir"], type: "Practice", title: "Practice",
+    date: dateStr, sessionKey: sessionKey || "Choir", groups: String(sessionKey || "Choir").split(",").map(g => g.trim()).filter(Boolean),
+    type: String(sessionKey || "").indexOf(",") !== -1 ? "Meeting" : "Practice", title: String(sessionKey || "").indexOf(",") !== -1 ? "Concert planning" : "Practice",
     records: PEOPLE.map((p, i) => ({ name: p.name, group: p.groups[0], role: p.roles[p.groups[0]], status: col[i], recordedBy: "Test Admin", rowIndex: 100 + i })),
     counts: countStatuses(col), total: col.length, attended: col.filter(attended).length, attendanceRate: rate(col),
     recordedBy: ["Test Admin"], apologyCount: 2,
@@ -176,32 +177,132 @@ function memberList() {
     groups: p.groups, roles: p.roles, active: i !== 10, probation: i === 9 || i === 6, probationPassed: false, probationFailed: false,
     probationStart: i === 9 || i === 6 ? "2026-09-01" : "", probationEnd: "", profilePhoto: "",
     gender: i % 2 ? "M" : "F", yearOfStudy: String(1 + (i % 4)), courseFaculty: ["SCES", "SBS", "SHSS"][i % 3], memberStatus: i === 10 ? "On Hiatus" : "Active",
+    attendanceRate: rate(GRID[i]), attended: GRID[i].filter(attended).length, totalSessions: GRID[i].length,
   }));
 }
 
-function fixtures(scenario) {
+// One myApology per status the backend can return on getUpcomingSessions() (plan §4.2).
+const MY_APOLOGY = {
+  pending: { status: "Pending", type: "Absent", longTerm: false },
+  "pending-emergency": { status: "Pending", type: "Emergency", longTerm: false },
+  approved: { status: "Approved", type: "Absent", longTerm: false },
+  applied: { status: "Applied", type: "Late", longTerm: false },
+  "not-needed": { status: "Not needed", type: "Absent", longTerm: false },
+  rejected: { status: "Rejected", type: "Absent", longTerm: false },
+  revoked: { status: "Revoked", type: "Absent", longTerm: false },
+  "longterm-pending": { status: "Pending", type: "Absent", longTerm: true, startDate: "2026-10-12", endDate: "2026-10-26" },
+  "longterm-approved": { status: "Approved", type: "Absent", longTerm: true, startDate: "2026-10-12", endDate: "2026-10-26" },
+};
+
+function yearInfo(state, readOnly) {
+  const open = state.year === "available" || state.year === "pending";
+  return {
+    currentLabel: "2025/26", currentStartsOn: "2025-11-01", nextLabel: "2026/27", nextStartsOn: "2026-11-01",
+    defaultStartsOn: "2026-11-01", latestStartsOn: open ? "2026-11-03" : "2026-11-01",
+    canStartNow: open, blockReason: open ? "" : "The 2026/27 year can start from Sun 1 Nov 2026.",
+    canRollover: !readOnly, canViewPast: true,
+    pastYears: [
+      { label: "2024/25", startsOn: "2024-11-01", endsOn: "2025-10-31", rolledOverOn: "2025-11-01", rolledOverBy: "Test Admin", archiveUrl: "https://docs.google.com/spreadsheets/d/archive-2024-25" },
+      { label: "2023/24", startsOn: "2023-11-01", endsOn: "2024-10-31", rolledOverOn: "2023-11-02", rolledOverBy: "Test Admin", archiveUrl: "https://docs.google.com/spreadsheets/d/archive-2023-24" },
+    ],
+  };
+}
+
+function newYearPlan(state) {
+  const pending = state.year === "pending";
+  const pendingApologiesArchived = pending ? [
+    { rowIndex: 41, date: "2026-10-28", name: "Cynthia Achieng", email: email("Cynthia Achieng"), type: "Absent", isRequest: false, kind: "absent",
+      reason: "Clinical rotation at the hospital ran late.", submittedAt: "2026-10-27 18:02", sessionTime: "18:00", onTime: true, status: "Pending", endDate: "", groups: ["Choir"] },
+    { rowIndex: 44, date: "2026-10-31", name: "Brian Otieno", email: email("Brian Otieno"), type: "Emergency", isRequest: false, kind: "emergency",
+      reason: "Family emergency — had to travel home.", submittedAt: "2026-10-31 18:40", sessionTime: "18:00", onTime: false, status: "Pending", endDate: "", groups: ["Choir"] },
+  ] : [];
+  const warnings = pending ? [pendingApologiesArchived.length + " apology/request(s) for last year are still Pending. Decide them before starting, or they are archived unresolved."] : [];
+  return {
+    currentLabel: "2025/26", currentStartsOn: "2025-11-01", nextLabel: "2026/27", nextStartsOn: "2026-11-01", defaultStartsOn: "2026-11-01",
+    customStart: false, today: "2026-11-02", canStart: true, blockReason: "", warnings,
+    sheets: { Attendance: { total: 1840, archive: 1840, live: 0, both: 0 }, Apologies: { total: 212, archive: 209, live: 1, both: 2 },
+      Offenses: { total: 23, archive: 23, live: 0, both: 0 }, Rewards: { total: 31, archive: 31, live: 0, both: 0 } },
+    probationCarry: [{ name: "Joy Wambui", probationStart: "2026-09-01", carriedSessions: 5, carriedAttended: 1 }, { name: "George Kamau", probationStart: "2026-09-01", carriedSessions: 7, carriedAttended: 7 }],
+    penaltiesCleared: [{ name: "Victor Otieno", penalty: -5, probationEnded: "2026-06-14" }],
+    pendingApologiesArchived, auOffensesDropped: [{ name: "Dennis Ouma", date: "2026-10-28" }],
+    message: "NEW YEAR ROLLOVER - DRY RUN (nothing changed)",
+  };
+}
+
+const ACTIVITY = [
+  ["2026-10-14 14:52", SELF.email, SELF.name, "Attendance recorded", "Choir · Wed 14 Oct", "11 members"],
+  ["2026-10-14 14:31", SELF.email, SELF.name, "Apology approved", "Cynthia Achieng", "Absent · Wed 14 Oct"],
+  ["2026-10-14 09:00", "System", "System", "Offense recorded", "Victor Otieno", "3 consecutive unexcused absences (automatic)"],
+  ["2026-10-13 19:12", email("Dennis Ouma"), "Dennis Ouma", "Apology submitted", "Dennis Ouma", "Absent · Sat 17 Oct"],
+  ["2026-10-13 16:05", SELF.email, SELF.name, "Communique draft saved", "Concert dress code", "All active members"],
+  ["2026-10-12 11:40", SELF.email, SELF.name, "Member removed", "Old Member", "Left the chorale"],
+  ["2026-10-12 10:02", SELF.email, SELF.name, "Meeting scheduled", "Concert planning", "Sat 17 Oct · 10:00 · Band, Choir"],
+  ["2026-10-11 08:00", "System", "System", "Reward awarded", "Amani Wanjiru", "Perfect attendance (September)"],
+].map(([timestamp, actor, actorName, action, target, details]) => ({ timestamp, actor, actorName, action, target, details }));
+
+const DRAFTS = [
+  { id: "d1", subject: "Concert dress code", preview: "Dear {first name}, for Saturday's concert please wear the full black uniform with the gold scarf…",
+    ownerEmail: SELF.email, ownerName: SELF.name, mine: true, recipientType: "all", groups: [], attachmentCount: 1,
+    createdLabel: "Tue 13 Oct · 16:05", updatedLabel: "Wed 14 Oct · 09:12", updatedAt: Date.parse("2026-10-14T09:12:00+03:00") },
+  { id: "d2", subject: "", preview: "", ownerEmail: SELF.email, ownerName: SELF.name, mine: true, recipientType: "sections", groups: ["Band"], attachmentCount: 0,
+    createdLabel: "Mon 12 Oct · 11:00", updatedLabel: "Mon 12 Oct · 11:00", updatedAt: Date.parse("2026-10-12T11:00:00+03:00") },
+  { id: "d3", subject: "Orchestra sectional moved", preview: "The Thursday sectional moves to the music room from next week.",
+    ownerEmail: email("Esther Njeri"), ownerName: "Esther Njeri", mine: false, recipientType: "sections", groups: ["Orchestra"], attachmentCount: 0,
+    createdLabel: "Fri 9 Oct · 15:30", updatedLabel: "Fri 9 Oct · 15:41", updatedAt: Date.parse("2026-10-09T15:41:00+03:00") },
+];
+
+const DETAILS_FULL = { admissionNumber: "140370", courseFaculty: "SCES", courseName: "BBIT", nationality: "Kenyan", choirPart: "Bass", instruments: "",
+  nokName: "Mary Otieno", nokPhone: "+254 722 000111", nokRelationship: "Mother", nokResidence: "Kisumu", residence: "Madaraka", dateOfBirth: "2004-03-18",
+  phoneNumber: "+254 711 222333", passportNumber: "AK1234567", nationalIdNumber: "34567890", gender: "M", yearOfStudy: "3", memberStatus: "On Hiatus" };
+const REDACTED_FOR_SECTION_ADMINS = ["passportNumber", "nationalIdNumber", "nokName", "nokPhone", "nokRelationship", "nokResidence"];
+
+// scenario: "admin" | "member" | "member-failed" | "superadmin".
+// state (set per screen by render.cjs, read lazily): { role: "sectionAdmin", year: "before"|"available"|"pending", myApology: <MY_APOLOGY key> }
+function fixtures(scenario, state) {
+  state = state || {};
   const isMember = scenario === "member" || scenario === "member-failed";
   const failed = scenario === "member-failed";
-  const role = isMember
-    ? { role: "member", email: SELF.email, name: SELF.name, groups: SELF.groups, section: "", repGroup: "", allowedSections: [], isAdminLike: false, readOnly: false, isMember: true }
-    : { role: "admin", email: SELF.email, name: SELF.name, groups: SELF.groups, section: "", repGroup: "", allowedSections: ["Choir", "Band", "Orchestra"], isAdminLike: true, readOnly: false, isMember: true };
-  return {
-    getUserRole: () => role,
+  const superAdmin = scenario === "superadmin";
+  const roleFor = () => {
+    if (isMember) return { role: "member", email: SELF.email, name: SELF.name, groups: SELF.groups, section: "", repGroup: "", allowedSections: [],
+      isAdminLike: false, readOnly: false, isMember: true, canViewPastYears: false, canStartNewYear: false };
+    if (superAdmin) return { role: "superAdmin", email: "oversight@example.org", name: "Peter Musyoka", groups: [], section: "", repGroup: "",
+      allowedSections: ["Choir", "Band", "Orchestra"], isAdminLike: true, readOnly: true, isMember: false, canViewPastYears: true, canStartNewYear: false };
+    if (state.role === "sectionAdmin") return { role: "sectionAdmin", email: SELF.email, name: SELF.name, groups: SELF.groups, section: "Choir", repGroup: "",
+      allowedSections: ["Choir"], isAdminLike: true, readOnly: false, isMember: true, canViewPastYears: true, canStartNewYear: false };
+    return { role: "admin", email: SELF.email, name: SELF.name, groups: SELF.groups, section: "", repGroup: "", allowedSections: ["Choir", "Band", "Orchestra"],
+      isAdminLike: true, readOnly: false, isMember: true, canViewPastYears: true, canStartNewYear: true };
+  };
+  const fx = {
+    getUserRole: roleFor,
     getMembers: () => PEOPLE.map(p => ({ name: p.name, groups: p.groups, roles: p.roles, probation: p.name === "Joy Wambui", probationStart: "2026-09-01" })),
     getAllMemberNames: () => PEOPLE.map(p => p.name),
     getMemberList: memberList,
+    getFilteredMemberNames: () => PEOPLE.map(p => p.name),
     getMemberFilterOptions: () => ({ sections: ["Choir", "Band", "Orchestra"], roles: { Choir: ["Soprano", "Alto", "Tenor", "Bass"], Band: ["Guitar", "Drums", "Keys"], Orchestra: ["Violin", "Cello"] },
       genders: ["F", "M"], faculties: ["SBS", "SCES", "SHSS"], yearsOfStudy: ["1", "2", "3", "4"], probationStatuses: ["On probation", "Passed"], memberStatuses: ["Active", "On Hiatus"] }),
     countFilteredMembers: () => PEOPLE.length,
     getMemberHistory: historyFor,
     getMemberForEdit: name => { const m = memberList().find(x => x.name === name) || memberList()[0];
       return Object.assign({}, m, { membership: { state: "active", detailStatus: "Active", active: true, availableActions: ["hiatus", "inactive"] }, choirPart: m.roles.Choir || "", bandRole: m.roles.Band || "", orchestraRole: m.roles.Orchestra || "", details: { courseFaculty: "SCES", courseName: "BBIT", yearOfStudy: "2", nationality: "Kenyan", gender: "F" } }); },
+    // Section admins get passport, national ID and next of kin blank, listed in redacted[].
+    getMemberDetails: () => {
+      if (state.role !== "sectionAdmin") return Object.assign({}, DETAILS_FULL, { redacted: [] });
+      const d = Object.assign({}, DETAILS_FULL); REDACTED_FOR_SECTION_ADMINS.forEach(k => (d[k] = "")); d.redacted = REDACTED_FOR_SECTION_ADMINS.slice(); return d;
+    },
     getAttendanceDates: () => SESSION_DATES.slice().reverse().map(d => ({ date: d, groups: ["Choir"] })),
     getAttendanceForDate: () => [],
+    batchUpdateAttendance: () => ({ success: true, updated: 3, skipped: [] }),
     getSessionTime: () => ({ found: true, time: "18:00", latest: "18:00", dayName: "Wednesday" }),
     getMeetings: () => [{ id: 4, rowIndex: 4, date: "2026-10-17", dayName: "Saturday", time: "10:00", groups: ["Band", "Choir"], title: "Concert planning", createdBy: "Test Admin" }],
-    getUpcomingSessions: () => [{ withinGrace: false, graceEndsAt: "20:00", date: "2026-10-14", dayName: "Wednesday", time: "18:00", type: "Practice", kind: "Practice", title: "Practice",
-      groups: ["Choir"], deadline: "17:30", deadlinePassed: false, sessionPassed: false, sessionKey: "2026-10-14|18:00|Choir" }],
+    updateMeeting: (id, ch) => Object.assign({ success: true, id, date: "2026-10-17", time: "10:00", groups: ["Band", "Choir"], title: "Concert planning", apologiesForOldSlot: 0 }, ch || {}),
+    getUpcomingSessions: () => [
+      { withinGrace: false, graceEndsAt: "20:00", date: "2026-10-14", dayName: "Wednesday", time: "18:00", type: "Practice", kind: "Practice", title: "Practice",
+        groups: ["Choir"], deadline: "17:30", deadlinePassed: false, sessionPassed: false, sessionKey: "2026-10-14|18:00|Choir",
+        myApology: state.myApology ? MY_APOLOGY[state.myApology] : null },
+      { withinGrace: false, graceEndsAt: "12:00", date: "2026-10-17", dayName: "Saturday", time: "10:00", type: "Meeting", kind: "Meeting", title: "Concert planning",
+        groups: ["Band", "Choir"], deadline: "09:30", deadlinePassed: false, sessionPassed: false, sessionKey: "2026-10-17|10:00|Band,Choir", myApology: null },
+    ],
     getEmergencyApologyOption: () => ({ eligible: false, reason: "The apology deadline has not passed yet." }),
     getSessionsList: sessionsList,
     getSessionDetail: sessionDetail,
@@ -215,12 +316,16 @@ function fixtures(scenario) {
       { rowIndex: 3, date: "2026-09-30", name: "Dennis Ouma", description: "Disruptive during rehearsal", recordedBy: "Test Admin", points: -2 }],
     getRewardCategories: () => [{ category: "Perfect attendance (month)", points: 5, variable: false }, { category: "Extra effort", points: "", variable: true }],
     getRewardList: () => [{ rowIndex: 2, date: "2026-10-01", name: "Amani Wanjiru", category: "Perfect attendance (month)", description: "[auto:perfect] September", points: 5, recordedBy: "System" }],
-    getMyAttendance: () => ({ name: SELF.name, email: SELF.email, groups: SELF.groups, roles: SELF.roles, probation: false, probationPassed: !failed, probationFailed: failed,
-      probationPenalty: failed ? -5 : 0, probationAcknowledged: !failed, probationInfo: failed ? probationInfo(SELF.name, [AU, P, AU, AE, AU, AU, P, AU, AE, AU]) : null,
-      onboardingCompleted: true, history: historyFor(failed ? "Victor Otieno" : "Brian Otieno") }),
+    getMyAttendance: () => superAdmin
+      ? { isMember: false, name: "", email: "oversight@example.org", groups: [], history: [], message: "This account has no membership record, so there is no personal attendance to show." }
+      : { name: SELF.name, email: SELF.email, groups: SELF.groups, roles: SELF.roles, probation: false, probationPassed: !failed, probationFailed: failed,
+          probationPenalty: failed ? -5 : 0, probationAcknowledged: !failed, probationInfo: failed ? probationInfo(SELF.name, [AU, P, AU, AE, AU, AU, P, AU, AE, AU]) : null,
+          onboardingCompleted: true, history: historyFor(failed ? "Victor Otieno" : "Brian Otieno") },
     getMyApologies: () => apologyQueue().slice(1, 4),
-    getMyProfile: () => ({ name: SELF.name, email: SELF.email, phone: "+254 700 000000", admNo: "140001", groups: SELF.groups, roles: SELF.roles, profilePhoto: "",
-      details: { gender: "F", courseFaculty: "SCES", courseName: "BBIT", yearOfStudy: "2", nationality: "Kenyan" } }),
+    getMyProfile: () => superAdmin
+      ? { isMember: false, name: "", email: "oversight@example.org", groups: [], history: [], message: "This account has no membership record, so there is no personal attendance to show." }
+      : { name: SELF.name, email: SELF.email, phone: "+254 700 000000", admNo: "140001", groups: SELF.groups, roles: SELF.roles, profilePhoto: "",
+          details: { gender: "F", courseFaculty: "SCES", courseName: "BBIT", yearOfStudy: "2", nationality: "Kenyan" } },
     getConfigLists: () => ({ choirParts: ["Soprano", "Alto", "Tenor", "Bass"], bandRoles: ["Guitar", "Drums", "Keys"], orchestraRoles: ["Violin", "Cello"], faculties: ["SBS", "SCES", "SHSS"] }),
     getTodaysBirthdaysForBanner: () => [],
     getScheduledEmails: () => [{ id: "c1", sendAt: "2026-10-16T06:00:00.000Z", status: "Scheduled", scheduledBy: SELF.email, subject: "Concert dress code", result: "", canCancel: true },
@@ -228,9 +333,28 @@ function fixtures(scenario) {
     getSignatureOptions: () => [{ key: "committee", label: "The Strathmore Chorale Committee", name: "The Strathmore Chorale Committee", title: "", email: "chorale@example.org", phone: "" }],
     getCommuniqueRecipientOptions: () => ({ groups: ["Choir", "Band", "Orchestra"], members: PEOPLE.map(p => ({ name: p.name, email: email(p.name), groups: p.groups })),
       signatures: [{ key: "committee", label: "The Strathmore Chorale Committee", name: "The Strathmore Chorale Committee", title: "", email: "chorale@example.org", phone: "" }], canSendAll: true }),
+    // Communiqué drafts
+    getCommuniqueDrafts: () => DRAFTS,
+    getCommuniqueDraft: id => { const d = DRAFTS.find(x => x.id === id) || DRAFTS[0];
+      return { id: d.id, ownerEmail: d.ownerEmail, ownerName: d.ownerName, mine: d.mine, updatedAt: d.updatedAt, updatedLabel: d.updatedLabel,
+        payload: { subject: d.subject, body: d.preview, recipientType: d.recipientType, groups: d.groups, members: [], attachments: [] }, missingAttachments: 0 }; },
+    saveCommuniqueDraft: () => ({ success: true, id: "d1", updatedAt: Date.parse("2026-10-14T15:00:00+03:00"), updatedLabel: "Wed 14 Oct · 15:00" }),
+    deleteCommuniqueDraft: () => ({ success: true }),
+    deleteCommuniqueAttachment: () => ({ success: true, kept: false, reason: "" }),
+    // Activity log
+    getActivityLog: () => ({ entries: ACTIVITY, actions: [...new Set(ACTIVITY.map(e => e.action))].sort(), total: ACTIVITY.length }),
+    // Chorale years
+    getYearInfo: () => yearInfo(state, superAdmin),
+    previewNewYear: () => newYearPlan(state),
+    startNewYear: label => ({ success: true, label: label || "2026/27", previousLabel: "2025/26", startsOn: "2026-11-01", customStart: false,
+      archiveUrl: "https://docs.google.com/spreadsheets/d/archive-2025-26", backupUrl: "https://drive.google.com/file/d/backup-2025-26",
+      summary: "1840 attendance rows archived · 2 probations carried", warnings: [], message: "Started 2026/27." }),
     // Dark mode plumbing: the server preference. render.cjs overrides it per mode.
     getThemePreference: () => "system",
   };
+  // Archived-year reads go through callForYear(label, fn, args) and return fn's own shape.
+  fx.callForYear = (label, fn, args) => (fx[fn] ? fx[fn].apply(null, args || []) : (/^(get|list|count)/.test(fn) ? [] : { success: true }));
+  return fx;
 }
 
-module.exports = { fixtures, FIXED_NOW };
+module.exports = { fixtures, FIXED_NOW, MY_APOLOGY };

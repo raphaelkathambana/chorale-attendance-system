@@ -11,7 +11,7 @@
  *   dark    The working tree with dark mode previewed. Not compared against anything — these
  *           are the screenshots to review by eye (index.html shows light and dark side by side).
  *
- *   node tools/theme/render.cjs [--base <git-ref>] [--out <dir>] [--scenario admin|member|member-failed]
+ *   node tools/theme/render.cjs [--base <git-ref>] [--out <dir>] [--scenario admin|member|member-failed|superadmin]
  *                               [--screens record,sessions,…] [--no-base]
  *
  * Exit code 1 on any unexpected light difference or a failed gated check.
@@ -22,7 +22,7 @@
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
-const { fixtures, FIXED_NOW } = require("./fixtures.cjs");
+const { fixtures, FIXED_NOW, MY_APOLOGY } = require("./fixtures.cjs");
 
 function loadPlaywright() {
   const tries = ["playwright", "/opt/node-tools/node_modules/playwright", process.env.PLAYWRIGHT_MODULE].filter(Boolean);
@@ -33,6 +33,10 @@ function loadPlaywright() {
 
 const VIEWPORTS = [{ id: "mobile", width: 390, height: 844 }, { id: "desktop", width: 1440, height: 960 }];
 // Each screen is reached the way a user would: the app's own navigation functions.
+//   go     a JS string, or a list of steps with a settle between each (e.g. load a list, then open an item)
+//   state  fixture state for this screen (fixtures.cjs: role, year, myApology). A screen with state, or
+//          with fresh: true, boots the app fresh, and so does the screen after it, so nothing leaks.
+const MY_APOLOGY_SCREENS = Object.keys(MY_APOLOGY).map(k => ({ id: "myatt-apology-" + k, state: { myApology: k }, go: "switchTab('myatt')" }));
 const SCREENS = {
   admin: [
     { id: "record", go: "switchTab('record')" },
@@ -53,14 +57,50 @@ const SCREENS = {
         "document.getElementById('amEmail').value = 'wanjiku.mwende@example.org'; renderAddMemberPreview()" },
     { id: "post-save", go: "switchTab('record'); showPostSubmit({ summary: { Choir: { 'Present': 8, 'Late Excused': 1, 'Absent Unexcused': 2 } }, " +
         "probationEvals: [{ name: 'Ian Mwangi', result: 'passed_clean', attended: 9, rate: 90 }, { name: 'Joy Wambui', result: 'Failed', attended: 3, rate: 30, penalty: -5 }] })" },
+    // Added in the 17bab8d sync (plan §4): years, activity, drafts, additional info, scoped views, meetings, notices
+    { id: "year-before", state: { year: "before" }, go: "openYearPage()" },
+    { id: "year-available", state: { year: "available" }, go: "openYearPage()" },
+    { id: "year-pending", state: { year: "pending" }, go: "openYearPage()" },
+    { id: "past-year-dashboard", fresh: true, go: ["switchTab('dashboard')", "setActiveYear('2024/25')"] },
+    { id: "past-year-sessions", fresh: true, go: ["switchTab('sessions')", "setActiveYear('2024/25')"] },
+    { id: "comm-drafts", go: "switchTab('communique'); showCommSubtab('drafts')" },
+    { id: "activity", go: "switchTab('activity')" },
+    { id: "member-info", fresh: true, go: ["switchTab('members'); selectMember('Victor Otieno')", "toggleMemberInfo()"] },
+    { id: "member-info-sectionadmin", state: { role: "sectionAdmin" }, go: ["switchTab('members'); selectMember('Victor Otieno')", "toggleMemberInfo()"] },
+    { id: "session-detail-sectionadmin", state: { role: "sectionAdmin" }, go: "switchTab('sessions'); openSession('2026-10-03', 'Band,Choir')" },
+    { id: "meeting-edit", fresh: true, go: ["switchTab('record'); document.getElementById('meetingPanel').open = true; loadMeetings()", "editMeeting(4)"] },
+    { id: "toast-info", fresh: true, go: "showToast('Already submitted \u2014 this register was saved a moment ago.', 'info')" },
+    { id: "toast-warning", fresh: true, go: "showToast('Saved 9 of 11 changes. 2 were skipped because the register changed meanwhile.', 'warning')" },
   ],
   member: [
     { id: "myatt", go: "switchTab('myatt')" },
     { id: "apology", go: "openApology('session')" },
     { id: "profile", go: "openProfile()" },
+  ].concat(MY_APOLOGY_SCREENS, [
+    { id: "apology-on-file", state: { myApology: "pending" },
+      go: ["switchTab('myatt'); openApology('session')", "document.getElementById('apolSessionSelect').value = '0'; onApolSessionSelect()"] },
+  ]),
+  "member-failed": [ // a member whose probation failed: the crimson restart card
+    { id: "myatt", go: "switchTab('myatt')" },
+    { id: "apology", go: "openApology('session')" },
+    { id: "profile", go: "openProfile()" },
+  ],
+  superadmin: [ // view-only: action controls hidden, communiqué hidden, no personal attendance
+    { id: "sessions", go: "switchTab('sessions')" },
+    { id: "session-detail", go: "switchTab('sessions'); openSession('2026-10-07', 'Choir')" },
+    { id: "members", go: "switchTab('members')" },
+    { id: "member-detail", go: "switchTab('members'); selectMember('Victor Otieno')" },
+    { id: "member-info", fresh: true, go: ["switchTab('members'); selectMember('Victor Otieno')", "toggleMemberInfo()"] },
+    { id: "scoreboard", go: "switchTab('members'); setMembersMode('scoreboard')" },
+    { id: "probation", go: "switchTab('probation')" },
+    { id: "requests", go: "switchTab('requests')" },
+    { id: "dashboard", go: "switchTab('dashboard')" },
+    { id: "activity", go: "switchTab('activity')" },
+    { id: "year", state: { year: "before" }, go: "openYearPage()" },
+    { id: "past-year-dashboard", fresh: true, go: ["switchTab('dashboard')", "setActiveYear('2024/25')"] },
+    { id: "profile", go: "openProfile()" },
   ],
 };
-SCREENS["member-failed"] = SCREENS.member; // a member whose probation failed: the crimson restart card
 
 function parseArgs(argv) {
   const o = { base: "origin/main", out: null, scenario: "admin", screens: null, noBase: false };
@@ -119,7 +159,7 @@ const MODES = {
 };
 
 async function renderAll(browser, html, label, mode, screens, out, extraCss) {
-  const m = MODES[mode], fx = fixtures(label.scenario), shots = {}, log = [];
+  const m = MODES[mode], state = {}, fx = fixtures(label.scenario, state), shots = {}, log = [];
   const file = path.join(out, `${label.name}-${mode}.html`);
   let page = html.replace("</head>", STUB + (extraCss ? `<style>${extraCss}</style>` : "") + "</head>");
   fs.writeFileSync(file, page);
@@ -153,11 +193,31 @@ async function renderAll(browser, html, label, mode, screens, out, extraCss) {
       if (Date.now() - t0 >= 8000) log.push(`[${vp.id}] page never settled (server calls kept coming)`);
       await p.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
     };
-    await p.goto("file://" + file); await settle();
+    const boot = async st => {
+      Object.keys(state).forEach(k => delete state[k]); Object.assign(state, st || {});
+      await p.goto("file://" + file); await settle();
+    };
+    await boot();
+    let dirty = false;
     for (const s of screens) {
-      await p.evaluate(js => { try { (0, eval)(js); } catch (e) { window.__handlerErrors.push("navigate: " + e.message); } }, s.go);
-      await settle();
+      const isolated = !!(s.fresh || s.state);
+      if (isolated || dirty) await boot(s.state);
+      dirty = isolated;
+      for (const step of [].concat(s.go)) {
+        await p.evaluate(js => { try { (0, eval)(js); } catch (e) { window.__handlerErrors.push("navigate: " + e.message); } }, step);
+        await settle();
+      }
       await p.evaluate(() => window.scrollTo(0, 0));
+      // A screen still loading checked nothing: say so, so a missing fixture can't pass as a green run.
+      const loading = await p.evaluate(() => {
+        const vis = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length) && getComputedStyle(el).visibility !== "hidden";
+        // .loading is also the app's empty-state class ("Tap Refresh to load."), so only count a
+        // visible spinner, or text that says it is still working.
+        const busy = [...document.querySelectorAll(".spinner, .loading")].filter(vis).filter(el => !el.closest("#authScreen"))
+          .filter(el => el.classList.contains("spinner") || /^(loading|checking)\b|\u2026\s*$/i.test((el.textContent || "").trim()));
+        return busy.length ? ((busy[0].closest(".loading") || busy[0]).textContent || "").trim().slice(0, 60) || "spinner" : "";
+      });
+      if (loading) log.push(`[${vp.id} ${s.id}] still loading: "${loading}"`);
       const shot = path.join(out, `${label.name}-${mode}-${vp.id}-${s.id}.png`);
       await p.screenshot({ path: shot, fullPage: true, animations: "disabled", caret: "hide" });
       shots[`${vp.id}-${s.id}`] = shot;
