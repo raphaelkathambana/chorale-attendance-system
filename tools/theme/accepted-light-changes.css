@@ -2,7 +2,8 @@
  * Light-mode changes the dark-mode work makes ON PURPOSE, relative to main.
  * render.cjs injects this into the BASE render before comparing, so these differences
  * don't count as regressions. Each rule must name the THEMING.md section that accepts it.
- * Once the dark-mode branch is merged into main, empty this file: main then already has them.
+ * render.cjs applies this only while the base has no DARK_READY (i.e. before dark mode is merged);
+ * after the merge main already has these changes and the comparison is exact.
  */
 
 /* THEMING.md §3a — segmented-toggle active chip moves from --paper to --seg-active (#fff). */

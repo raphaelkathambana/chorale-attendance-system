@@ -290,7 +290,12 @@ async function main() {
   results.light = await renderAll(browser, headHtml, head, "light", screens, o.out);
   results.gated = await renderAll(browser, headHtml, head, "gated", screens, o.out);
   results.dark = await renderAll(browser, headHtml, head, "dark", screens, o.out);
-  if (!o.noBase) results.base = await renderAll(browser, buildPage(readAtRef(o.base)), base, "light", screens, o.out, acceptedCss);
+  // The accepted changes only apply while the base predates dark mode. Once dark mode is merged,
+  // the base already has them, so the comparison is exact.
+  if (!o.noBase) {
+    const baseHtml = buildPage(readAtRef(o.base));
+    results.base = await renderAll(browser, baseHtml, base, "light", screens, o.out, /DARK_READY/.test(baseHtml) ? "" : acceptedCss);
+  }
 
   let failures = 0;
   const rows = [];
