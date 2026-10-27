@@ -1608,6 +1608,425 @@ body.view-only #membersModeToggle button[data-mode="offense"],
 body.view-only #membersModeToggle button[data-mode="reward"],
 body.view-only #myAttEmergencyDoor { display: none !important; }
 
+
+/* ══ BACKEND UPDATE · 15 OCT 2026 ═════════════════════════════════════════
+   Toast variants · chorale years (chip, menu, archived banner, years page,
+   new-year rollover) · activity log · communiqué drafts · restricted fields
+   ═════════════════════════════════════════════════════════════════════════ */
+/* Info = neutral (duplicate submits are not failures). Warning = partial save. */
+.toast.info    { background: var(--ink-700); color: var(--paper); }
+.toast.warning { background: var(--gold-700); color: #fff; }
+.toast.info, .toast.warning { max-width: min(560px, calc(100vw - 32px)); text-align: center; line-height: 1.45; }
+
+/* Year switch — set inline in the page eyebrow, in the eyebrow's own type.
+   Dotted gold underline = it opens something; solid on hover. */
+#yearBanner:empty { display: none; }
+.yr-switch-wrap { display: inline-flex; align-items: baseline; gap: 0; }
+.yr-sep { margin: 0 .55em; color: var(--ink-300); }
+.yr-switch { display: inline-flex; align-items: center; gap: 5px; padding: 0 0 1px; border: 0; border-bottom: 1px dotted var(--gold); background: none; cursor: pointer; font: inherit; letter-spacing: inherit; text-transform: inherit; color: var(--ink-700); line-height: 1.2; transition: color .12s ease, border-color .12s ease; }
+.yr-switch:hover, .yr-switch[aria-expanded="true"] { color: var(--ink); border-bottom-style: solid; }
+.yr-switch:focus-visible { outline: 2px solid var(--gold-300); outline-offset: 3px; border-radius: 2px; }
+.yr-switch-v { font-feature-settings: "tnum"; }
+.yr-switch-caret { width: 7px; height: 5px; color: var(--ink-400); transform: translateY(-1px); }
+.yr-switch.is-archived { color: var(--gold-700); border-bottom-color: var(--gold-700); }
+.yr-dot { width: 5px; height: 5px; border-radius: 999px; background: var(--gold); flex-shrink: 0; }
+.yr-solo { margin: 0 0 14px; }
+
+/* New-year prompt — across the top of every page while the rollover window is open */
+#yearDue:empty { display: none; }
+.yr-due { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 18px; padding: 16px 36px; background: var(--gold-100); border-bottom: 1px solid var(--gold-300); }
+@media (max-width: 1023px) { .yr-due { padding: 14px 20px; } }
+.yr-due-tag { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; padding: 3px 7px; border-radius: 3px; background: var(--ink); color: var(--gold-300); white-space: nowrap; }
+.yr-due-text { flex: 1 1 280px; min-width: 0; }
+.yr-due-t { font-family: var(--f-display); font-style: italic; font-size: 22px; line-height: 1.15; color: var(--ink); }
+.yr-due-s { font-size: 12.5px; color: var(--ink-600); margin-top: 3px; line-height: 1.45; text-wrap: pretty; }
+.yr-due-acts { display: flex; align-items: center; gap: 14px; }
+.yr-due-later { border: 0; background: none; font-family: var(--f-sans); font-size: 12.5px; font-weight: 600; color: var(--ink-600); cursor: pointer; text-decoration: underline; text-decoration-color: var(--gold); text-underline-offset: 3px; }
+.yr-due-later:hover { color: var(--ink); }
+.yr-due-go { padding: 10px 16px; font-size: 13px; white-space: nowrap; }
+/* Sidebar / More-sheet marker while the window is open */
+.nav-item[data-tab="year"].is-due .hint { color: var(--gold-700); display: flex; align-items: center; gap: 6px; }
+.nav-item[data-tab="year"].is-due .yr-dot { width: 6px; height: 6px; box-shadow: 0 0 0 3px var(--gold-100); }
+#tabNav [data-tab="year"].is-due .glyph, #moreSheet [data-tab="year"].is-due .glyph { color: var(--gold-700); }
+
+/* Year menu (popover) */
+.yr-menu { position: fixed; z-index: 70; background: var(--paper); border: 1px solid var(--paper-300); border-radius: 10px; box-shadow: 0 10px 28px rgba(20,17,15,.10); padding: 4px 6px 6px; }
+.yr-menu-head { font-family: var(--f-mono); font-size: 9px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-400); padding: 8px 10px 6px; }
+.yr-menu-item { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; column-gap: 8px; align-items: center; padding: 8px 10px; border: 0; background: transparent; border-radius: 8px; cursor: pointer; text-align: left; font-family: var(--f-sans); }
+.yr-menu-item:hover { background: var(--paper-100); }
+.yr-menu-item.is-active { background: #fff; box-shadow: inset 0 0 0 1px var(--paper-200); }
+.yr-menu-label { font-family: var(--f-display); font-size: 18px; line-height: 1.1; color: var(--ink); }
+.yr-menu-check { color: var(--gold-700); font-weight: 700; font-size: 13px; }
+.yr-menu-sub { grid-column: 1 / -1; font-family: var(--f-mono); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-500); margin-top: 3px; }
+.yr-menu-empty { padding: 4px 10px 10px; font-size: 12px; color: var(--ink-500); line-height: 1.45; }
+
+/* Archived-year banner — persistent above every tab while ACTIVE_YEAR is set */
+.yr-banner { position: sticky; top: 0; z-index: 25; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; padding: 10px 20px; background: var(--ink); color: var(--paper); }
+@media (max-width: 1023px) { .yr-banner { top: 57px; padding: 9px 16px; } }
+.yr-banner-tag { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; padding: 3px 7px; border-radius: 3px; background: var(--gold); color: var(--ink); white-space: nowrap; }
+.yr-banner-text { font-size: 13px; }
+.yr-banner-text b { font-family: var(--f-display); font-weight: 400; font-size: 17px; letter-spacing: .01em; }
+.yr-banner-link { font-size: 12px; font-weight: 600; color: var(--gold-300); text-decoration: none; }
+.yr-banner-link:hover { color: var(--paper); }
+.yr-banner-back { margin-left: auto; border: 1px solid var(--ink-500); background: transparent; color: var(--paper); border-radius: 8px; padding: 6px 12px; font-family: var(--f-sans); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.yr-banner-back:hover { border-color: var(--gold-300); color: var(--gold-300); }
+body.year-archived #main { background: var(--paper-100); }
+/* "All" range only exists inside an archive (week/month mean the whole year there) */
+.seg-control .yr-only { display: none; }
+body.year-archived .seg-control .yr-only { display: inline-block; }
+
+/* Live-year-only gate */
+.yr-gate { max-width: 560px; padding-top: 8px; }
+.yr-gate-actions { display: flex; gap: 10px; margin-top: 4px; }
+
+/* Years page */
+.yr-page { display: grid; gap: 24px; align-items: start; padding-bottom: 40px; }
+@media (min-width: 1024px) { .yr-page { grid-template-columns: minmax(0, 1fr) 340px; } .yr-page.is-single { grid-template-columns: minmax(0, 640px); } }
+.yr-past-h { margin-bottom: 10px; }
+.yr-past { display: flex; flex-direction: column; gap: 8px; }
+.yr-past-row { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; background: #fff; border: 1px solid var(--paper-200); border-radius: 12px; }
+.yr-past-row.is-open { border-color: var(--ink); }
+.yr-past-main { flex: 1; min-width: 0; }
+.yr-past-label { font-family: var(--f-display); font-size: 22px; line-height: 1; color: var(--ink); font-feature-settings: "lnum","tnum"; }
+.yr-past-dates { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-500); margin-top: 7px; }
+.yr-past-meta { font-size: 11.5px; color: var(--ink-400); margin-top: 3px; }
+.yr-past-acts { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.yr-past-link { font-size: 11.5px; font-weight: 600; color: var(--gold-700); text-decoration: none; white-space: nowrap; }
+.yr-past-link:hover { color: var(--ink); }
+.yr-past-viewing { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; padding: 4px 8px; border-radius: 999px; background: var(--ink); color: var(--gold-300); }
+.yr-past-empty { padding: 18px; border: 1px dashed var(--paper-300); border-radius: 12px; color: var(--ink-500); font-size: 12.5px; line-height: 1.5; background: var(--paper); }
+
+/* New-year rollover panel */
+.ny-card { background: #fff; border: 1px solid var(--paper-200); border-radius: 14px; padding: 22px 24px 8px; }
+.ny-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid var(--paper-200); margin-bottom: 14px; }
+.ny-title { font-family: var(--f-display); font-style: italic; font-size: 30px; line-height: 1.05; color: var(--ink); margin-top: 6px; }
+.ny-when { font-family: var(--f-mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-500); white-space: nowrap; }
+.ny-explain { font-size: 13px; line-height: 1.55; color: var(--ink-600); margin-bottom: 16px; text-wrap: pretty; }
+.ny-blocked { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-radius: 10px; background: var(--paper-100); border: 1px solid var(--paper-200); font-size: 13px; color: var(--ink-700); }
+.ny-blocked-mark { width: 24px; height: 24px; border-radius: 999px; background: #fff; box-shadow: inset 0 0 0 1px var(--paper-300); display: inline-flex; align-items: center; justify-content: center; font-family: var(--f-display); font-size: 12px; color: var(--ink-500); flex-shrink: 0; }
+.ny-step { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; padding: 16px 0; border-top: 1px solid var(--paper-200); }
+.ny-step-n { width: 26px; height: 26px; border-radius: 999px; border: 1px solid var(--paper-300); display: inline-flex; align-items: center; justify-content: center; font-family: var(--f-display); font-size: 14px; color: var(--ink-600); }
+.ny-step-t { font-size: 14px; font-weight: 700; color: var(--ink); margin: 3px 0 10px; }
+.ny-date, .ny-confirm { max-width: 220px; }
+.ny-confirm { font-family: var(--f-mono); letter-spacing: .06em; }
+.ny-hint { font-size: 12px; line-height: 1.5; color: var(--ink-500); margin-top: 8px; text-wrap: pretty; }
+.ny-warn { margin-top: 10px; padding: 10px 13px; border-radius: 10px; background: var(--gold-100); border: 1px solid var(--gold-300); font-size: 12.5px; line-height: 1.5; color: var(--ink-700); }
+.ny-warn.is-strong { background: var(--crimson-100); border-color: var(--crimson-500); color: var(--crimson-600); }
+.ny-error { margin-top: 10px; padding: 11px 14px; border-radius: 10px; background: var(--crimson-100); border: 1px solid var(--crimson-500); font-size: 12.5px; line-height: 1.5; color: var(--crimson-600); white-space: pre-wrap; }
+.ny-loading, .ny-running { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--ink-500); padding: 6px 0; }
+.ny-running { margin-top: 12px; }
+.ny-loading .spinner, .ny-running .spinner { width: 16px; height: 16px; margin: 0; border-width: 2px; flex-shrink: 0; }
+.ny-refresh { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--gold-700); margin-bottom: 8px; }
+.ny-pending { padding: 14px; border-radius: 12px; background: var(--gold-100); border: 1px solid var(--gold-300); margin-bottom: 6px; display: flex; flex-direction: column; gap: 10px; }
+.ny-pending-head { display: flex; align-items: center; gap: 11px; }
+.ny-pending-n { width: 28px; height: 28px; border-radius: 999px; background: var(--ink); color: var(--gold-300); display: inline-flex; align-items: center; justify-content: center; font-family: var(--f-display); font-size: 15px; flex-shrink: 0; }
+.ny-pending-t { font-size: 13.5px; font-weight: 700; color: var(--ink); }
+.ny-pending-s { font-size: 12px; color: var(--ink-600); }
+.ny-apol { background: #fff; padding: 12px 14px; margin: 0; }
+.ny-apol.is-em { border-color: var(--crimson-500); }
+.ny-apol-top { display: flex; gap: 12px; align-items: flex-start; }
+.ny-apol-name { font-size: 13px; font-weight: 600; color: var(--ink); }
+.ny-apol-sub { font-family: var(--f-mono); font-size: 10px; letter-spacing: .06em; color: var(--ink-500); margin-top: 4px; }
+.ny-apol-reason { font-size: 12.5px; font-style: italic; color: var(--ink-700); margin-top: 6px; line-height: 1.45; }
+.ny-apol-st { font-family: var(--f-mono); font-size: 9.5px; font-weight: 700; letter-spacing: .12em; color: var(--gold-700); }
+.ny-apol-acts { display: flex; gap: 6px; justify-content: flex-end; margin-top: 10px; }
+.btn-export.ny-app { border-color: var(--present); color: var(--present); }
+.btn-export.ny-rej { border-color: var(--crimson); color: var(--crimson-600); }
+.ny-sub-t { font-family: var(--f-mono); font-size: 9.5px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-500); margin: 18px 0 8px; display: flex; align-items: center; gap: 8px; }
+.ny-count { font-weight: 700; color: var(--ink); }
+.ny-table { border: 1px solid var(--paper-200); border-radius: 10px; overflow: hidden; }
+.ny-tr { display: grid; grid-template-columns: minmax(0, 1fr) 84px 130px; gap: 10px; align-items: baseline; padding: 8px 12px; font-size: 12.5px; color: var(--ink-700); border-top: 1px solid var(--paper-200); }
+.ny-tr:first-child { border-top: 0; }
+.ny-th { background: var(--paper); font-family: var(--f-mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-400); }
+.ny-tr > span:not(:first-child) { text-align: right; }
+.ny-tr .num { font-size: 16px; color: var(--ink); }
+.ny-tr em { font-style: normal; font-family: var(--f-mono); font-size: 9px; letter-spacing: .04em; color: var(--gold-700); }
+.ny-list { list-style: none; display: flex; flex-direction: column; gap: 5px; }
+.ny-list li { font-size: 12.5px; color: var(--ink-600); line-height: 1.45; }
+.ny-list b { color: var(--ink); font-weight: 600; }
+.ny-empty { font-size: 12px; color: var(--ink-400); }
+.ny-confirm-l { display: block; font-size: 12.5px; color: var(--ink-600); margin-bottom: 6px; }
+.ny-confirm-l b { font-family: var(--f-mono); color: var(--ink); }
+.ny-go { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin-top: 14px; padding-bottom: 8px; }
+.ny-go .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+.ny-go-pend { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--gold-700); }
+.ny-ro { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .1em; color: var(--ink-400); padding-bottom: 8px; }
+.ny-done { display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px; border-radius: 12px; background: var(--present-bg); border: 1px solid #C7DBC4; margin-bottom: 12px; }
+.ny-done-mark { width: 30px; height: 30px; border-radius: 999px; background: var(--present); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; }
+.ny-done-body { flex: 1; min-width: 0; }
+.ny-done-msg { font-size: 13.5px; line-height: 1.5; color: var(--ink); font-weight: 600; }
+.ny-done-sum { font-family: var(--f-mono); font-size: 10px; letter-spacing: .06em; color: var(--ink-600); margin-top: 6px; }
+.ny-done-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.ny-done-links a { text-decoration: none; }
+
+/* Activity log — session-card vocabulary: datebox per day, mono badges, display-italic subjects, a ledger rail */
+.act-toolbar { margin-bottom: 12px; }
+.act-fields { flex: 0 0 auto; }
+.act-by-btn { display: inline-flex; align-items: center; gap: 7px; border: 0; background: transparent; padding: 3px 6px 3px 4px; font-family: var(--f-sans); font-size: 12.5px; font-weight: 500; color: var(--ink); cursor: pointer; max-width: 190px; min-width: 0; }
+.act-by-btn > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.act-by-btn.is-empty > span { color: var(--ink-400); font-weight: 400; }
+.act-by-btn[aria-expanded="true"] .act-caret { transform: rotate(180deg); }
+#actActionBtn { max-width: 220px; }
+.act-pop-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--ink-300); flex-shrink: 0; margin: 0 4px 0 2px; }
+.act-pop-dot.t-green { background: var(--present); }
+.act-pop-dot.t-crimson { background: var(--crimson); }
+.act-pop-dot.t-gold { background: var(--gold); }
+.act-pop-dot.t-ink { background: var(--ink); }
+.act-pop-dot.is-all { background: none; box-shadow: inset 0 0 0 1px var(--ink-300); }
+.act-pop-item .act-pop-name.is-plain { font-weight: 500; }
+.act-caret { width: 8px; height: 5px; color: var(--ink-400); flex-shrink: 0; }
+/* People picker popover (yr-menu surface) */
+.act-pop { position: fixed; z-index: 70; width: 290px; background: var(--paper); border: 1px solid var(--paper-300); border-radius: 10px; box-shadow: 0 10px 28px rgba(20,17,15,.10); padding: 6px; }
+.act-pop-search { width: 100%; border: 1px solid var(--paper-300); border-radius: 8px; background: #fff; padding: 8px 10px; font-family: var(--f-sans); font-size: 12.5px; color: var(--ink); outline: none; margin-bottom: 4px; }
+.act-pop-search:focus { border-color: var(--ink); }
+.act-pop-list { max-height: 300px; overflow-y: auto; }
+.act-pop-item { width: 100%; display: flex; align-items: center; gap: 9px; padding: 7px 8px; border: 0; background: transparent; border-radius: 7px; cursor: pointer; text-align: left; font-family: var(--f-sans); }
+.act-pop-item:hover, .act-pop-item.is-hi { background: var(--paper-100); }
+.act-pop-item.is-active { background: #fff; box-shadow: inset 0 0 0 1px var(--paper-200); }
+.act-pop-item .act-av { width: 24px; height: 24px; font-size: 12px; }
+.act-pop-txt { min-width: 0; flex: 1; }
+.act-pop-name { font-size: 13px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.act-pop-mail { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .02em; color: var(--ink-400); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
+.act-pop-check { color: var(--gold-700); font-weight: 700; font-size: 12px; }
+.act-pop-sep { height: 1px; background: var(--paper-200); margin: 4px 2px; }
+.act-pop-empty { padding: 10px 8px; font-size: 12px; color: var(--ink-500); }
+.act-active .filter-chip .t { font-family: var(--f-mono); font-size: 8.5px; letter-spacing: .1em; text-transform: uppercase; opacity: .7; }
+.act-field { display: inline-flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px; border: 1px solid var(--paper-300); border-radius: 999px; background: var(--paper); transition: border-color .12s ease; min-width: 0; }
+.act-field:focus-within { border-color: var(--ink); }
+.act-field .filter-label { margin: 0; }
+.act-field input, .act-field select { border: 0; background: transparent; outline: none; font-family: var(--f-sans); font-size: 12.5px; font-weight: 500; color: var(--ink); padding: 3px 4px; min-width: 0; }
+.act-field input { width: 120px; }
+.act-field input::placeholder { color: var(--ink-400); font-weight: 400; }
+.act-field select { max-width: 210px; cursor: pointer; padding-right: 2px; }
+.act-field-grow { flex: 1 1 200px; }
+.act-field-grow input { width: 100%; }
+#activityActive:empty { display: none; }
+.act-active { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin: 0 0 14px; }
+.act-active .filter-chip { display: inline-flex; align-items: center; gap: 7px; }
+.act-active .filter-chip b { font-weight: 600; }
+.act-active .filter-chip .x { font-size: 13px; line-height: 1; opacity: .7; }
+.act-active .act-clear { border: 0; background: none; font-family: var(--f-sans); font-size: 12px; font-weight: 600; color: var(--ink-600); cursor: pointer; text-decoration: underline; text-decoration-color: var(--gold); text-underline-offset: 3px; }
+.act-active .act-clear:hover { color: var(--ink); }
+#activityList { padding-bottom: 32px; transition: opacity .15s ease; }
+#activityList.is-busy { opacity: .55; }
+.act-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.act-head-r { font-family: var(--f-mono); font-size: 9.5px; color: var(--ink-400); letter-spacing: .1em; text-transform: uppercase; }
+.act-day { background: var(--paper); border: 1px solid var(--paper-200); border-radius: 14px; margin-bottom: 12px; overflow: hidden; }
+.act-datebox { display: flex; align-items: baseline; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--paper-200); background: var(--paper-100); }
+.act-datebox .sess-daynum { font-size: 24px; margin: 0; }
+.act-datebox .sess-mon { color: var(--ink-600); }
+.act-daycount { margin-left: auto; font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-400); }
+.act-entries { padding: 4px 0; }
+.act-entry { display: grid; grid-template-columns: 50px 18px minmax(0, 1fr); column-gap: 10px; padding: 0 16px; }
+.act-time { font-family: var(--f-mono); font-size: 11px; font-weight: 600; color: var(--ink-500); padding-top: 11px; text-align: right; font-feature-settings: "tnum"; }
+.act-rail { position: relative; }
+.act-rail::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--paper-300); transform: translateX(-50%); }
+.act-entry:first-child .act-rail::before { top: 15px; }
+.act-entry:last-child .act-rail::before { bottom: auto; height: 15px; }
+.act-entry:only-child .act-rail::before { display: none; }
+.act-node { position: absolute; left: 50%; top: 15px; width: 9px; height: 9px; border-radius: 999px; transform: translateX(-50%); background: var(--ink-300); box-shadow: 0 0 0 3px var(--paper); margin-top: -4px; }
+.act-node.t-green { background: var(--present); }
+.act-node.t-crimson { background: var(--crimson); }
+.act-node.t-gold { background: var(--gold); }
+.act-node.t-ink { background: var(--ink); }
+.act-body { min-width: 0; padding: 8px 0 9px; border-top: 1px solid var(--paper-200); }
+.act-entry:first-child .act-body { border-top: 0; }
+.act-cardhead { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; }
+.act-cardhead .act-by { margin: 0 0 0 auto; }
+.act-badge { font-family: var(--f-mono); font-size: 8.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; background: var(--paper-100); color: var(--ink-600); box-shadow: inset 0 0 0 1px var(--paper-200); white-space: nowrap; }
+.act-badge.t-green { background: var(--present-bg); color: var(--present); box-shadow: none; }
+.act-badge.t-crimson { background: var(--crimson-100); color: var(--crimson-600); box-shadow: none; }
+.act-badge.t-gold { background: var(--gold-100); color: var(--gold-700); box-shadow: none; }
+.act-badge.t-ink { background: var(--ink); color: var(--gold-300); box-shadow: none; }
+.act-title { font-family: var(--f-display); font-style: italic; font-size: 17px; line-height: 1.15; color: var(--ink); margin-top: 4px; overflow-wrap: anywhere; }
+.act-details { font-size: 12px; color: var(--ink-600); line-height: 1.4; margin-top: 1px; overflow-wrap: anywhere; }
+.act-by { display: inline-flex; align-items: center; gap: 6px; margin-top: 5px; padding: 0; border: 0; background: none; cursor: pointer; font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-400); }
+.act-by:hover { color: var(--ink); }
+.act-by:hover .act-by-name { text-decoration: underline; text-decoration-color: var(--gold); text-underline-offset: 3px; }
+.act-av { width: 18px; height: 18px; border-radius: 999px; background: var(--paper-200); display: inline-flex; align-items: center; justify-content: center; font-family: var(--f-display); font-style: italic; font-size: 11px; color: var(--ink); letter-spacing: 0; text-transform: none; flex-shrink: 0; }
+.act-av.is-system { background: var(--ink); color: var(--gold-300); font-family: var(--f-mono); font-style: normal; font-size: 7px; font-weight: 700; letter-spacing: .04em; }
+.act-more { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0 0; }
+.act-more-n { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-400); }
+body.year-archived #actRangeSeg [data-range="7"], body.year-archived #actRangeSeg [data-range="30"] { display: none; }
+@media (min-width: 1024px) {
+  .act-toolbar { flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 10px; }
+  .act-fields { flex-wrap: nowrap; justify-content: flex-start; }
+  .act-field { flex-shrink: 0; }
+  .act-field-grow { flex: 1 1 auto; min-width: 200px; }
+  .act-day { display: grid; grid-template-columns: 100px minmax(0, 1fr); }
+  .act-datebox { flex-direction: column; align-items: center; justify-content: flex-start; gap: 0; padding: 18px 10px; border-bottom: 0; border-right: 1px solid var(--paper-200); text-align: center; }
+  .act-datebox .sess-daynum { font-size: 32px; margin-top: 2px; }
+  .act-daycount { margin: 10px 0 0; padding-top: 9px; border-top: 1px solid var(--paper-200); }
+  .act-entries { padding: 4px 6px; }
+  .act-entry { grid-template-columns: 54px 18px minmax(0, 1fr); padding: 0 18px 0 10px; }
+}
+@media (max-width: 1023px) {
+  .act-fields { justify-content: flex-start; }
+  .act-field, .act-field-grow { flex: 1 1 100%; }
+  .act-field input, .act-field select { flex: 1; width: auto; max-width: none; }
+  .act-entry { grid-template-columns: 40px 14px minmax(0, 1fr); column-gap: 8px; padding: 0 12px; }
+  .act-title { font-size: 16px; }
+}
+
+/* Communiqué drafts */
+#tab-communique .comm-subtabs { max-width: 460px; }
+.comm-draft-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; padding: 9px 12px; margin-bottom: 16px; border-radius: 10px; background: var(--paper-100); border: 1px solid var(--paper-200); font-size: 12.5px; color: var(--ink-700); line-height: 1.4; }
+.cds-tag { font-family: var(--f-mono); font-size: 8.5px; font-weight: 700; letter-spacing: .14em; padding: 2px 6px; border-radius: 3px; background: var(--ink); color: var(--gold-300); }
+.cds-tag.is-copy { background: var(--gold-100); color: var(--gold-700); box-shadow: inset 0 0 0 1px var(--gold-300); }
+.cds-new { margin-left: auto; border: 0; background: transparent; font-family: var(--f-sans); font-size: 12px; font-weight: 600; color: var(--ink-600); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.cds-new:hover { color: var(--ink); }
+#communiqueContent .comm-actions { display: flex; gap: 10px; align-items: stretch; margin-top: 4px; }
+#communiqueContent .comm-actions #btnSendComm { flex: 1; width: auto; margin-top: 0; }
+#communiqueContent #btnSaveDraft { padding: 12px 18px; font-size: 13.5px; white-space: nowrap; }
+.comm-draft-state { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-400); margin-top: 8px; min-height: 14px; }
+.comm-draft-state.is-saved { color: var(--present); }
+.comm-draft-state.is-dirty { color: var(--gold-700); }
+.comm-draft-state.is-flash { animation: draft-flash 1.2s ease; }
+@keyframes draft-flash { 0% { opacity: .2; } 30% { opacity: 1; } 100% { opacity: 1; } }
+.comm-draft-conflict { margin: 4px 0 12px; padding: 12px 14px; border-radius: 10px; background: var(--gold-100); border: 1px solid var(--gold-300); }
+.cdc-msg { font-size: 12.5px; line-height: 1.5; color: var(--ink-700); }
+.cdc-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; justify-content: flex-end; }
+.btn-export.cdc-strong { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+#commDraftsList { max-width: 780px; }
+.draft-group-h { margin: 6px 2px 10px; }
+.draft-row + .draft-group-h { margin-top: 22px; }
+.draft-row { display: flex; align-items: flex-start; gap: 14px; padding: 15px 17px; background: #fff; border: 1px solid var(--paper-200); border-radius: 12px; margin-bottom: 10px; }
+.draft-row.is-current { border-color: var(--ink); }
+.draft-row.is-saved { border-color: var(--present); animation: draft-flash 1.2s ease; }
+.draft-just { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: var(--present-bg); color: var(--present); }
+.draft-main { flex: 1; min-width: 0; }
+.draft-subject { font-size: 14px; font-weight: 600; color: var(--ink); line-height: 1.3; }
+.draft-subject.is-blank { color: var(--ink-400); font-style: italic; font-weight: 500; }
+.draft-preview { font-size: 12.5px; color: var(--ink-600); line-height: 1.45; margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.draft-meta { font-family: var(--f-mono); font-size: 9.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-400); margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.draft-corrupt { font-size: 12px; color: var(--crimson-600); margin-top: 4px; }
+.draft-side { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 9px; }
+.draft-owner, .draft-here { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draft-owner { background: var(--gold-100); color: var(--gold-700); }
+.draft-here { background: var(--ink); color: var(--gold-300); }
+.draft-acts { display: flex; gap: 6px; }
+
+/* Member Details withheld from section admins */
+.md-kv .v .restricted { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; background: var(--paper-200); color: var(--ink-500); }
+.md-info-foot { font-size: 11.5px; color: var(--ink-400); margin-top: 8px; line-height: 1.45; }
+
+/* Archived year: every action control hides, as for view-only access */
+body.year-archived [data-write],
+body.year-archived [onclick*="handleSubmit"],
+body.year-archived [onclick*="cancelRecording"],
+body.year-archived [onclick*="confirmOverwrite"],
+body.year-archived [onclick*="setAll("],
+body.year-archived [onclick*="setPrimary("],
+body.year-archived [onclick*="setSub("],
+body.year-archived [onclick*="editStatus("],
+body.year-archived [onclick*="saveChanges"],
+body.year-archived [onclick*="discardChanges"],
+body.year-archived [onclick*="sendReminder"],
+body.year-archived [onclick*="scheduleMeeting"],
+body.year-archived [onclick*="deleteMeeting"],
+body.year-archived [onclick*="manualEvaluate"],
+body.year-archived [onclick*="adminApprove"],
+body.year-archived [onclick*="adminReject"],
+body.year-archived [onclick*="adminRevoke"],
+body.year-archived [onclick*="removeCommAttachment"],
+body.year-archived [onclick*="insertCommToken"],
+body.year-archived [onclick*="ackProbation"],
+body.year-archived [onclick*="approveRejoin"],
+body.year-archived [onclick*="approveSectionTransfer"],
+body.year-archived [onclick*="approveNameChange"],
+body.year-archived [onclick*="approveCourseDetailsChange"],
+body.year-archived [onclick*="adminReinstateMember"],
+body.year-archived [onclick*="reinstateFlagged"],
+body.year-archived [onclick*="applyProbationCorrection"],
+body.year-archived .pof-notify,
+body.year-archived [onclick*="epSetHiatus"],
+body.year-archived [onclick*="epSetInactive"],
+body.year-archived [onclick*="epReactivate"],
+body.year-archived [onclick*="epReinstate"],
+body.year-archived [onclick*="showEditProfile"],
+body.year-archived [onclick*="submitEditProfile"],
+body.year-archived [onclick*="saveProfileEdits"],
+body.year-archived [onclick*="setProfileMode('edit')"],
+body.year-archived [onclick*="prefillOffense"],
+body.year-archived [onclick*="prefillReward"],
+body.year-archived [onclick*="submitOffense"],
+body.year-archived [onclick*="submitReward"],
+body.year-archived [onclick*="removeReward"],
+body.year-archived [onclick*="submitAddMember"],
+body.year-archived [onclick*="submitCommunique"],
+body.year-archived [onclick*="cancelScheduled"],
+body.year-archived [onclick*="requestRestart"],
+body.year-archived [onclick*="openApology"],
+body.year-archived [onclick*="submitMemberApology"],
+body.year-archived [onclick*="submitLtApology"],
+body.year-archived [onclick*="submitEmergencyApologyNow"],
+body.year-archived [onclick*="submitOnboarding"],
+body.year-archived [onclick*="sendBdayCard"],
+body.year-archived #quickActions,
+body.year-archived .submit-row,
+body.year-archived #membersModeToggle button[data-mode="add"],
+body.year-archived #membersModeToggle button[data-mode="offense"],
+body.year-archived #membersModeToggle button[data-mode="reward"],
+body.year-archived #myAttEmergencyDoor,
+body.year-archived [onclick*="emailSessionSummary"],
+body.year-archived [onclick*="editStatus"],
+body.year-archived [onclick*="nyApprove"],
+body.year-archived [onclick*="nyReject"],
+body.year-archived #reinstateFlagsPanel,
+body.year-archived #probationFlagsPanel,
+body.year-archived #membersModeToggle button[data-mode="roster"],
+body.year-archived #sessRangeSeg [data-range="week"],
+body.year-archived #sessRangeSeg [data-range="month"],
+body.year-archived #dashRangeSeg [data-range="week"],
+body.year-archived #dashRangeSeg [data-range="month"] { display: none !important; }
+
+/* ══ BACKEND UPDATE · 26 OCT 2026 ═════════════════════════════════════════
+   One apology per session · export "Include" picker + PDF · edit a meeting
+   ═════════════════════════════════════════════════════════════════ */
+/* Next-session card: the member's apology for this session, in place of the submit link */
+.na-st { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--gold-100); }
+.na-st-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--gold-700); margin-top: 5px; flex-shrink: 0; }
+.na-st-t { font-size: 12.5px; font-weight: 600; color: var(--ink); line-height: 1.4; text-wrap: pretty; }
+.na-st-b { font-size: 11.5px; color: var(--ink-600); line-height: 1.5; margin-top: 3px; }
+.na-st-s { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .1em; color: var(--gold-700); margin-top: 4px; }
+.na-ok { background: var(--present-bg); }
+.na-ok .na-st-dot { background: var(--present); }
+.na-ok .na-st-s { color: var(--present); }
+.na-muted { background: var(--paper-100); }
+.na-muted .na-st-dot { background: var(--ink-400); }
+.na-muted .na-st-s { color: var(--ink-500); }
+.na-no { background: var(--crimson-100); }
+.na-no .na-st-dot { background: var(--crimson); }
+.na-no .na-st-s { color: var(--crimson-600); }
+/* Apology page: chosen session already has one */
+.apol-confirm.muted { background: var(--paper-100); }
+.apol-confirm.muted .apol-confirm-mark, .apol-confirm.muted .apol-confirm-title { color: var(--ink-600); }
+.apol-confirm.refused { background: var(--crimson-100); }
+.apol-confirm.refused .apol-confirm-mark, .apol-confirm.refused .apol-confirm-title { color: var(--crimson-600); }
+/* Export pair (CSV + PDF) and the Include filter — the Activity log's Action / By field + act-pop menu */
+.xp { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.act-field.xw-field { flex: 0 0 auto; }
+.xw-field .act-by-btn { max-width: none; }
+.xw-field .act-by-btn > span { overflow: visible; }
+.act-pop.is-compact { width: 230px; }
+.act-pop-n { font-family: var(--f-mono); font-size: 10.5px; color: var(--ink-400); }
+.act-pop-item:focus-visible { outline: none; background: var(--paper-100); }
+.sess-who { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 16px; }
+.xp-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.sess-who-hint { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .1em; color: var(--ink-400); }
+#tab-sessions.sess-detail-open .sess-toolbar, #tab-sessions.sess-detail-open #sessBusy { display: none !important; }
+.sess-filter-empty { padding: 28px 16px; text-align: center; font-size: 12.5px; color: var(--ink-500); border: 1px dashed var(--paper-300); border-radius: 12px; }
+.sess-scope-note { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .1em; color: var(--gold-700); margin-top: 6px; }
+/* Meetings: Edit beside Delete; edit opens the Schedule fields in place */
+.meeting-acts { display: flex; gap: 6px; flex-shrink: 0; }
+.meeting-edit { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--paper-300); background: var(--paper); color: var(--ink-700); font-family: var(--f-sans); font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.meeting-edit:hover { border-color: var(--ink); color: var(--ink); }
+.meeting-item.meeting-editing { display: block; background: #fff; border-color: var(--ink); padding: 14px 14px 12px; }
+.mtg-edit-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.mtg-edit-was { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: .08em; color: var(--ink-400); }
+.mtg-edit-note { font-size: 11.5px; color: var(--ink-500); line-height: 1.5; margin: 2px 0 12px; }
+.mtg-edit-acts { display: flex; justify-content: flex-end; gap: 8px; }
+.checkbox-label.is-locked { opacity: .4; cursor: default; }
 </style>
 </head>
 <body>
@@ -1759,6 +2178,11 @@ body.view-only #myAttEmergencyDoor { display: none !important; }
     <!-- Mobile bottom-tab nav (rendered by Scripts) -->
     <nav class="tab-nav" id="tabNav"></nav>
 
+    <!-- Archived-year banner (ACTIVE_YEAR set; injected by renderYearChrome) -->
+    <div id="yearBanner"></div>
+    <!-- New-year prompt (full admins, 1 Nov until started; injected by paintYearDue) -->
+    <div id="yearDue"></div>
+
     <!-- Membership notice mount (admin whose own membership is paused; injected by Scripts) -->
     <div id="membershipNotice"></div>
 
@@ -1887,6 +2311,7 @@ body.view-only #myAttEmergencyDoor { display: none !important; }
           <div class="seg-control" id="sessRangeSeg">
             <button data-range="week" onclick="segSelect(this); sessToggleCustom(); sessFiltersChanged()">This week</button>
             <button class="active" data-range="month" onclick="segSelect(this); sessToggleCustom(); sessFiltersChanged()">This month</button>
+            <button class="yr-only" data-range="all" onclick="segSelect(this); sessToggleCustom(); sessFiltersChanged()">All</button>
             <button data-range="custom" onclick="segSelect(this); sessToggleCustom(); sessFiltersChanged()">Custom</button>
           </div>
           <div class="sess-custom" id="sessCustomRange" style="display:none">
@@ -1901,13 +2326,14 @@ body.view-only #myAttEmergencyDoor { display: none !important; }
             <button class="filter-chip" data-type="practice" onclick="chipSelect(this); sessFiltersChanged()">Practices</button>
             <button class="filter-chip" data-type="meeting" onclick="chipSelect(this); sessFiltersChanged()">Meetings</button>
           </div>
-          <button class="btn-export" onclick="exportSessionsList && exportSessionsList()">Export · CSV</button>
+          <div class="xp"><button class="btn-export" onclick="exportSessionsList('csv')">Export · CSV</button><button class="btn-export" onclick="exportSessionsList('pdf')">PDF</button></div>
         </div>
       </div>
 
       <!-- LIST mount. renderSessionsList() replaces the inner HTML with .session-card rows.
            Starts as a loading state: a static demo here was being mistaken for real data
            whenever the loader didn't run. Card markup contract lives in renderSessionsList(). -->
+      <div class="dash-busy" id="sessBusy" hidden></div>
       <div id="sessionsList">
         <div class="loading"><div class="spinner"></div><div>Loading sessions…</div></div>
       </div>
@@ -1940,6 +2366,7 @@ body.view-only #myAttEmergencyDoor { display: none !important; }
           <div class="seg-control" id="dashRangeSeg">
             <button data-range="week" onclick="segSelect(this); dashToggleCustom(); dashFiltersChanged()">This week</button>
             <button class="active" data-range="month" onclick="segSelect(this); dashToggleCustom(); dashFiltersChanged()">This month</button>
+            <button class="yr-only" data-range="all" onclick="segSelect(this); dashToggleCustom(); dashFiltersChanged()">All</button>
             <button data-range="custom" onclick="segSelect(this); dashToggleCustom(); dashFiltersChanged()">Custom</button>
           </div>
           <div class="sess-custom" id="dashCustomRange" style="display:none">
@@ -2467,6 +2894,7 @@ body.view-only #myAttEmergencyDoor { display: none !important; }
         </div>
         <div class="comm-subtabs">
           <button type="button" class="comm-subtab is-active" id="commSubtabCompose" onclick="showCommSubtab('compose')">Compose</button>
+          <button type="button" class="comm-subtab" id="commSubtabDrafts" onclick="showCommSubtab('drafts')">Drafts <span class="comm-subtab-count" id="commDraftsCount" style="display:none">0</span></button>
           <button type="button" class="comm-subtab" id="commSubtabScheduled" onclick="showCommSubtab('scheduled')">Scheduled <span class="comm-subtab-count" id="commScheduledCount" style="display:none">0</span></button>
         </div>
         <div id="commComposePane">
@@ -2478,6 +2906,9 @@ body.view-only #myAttEmergencyDoor { display: none !important; }
               <div id="communiquePreview"><div class="empty-pane">Live letterhead preview will show here.</div></div>
             </div>
           </div>
+        </div>
+        <div id="commDraftsPane" style="display:none">
+          <div id="commDraftsList"><div class="empty-pane">No drafts.</div></div>
         </div>
         <div id="commScheduledPane" style="display:none">
           <div id="commScheduledList"><div class="empty-pane">Nothing scheduled yet.</div></div>
@@ -2494,6 +2925,51 @@ body.view-only #myAttEmergencyDoor { display: none !important; }
         <p class="subtitle">See who’s celebrating and send a little joy — a card, a group shout-out, or a printable poster.</p>
       </div>
       <div id="birthdaysContent"><div class="loading"><div class="spinner"></div><div>Loading birthdays…</div></div></div>
+    </section>
+
+    <!-- ─── ACTIVITY LOG TAB (full admins + Super Admin · getActivityLog) ─── -->
+    <section id="tab-activity" class="tab-page" data-screen-label="Activity log">
+      <div class="section-head">
+        <div class="eyebrow">Audit trail · admin</div>
+        <span class="gold-rule"></span>
+        <h2>Activity log.</h2>
+        <p class="subtitle">Every significant change made through the app, newest first — who did it, to whom, and when.</p>
+      </div>
+      <!-- Filters. activityFilters() reads #actRangeSeg, #actFrom/#actTo, #actAction, #actActor, #actSearch. -->
+      <div class="sess-toolbar act-toolbar">
+        <div class="filter-group">
+          <span class="filter-label">When</span>
+          <div class="seg-control" id="actRangeSeg">
+            <button class="active" data-range="all" onclick="segSelect(this); actRangeChanged()">All</button>
+            <button data-range="7" onclick="segSelect(this); actRangeChanged()">7 days</button>
+            <button data-range="30" onclick="segSelect(this); actRangeChanged()">30 days</button>
+            <button data-range="custom" onclick="segSelect(this); actRangeChanged()">Custom</button>
+          </div>
+          <div class="sess-custom" id="actCustomRange" style="display:none">
+            <input type="date" id="actFrom" onchange="activityChanged()">
+            <span style="color:var(--ink-400)">→</span>
+            <input type="date" id="actTo" onchange="activityChanged()">
+          </div>
+        </div>
+        <div class="filter-group act-fields">
+          <div class="act-field"><span class="filter-label">Action</span><button type="button" id="actActionBtn" class="act-by-btn is-empty" onclick="toggleActionMenu(this)" aria-haspopup="listbox"><span id="actActionLabel">All actions</span><svg class="act-caret" viewBox="0 0 8 5" aria-hidden="true"><path d="M.5.5 4 4 7.5.5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button></div>
+          <div class="act-field act-field-by"><span class="filter-label">By</span><button type="button" id="actByBtn" class="act-by-btn is-empty" onclick="toggleActorMenu(this)" aria-haspopup="listbox"><span id="actByLabel">Anyone</span><svg class="act-caret" viewBox="0 0 8 5" aria-hidden="true"><path d="M.5.5 4 4 7.5.5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button></div>
+          <label class="act-field act-field-grow"><span class="filter-label">Find</span><input type="search" id="actSearch" placeholder="Name, subject or a date — 15/9/26, 15th Sep" autocomplete="off" oninput="activityChanged(true)"></label>
+        </div>
+      </div>
+      <div id="activityActive"></div>
+      <div class="dash-busy" id="actBusy" hidden></div>
+      <div id="activityList"><div class="loading"><div class="spinner"></div><div>Loading activity…</div></div></div>
+    </section>
+
+    <!-- ─── CHORALE YEAR PAGE (opened from the year chip · past years + new-year rollover) ─── -->
+    <section id="tab-year" class="tab-page" data-screen-label="Chorale year">
+      <div id="yearPage"><div class="loading"><div class="spinner"></div><div>Loading the chorale year…</div></div></div>
+    </section>
+
+    <!-- ─── ARCHIVED-YEAR GATE (a live-year-only tab opened while viewing a past year) ─── -->
+    <section id="tab-yeargate" class="tab-page" data-screen-label="Live year only">
+      <div id="yearGate"></div>
     </section>
 
     <!-- ─── PROFILE PAGE (opened by tapping your avatar) ─── -->

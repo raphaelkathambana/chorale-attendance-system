@@ -333,6 +333,7 @@ function renderViewTab() {
   else if (viewMode === "scoreboard") h += isManagement() ? renderScoreboardView() : renderByDateView();
   else if (viewMode === "apologies")  h += renderApologiesView();
   root.innerHTML = h;
+  if (activeTab === "view") placeYearSwitch();
 }
 
 function renderByDateView() {
@@ -354,8 +355,7 @@ function renderByDateView() {
             +   '<input type="date" id="exportStart">'
             +   '<input type="date" id="exportEnd" value="' + todayStr() + '">'
             + '</div>'
-            + '<div class="export-row"><button class="btn-export" onclick="exportDateRange(\'csv\')">CSV</button>'
-            +   '<button class="btn-export" onclick="exportDateRange(\'pdf\')">PDF</button></div>'
+            + '<div class="export-row">' + exportControlsHtml('range', 'exportDateRange') + '</div>'
             + '</div>';
   // Date list
   listHtml += '<div class="eyebrow" style="margin-bottom:8px">Sessions</div><div id="viewDateList">';
@@ -400,9 +400,8 @@ function renderDateDetail() {
   h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;gap:12px;flex-wrap:wrap">'
      +   '<div><div class="eyebrow">' + viewGroup.toUpperCase() + '</div>'
      +   '<h2 style="margin-top:4px">' + formatDateDisplay(viewCurrentDate) + '</h2></div>'
-     +   '<div style="display:flex;gap:6px">'
-     +     '<button class="btn-export" onclick="exportSingleDate(\'csv\')">CSV</button>'
-     +     '<button class="btn-export" onclick="exportSingleDate(\'pdf\')">PDF</button>'
+     +   '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'
+     +     exportControlsHtml('date', 'exportSingleDate')
      +     '<button class="btn-export" onclick="emailSessionSummary(viewCurrentDate, viewGroup)">Email admins</button>'
      +   '</div>'
      + '</div>';
@@ -768,7 +767,8 @@ function probSegBar(d, segH) {
     var c = PROB_SEG_COLOR[seq[i].status] || "var(--paper-300)";
     // Entries carry groups[]/sessionKey — name the section(s) the session belonged to.
     var sgs = seq[i].groups || (seq[i].sessionKey ? String(seq[i].sessionKey).split(",") : []);
-    var tip = (seq[i].status || "") + (sgs.length ? " \u00b7 " + sgs.join(", ") : "") + (seq[i].date ? " \u00b7 " + seq[i].date : "");
+    var tip = (seq[i].status || "") + (sgs.length ? " \u00b7 " + sgs.join(", ") : "") + (seq[i].date ? " \u00b7 " + seq[i].date : "")
+            + (seq[i].carried ? " \u00b7 from last year" : "");
     out += '<div title="' + esc(tip) + '" style="flex:1;height:' + segH + 'px;box-sizing:border-box;border-radius:2px;background:' + c + '"></div>';
   }
   for (var p = 0; p < pending; p++) {
@@ -1209,7 +1209,7 @@ function renderApologyDetail() {
     h += '<div class="em-callout" style="margin-top:0;margin-bottom:20px">'
       +    '<div class="em-callout-mark">!</div>'
       +    '<div class="em-callout-body">Filed after the deadline had passed, so nothing has been applied. This one needs '
-      +      (isReadOnly() ? 'an admin\u2019s' : 'your') + ' decision either way \u2014 approving corrects the register for '
+      +      (isLocked() ? 'an admin\u2019s' : 'your') + ' decision either way \u2014 approving corrects the register for '
       +      esc(formatDateDisplay(a.date)) + ' retroactively; rejecting leaves the record as it stands.</div>'
       + '</div>';
   }
@@ -1226,7 +1226,7 @@ function renderApologyDetail() {
   if (a.status === "Pending" && a.type === "Section Transfer") {
     var fromG = toGroupArr(pr.before);
     var toG   = toGroupArr(pr.after);
-    h += '<div class="eyebrow" style="margin-bottom:8px">' + (isReadOnly() ? 'If approved' : 'If you approve') + '</div>'
+    h += '<div class="eyebrow" style="margin-bottom:8px">' + (isLocked() ? 'If approved' : 'If you approve') + '</div>'
       +  '<div class="consequence-preview">'
       +    groupChipRow(fromG.length ? fromG : ['\u2014'])
       +    '<span class="consequence-arrow">\u2192</span>'
@@ -1235,7 +1235,7 @@ function renderApologyDetail() {
   } else if (a.status === "Pending" && a.type === "Name Change") {
     var oldN = pr.before || a.name || '';
     var newN = pr.after || '';
-    h += '<div class="eyebrow" style="margin-bottom:8px">' + (isReadOnly() ? 'If approved' : 'If you approve') + '</div>'
+    h += '<div class="eyebrow" style="margin-bottom:8px">' + (isLocked() ? 'If approved' : 'If you approve') + '</div>'
       +  '<div class="consequence-preview">'
       +    '<span style="font-size:14px;color:var(--ink-500);text-decoration:line-through">' + esc(oldN) + '</span>'
       +    '<span class="consequence-arrow">\u2192</span>'
@@ -1244,7 +1244,7 @@ function renderApologyDetail() {
   } else if (a.status === "Pending" && a.type === "Course Details") {
     var oldC = pr.before || '';
     var newC = pr.after || '';
-    h += '<div class="eyebrow" style="margin-bottom:8px">' + (isReadOnly() ? 'If approved' : 'If you approve') + '</div>'
+    h += '<div class="eyebrow" style="margin-bottom:8px">' + (isLocked() ? 'If approved' : 'If you approve') + '</div>'
       +  '<div class="consequence-preview">'
       +    (oldC ? '<span style="font-size:14px;color:var(--ink-500);text-decoration:line-through">' + esc(oldC) + '</span>'
       +            '<span class="consequence-arrow">\u2192</span>' : '')
@@ -1252,7 +1252,7 @@ function renderApologyDetail() {
       + '</div>';
   } else if (a.status === "Pending" && a.type === "Rejoin Request") {
     var rjFirst = ((a.name || "").trim().split(/\s+/)[0]) || "They";
-    h += '<div class="eyebrow" style="margin-bottom:8px">' + (isReadOnly() ? 'If approved' : 'If you approve') + '</div>'
+    h += '<div class="eyebrow" style="margin-bottom:8px">' + (isLocked() ? 'If approved' : 'If you approve') + '</div>'
       +  '<div class="consequence-preview">'
       +    '<span class="inactive-tag" style="font-size:11px;padding:4px 9px">INACTIVE</span>'
       +    '<span class="consequence-arrow">\u2192</span>'
@@ -1263,7 +1263,7 @@ function renderApologyDetail() {
     var fromStatus = a.kind === "late" ? "Late Unexcused" : "Absent Unexcused";
     var toStatus   = a.kind === "late" ? "Late Excused"   : "Absent Excused";
     if (a.kind === "emergency") { fromStatus = "Unexcused"; toStatus = "Excused"; }
-    h += '<div class="eyebrow" style="margin-bottom:8px">' + (isReadOnly() ? 'If approved' : 'If you approve') + '</div>'
+    h += '<div class="eyebrow" style="margin-bottom:8px">' + (isLocked() ? 'If approved' : 'If you approve') + '</div>'
       +  '<div class="consequence-preview">'
       +    '<span class="status-badge Absent">' + fromStatus + '</span>'
       +    '<span class="consequence-arrow">\u2192</span>'
@@ -1272,7 +1272,7 @@ function renderApologyDetail() {
   }
 
   // Inline review note (replaces the prompt popup) — never for view-only access
-  if (a.status === "Pending" && !isReadOnly()) {
+  if (a.status === "Pending" && !isLocked()) {
     h += '<div style="margin-top:20px">'
       +    '<div class="eyebrow" style="margin-bottom:8px">Review note (optional)</div>'
       +    '<textarea id="apologyNote" placeholder="Add a note — shown to the member and kept on record." style="min-height:70px;resize:vertical;font-style:normal"></textarea>'
@@ -1280,10 +1280,11 @@ function renderApologyDetail() {
   }
 
   // Actions
-  if (a.status === "Pending" && isReadOnly()) {
-    // View-only: the queue reports, it never decides. No note, no Skip, no verdict.
+  if (a.status === "Pending" && isLocked()) {
+    // View-only (or an archived year): the queue reports, it never decides. No note, no Skip, no verdict.
     h += '<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--paper-200);text-align:right;'
-      +    'font-family:var(--f-mono);font-size:9.5px;letter-spacing:.1em;color:var(--ink-400)">VIEW ONLY \u00b7 NO DECISION FROM THIS ACCOUNT</div>';
+      +    'font-family:var(--f-mono);font-size:9.5px;letter-spacing:.1em;color:var(--ink-400)">'
+      +    (isArchiveView() ? esc(ACTIVE_YEAR) + ' \u00b7 ARCHIVED \u00b7 LEFT UNRESOLVED' : 'VIEW ONLY \u00b7 NO DECISION FROM THIS ACCOUNT') + '</div>';
   } else if (a.status === "Pending") {
     h += '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">'
       +    '<button class="btn btn-secondary" style="padding:10px 18px;font-size:13px" onclick="selectApology(null)">Skip</button>';
@@ -1649,15 +1650,22 @@ function memberInfoHtml(name) {
   if (d === undefined) { loadMemberDetails(name); return '<div class="md-info-loading"><div class="spinner"></div></div>'; }
   if (d.__error) return '<p class="md-info-note">' + esc(d.__error) + '</p>';
   var keys = ['courseFaculty','courseName','yearOfStudy','gender','dateOfBirth','nationality','residence','passportNumber','nationalIdNumber','nokName','nokRelationship','nokPhone','nokResidence'];
-  if (!keys.some(function (k) { return d[k] && String(d[k]).trim(); })) {
+  if (!keys.some(function (k) { return d[k] && String(d[k]).trim(); }) && !(d.redacted || []).length) {
     return '<p class="md-info-note">No additional details on file yet. They are collected at onboarding.</p>';
   }
-  function row(k, v) { return '<div class="md-kv"><span class="k">' + k + '</span><span class="v">' + (v ? esc(v) : '<span class="nil">\u2014</span>') + '</span></div>'; }
+  // Section admins get passport, national ID and next of kin blank, listed in redacted[].
+  var red = d.redacted || [];
+  function row(k, v, key) {
+    var hidden = key && red.indexOf(key) !== -1;
+    return '<div class="md-kv"><span class="k">' + k + '</span><span class="v">'
+         + (hidden ? '<span class="restricted" title="Full admins only">Restricted</span>' : v ? esc(v) : '<span class="nil">\u2014</span>') + '</span></div>';
+  }
   function block(t, rows) { return '<div class="eyebrow" style="margin:14px 0 6px;font-size:9.5px">' + t + '</div><div class="md-box">' + rows + '</div>'; }
   return block('Academic', row('FACULTY', d.courseFaculty) + row('COURSE', d.courseName) + row('YEAR', d.yearOfStudy))
        + block('Personal', row('GENDER', d.gender) + row('BORN', fmtDob(d.dateOfBirth)) + row('NATIONALITY', d.nationality)
-               + row('RESIDENCE', d.residence) + row('PASSPORT', d.passportNumber) + row('NATIONAL ID', d.nationalIdNumber))
-       + block('Next of kin', row('NAME', d.nokName) + row('RELATIONSHIP', d.nokRelationship) + row('PHONE', d.nokPhone) + row('RESIDENCE', d.nokResidence));
+               + row('RESIDENCE', d.residence) + row('PASSPORT', d.passportNumber, 'passportNumber') + row('NATIONAL ID', d.nationalIdNumber, 'nationalIdNumber'))
+       + block('Next of kin', row('NAME', d.nokName, 'nokName') + row('RELATIONSHIP', d.nokRelationship, 'nokRelationship') + row('PHONE', d.nokPhone, 'nokPhone') + row('RESIDENCE', d.nokResidence, 'nokResidence'))
+       + (red.length ? '<p class="md-info-foot">Identity documents and next of kin are visible to full admins only.</p>' : '');
 }
 function memberInfoSection(m) {
   if (!canViewMemberDetails()) return "";
@@ -1862,7 +1870,7 @@ function renderMemberDetail() {
     actions += '<button class="btn btn-green" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="prefillReward(\'' + safeNm + '\')">Award reward</button>';
     actions += '<button class="btn btn-crimson" style="flex:1;padding:9px 14px;font-size:12.5px" onclick="prefillOffense(\'' + safeNm + '\')">Record offense</button>';
   }
-  if (isReadOnly()) actions = "";   // view-only: roster detail reports, never acts
+  if (isLocked()) actions = "";   // view-only / archived year: roster detail reports, never acts
   var info = memberInfoSection(m);
   h += info;
   if (actions) h += '<div style="display:flex;gap:8px' + (info ? ';margin-top:14px' : '') + '">' + actions + '</div>';
@@ -2309,6 +2317,8 @@ function setMembersMode(mode) {
   if ((mode === 'scoreboard' || mode === 'offense') && !isManagement()) mode = 'roster';
   // Add / Record offense / Award reward are write-only panes — view-only lands on the roster.
   if (isReadOnly() && (mode === 'add' || mode === 'offense' || mode === 'reward')) mode = 'roster';
+  // Past years keep standings and per-member history; the roster and the write panes are live.
+  if (isArchiveView() && (mode === 'roster' || mode === 'add' || mode === 'offense' || mode === 'reward')) mode = isManagement() ? 'scoreboard' : 'member';
   var btns = document.querySelectorAll('#membersModeToggle button');
   for (var b = 0; b < btns.length; b++) btns[b].className = (btns[b].getAttribute('data-mode') === mode) ? 'active' : '';
   // Leaving the roster resets the mobile master-detail back to the list view.
@@ -2547,6 +2557,7 @@ function submitReward() {
     loadRewardLog();
   }).withFailureHandler(function (e) {
     done();
+    if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }
     showToast(serverError(e), "error");
   }).addReward(date, name, category, desc, points);
 }
@@ -2801,6 +2812,7 @@ var myAttNextInfo = null, myAttNextFetched = false;
 function setMyAttNextSession(info) {
   if (info && info.length !== undefined) {
     var list = info;
+    upcomingCache = list.slice();
     info = null;
     for (var i = 0; i < list.length; i++) {
       if (list[i] && list[i].date) { info = list[i]; break; }
@@ -2828,7 +2840,11 @@ function paintMyAttNextSession() {
     +  '<div style="font-size:12px;color:var(--ink-600);margin-top:10px;line-height:1.5">' + ((info.kind || info.type) ? esc(info.kind || info.type) + ' · ' : '') + fmtTime12(info.time)
     +    ((info.venue || info.title) ? '<br><span style="color:var(--ink-500)">' + esc(info.venue || info.title) + '</span>' : '')
     +  '</div>';
-  if (info.deadlinePassed) {
+  if (info.myApology && !isReadOnly()) {
+    // One apology per session: show where this one stands instead of the submit link.
+    if (info.withinGrace) h += '<div style="margin-top:12px;font-size:11.5px;color:var(--ink-600);line-height:1.5">Underway now \u2014 started ' + fmtTime12(info.time) + '.</div>';
+    h += myApologyStatusHtml(info.myApology);
+  } else if (info.deadlinePassed) {
     // withinGrace means the session has actually begun — say so, rather than only
     // that the apology window shut.
     h += '<div style="margin-top:12px;font-size:11.5px;color:var(--crimson-600);line-height:1.5">'
@@ -2893,7 +2909,7 @@ function paintEmergencyDoor() {
   var o = emergencyOption;
   scheduleEmergencyExpiry(o);
   syncEmergencyHint();
-  if (!o || !o.eligible || o.phase !== "prominent") { el.style.display = "none"; el.innerHTML = ""; return; }
+  if (!o || !o.eligible || o.phase !== "prominent" || emergencyHasApology(o)) { el.style.display = "none"; el.innerHTML = ""; return; }
   var closes = o.closesAt ? String(o.closesAt).split(" ") : null;
   el.style.display = "block";
   el.innerHTML = '<div class="em-door" onclick="openApology(&#39;emergency&#39;)">'
@@ -3160,6 +3176,8 @@ function setProfileMode(m) { profileMode = m; renderProfile(); }
 // ─── Apology sub-page (opened from My attendance) ──────────────────────────
 function openApology(mode) {
   if (roBlock()) return;
+  // No Members row → no apology of their own (submitApology throws for it now).
+  if (!isMemberAccount()) { showToast("This account has no membership record, so there is no apology to file.", "info"); return; }
   switchTab("apology");
   // Emergency is only ever reached from the "deadline has passed" card, never from
   // the toggle — so opening in that mode locks the page to the emergency form.
@@ -3359,7 +3377,7 @@ function saveProfileEdits() {
     renderProfile();
     showToast("Profile saved." + (pendingBits.length ? " Requests sent for approval." : ""), "success");
   }
-  function fail(e) { btn.disabled = false; btn.textContent = "Save changes"; showToast("Failed: " + e.message, "error"); }
+  function fail(e) { btn.disabled = false; btn.textContent = "Save changes"; if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; } showToast("Failed: " + e.message, "error"); }
 
   if (phoneChanged) {
     google.script.run.withSuccessHandler(function () { profileData.phone = newPhone; finishOne(); })
@@ -3539,6 +3557,7 @@ function renderTabNav() {
   var pLabel = document.getElementById("sidebarPersonalLabel");
   if (pNav) pNav.innerHTML = personalHtml;
   if (pLabel) pLabel.style.display = personalHtml ? "" : "none";
+  if (typeof markYearNav === "function") markYearNav();
 }
 
 // "More" overflow sheet (mobile) — holds the admin tabs that don't fit the bottom bar.
@@ -3669,7 +3688,7 @@ function serverError(e) {
 // Every Approve / Reject / Decline / Revoke button for one queue row, so deciding
 // a row locks all of its buttons, not just the one clicked.
 function decisionButtons(rowIndex) {
-  var re = new RegExp("^(adminApprove|adminReject|adminRevoke|adminApproveRestart|approveRejoin|approveSectionTransfer|approveNameChange|approveCourseDetailsChange)\\((?:'(?:[^'\\\\]|\\\\.)*',)?" + rowIndex + "[,)]");
+  var re = new RegExp("^(nyApprove|nyReject|adminApprove|adminReject|adminRevoke|adminApproveRestart|approveRejoin|approveSectionTransfer|approveNameChange|approveCourseDetailsChange)\\((?:'(?:[^'\\\\]|\\\\.)*',)?" + rowIndex + "[,)]");
   return [].filter.call(document.querySelectorAll("button[onclick]"), function (b) { return re.test(b.getAttribute("onclick") || ""); });
 }
 function beginDecision(rowIndex) {
@@ -3685,7 +3704,16 @@ function showToast(m, t) {
   e.className = "toast " + t;
   e.textContent = m;
   document.body.appendChild(e);
-  setTimeout(function () { e.remove(); }, 5000);
+  // Partial-save warnings carry reasons worth reading — give them longer.
+  setTimeout(function () { e.remove(); }, t === "warning" ? 9000 : 5000);
+}
+
+// True for the backend's duplicate-guard messages ("Already submitted ..." /
+// "Still processing ..."). Show these as a neutral notice, not an error.
+// (Also tolerates the "Exception: " prefix Apps Script can add to a server error.)
+function isDuplicateNotice(err) {
+  var m = (err && err.message) || String(err || "");
+  return /^(?:(?:Exception|Error):\s*)?(Already submitted|Still processing)/.test(m);
 }
 
 function todayStr() {
@@ -3771,8 +3799,14 @@ function isReadOnly()     { return !!userAccess.readOnly; }
 // flag, not the role, so any future non-member admin account is covered too.
 function isMemberAccount() { return userAccess.isMember !== false; }
 // Defence in depth behind the hidden controls — guards every mutating handler.
-function roBlock() { if (!isReadOnly()) return false; showToast("Your access is view-only.", "error"); return true; }
-function canEditHistory() { return userRole === "admin" || userRole === "sectionAdmin"; }
+function roBlock() {
+  if (isArchiveView()) { showToast("You\u2019re viewing " + ACTIVE_YEAR + " \u2014 archived years are read-only.", "info"); return true; }
+  if (!isReadOnly()) return false; showToast("Your access is view-only.", "error"); return true;
+}
+// An archived year is read-only for everyone (see §12a).
+function isArchiveView() { return !!ACTIVE_YEAR; }
+function isLocked() { return isReadOnly() || isArchiveView(); }
+function canEditHistory() { return !isArchiveView() && (userRole === "admin" || userRole === "sectionAdmin"); }
 // Points, rankings, the scoreboard and the disciplinary log are MANAGEMENT-ONLY:
 // admin + sectionAdmin. Elevated reps keep their register and dashboards but lose
 // these (getScoreboard / getOffenseList throw for them server-side), and members
@@ -3786,6 +3820,11 @@ function activeTabs() {
   return adminTabs.filter(function (t) {
     if (t.id === "birthdays") return isFullAdmin();
     if (t.id === "requests")  return userRole !== "elevated";
+    // Activity log: full admins + Super Admin (getActivityLog requires admin level).
+    if (t.id === "activity")  return userRole === "admin" || userRole === "superAdmin";
+    // Chorale year: only while the backend says the new year can be started (from 1 November
+    // until it's started). Full admins; Super Admin sees it preview-only.
+    if (t.id === "year")      return typeof yearTabVisible === "function" && yearTabVisible();
     // Record is an input surface only — view-only access has nothing to do there.
     if (t.id === "record")    return !isReadOnly();
     // Communiqués are deliberately excluded from view-only access: a mass send is
@@ -3833,6 +3872,7 @@ function applyRoleScopeUI() {
   }
   lockSectionChips("sessSectionChips");
   lockSectionChips("dashSectionChips");
+  lockMeetingGroups(document);
 }
 function lockSectionChips(boxId) {
   var box = document.getElementById(boxId);
@@ -3872,7 +3912,7 @@ function applyReadOnlyUI() {
 
 // Apology is NOT a top-level tab — it is a sub-page reached from My attendance
 // (keeps "My attendance" active in the nav, like the Profile sub-page).
-var adminTabs  = [{ id: "record", label: "Record" }, { id: "sessions", label: "Sessions" }, { id: "members", label: "Members" }, { id: "probation", label: "Probation", short: "Prob." }, { id: "requests", label: "Requests", short: "Reqs" }, { id: "dashboard", label: "Group Dashboard", short: "Stats" }, { id: "communique", label: "Communiqué", short: "Send" }, { id: "birthdays", label: "Birthdays", short: "Bdays" }, { id: "myatt", label: "My attendance", short: "Mine" }];
+var adminTabs  = [{ id: "record", label: "Record" }, { id: "sessions", label: "Sessions" }, { id: "members", label: "Members" }, { id: "probation", label: "Probation", short: "Prob." }, { id: "requests", label: "Requests", short: "Reqs" }, { id: "dashboard", label: "Group Dashboard", short: "Stats" }, { id: "communique", label: "Communiqué", short: "Send" }, { id: "birthdays", label: "Birthdays", short: "Bdays" }, { id: "activity", label: "Activity log", short: "Log" }, { id: "year", label: "Chorale year", short: "Year" }, { id: "myatt", label: "My attendance", short: "Mine" }];
 var memberTabs = [{ id: "myatt", label: "My attendance", short: "Attendance" }];
 
 google.script.run.withSuccessHandler(function (r) {
@@ -3887,7 +3927,10 @@ google.script.run.withSuccessHandler(function (r) {
     isAdminLike: (r.isAdminLike !== undefined) ? !!r.isAdminLike : (r.role === "admin"),
     readOnly: !!r.readOnly,
     // Defaults to true — other roles may not send the field at all.
-    isMember: (r.isMember !== undefined) ? !!r.isMember : true
+    isMember: (r.isMember !== undefined) ? !!r.isMember : true,
+    // Chorale years (§12a): past-year views and the November rollover.
+    canViewPastYears: !!r.canViewPastYears,
+    canStartNewYear: !!r.canStartNewYear
   };
   if (userAccess.readOnly) applyReadOnlyUI();
   // Globals read by emailDeniedAdmin() (§11). adminContactEmail comes from the
@@ -3919,6 +3962,7 @@ google.script.run.withSuccessHandler(function (r) {
 
   if (userAccess.isAdminLike) { initAdmin(); applyRoleScopeUI(); }
   else initMember();
+  if (userAccess.canViewPastYears) loadYearInfo();
   // Run the landing tab's loader. Setting the class alone skipped it, which is why
   // Super Admin (whose first tab is Sessions — there is no Record tab for a
   // view-only role) saw the static pre-wiring demo instead of getSessionsList().
@@ -4052,6 +4096,7 @@ function submitRejoin() {
     showToast("Rejoin request sent.", "success");
   }).withFailureHandler(function (e) {
     if (btn) { btn.disabled = false; btn.textContent = "Send rejoin request"; }
+    if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }
     showToast(e.message || "Could not send your request.", "error");
   }).requestRejoin(reason);
 }
@@ -4098,20 +4143,28 @@ function switchTab(tab) {
   var mBtns = document.querySelectorAll(".tab-nav button");
   for (var i = 0; i < mBtns.length; i++) {
     var b = mBtns[i];
-    if (b.getAttribute("data-more")) b.className = (moreTabIds.indexOf(navTab) !== -1) ? "active" : "";
-    else b.className = (b.getAttribute("data-tab") === navTab) ? "active" : "";
+    // toggle, not overwrite — other classes (e.g. the year tab's is-due marker) must survive
+    if (b.getAttribute("data-more")) b.classList.toggle("active", moreTabIds.indexOf(navTab) !== -1);
+    else b.classList.toggle("active", b.getAttribute("data-tab") === navTab);
   }
   // Sidebar items (matched by data-tab, not index)
   var sBtns = document.querySelectorAll("#sidebarNav .nav-item, #sidebarNavPersonal .nav-item");
-  for (var j = 0; j < sBtns.length; j++) sBtns[j].className = "nav-item" + (sBtns[j].getAttribute("data-tab") === navTab ? " active" : "");
+  for (var j = 0; j < sBtns.length; j++) sBtns[j].classList.toggle("active", sBtns[j].getAttribute("data-tab") === navTab);
 
   // Hide all tab pages
-  var allPages = ["record", "sessions", "dashboard", "probation", "requests", "view", "members", "communique", "birthdays", "myatt", "apology", "profile"];
+  var allPages = ["record", "sessions", "dashboard", "probation", "requests", "view", "members", "communique", "birthdays", "activity", "myatt", "apology", "profile", "year", "yeargate"];
   for (var p = 0; p < allPages.length; p++) {
     var el = document.getElementById("tab-" + allPages[p]);
-    if (el) el.className = "tab-page";
+    if (el) el.classList.remove("active");
   }
-  document.getElementById("tab-" + tab).className = "tab-page active";
+  // Viewing a past year: only the views that exist per year open; the rest say why.
+  var yearGated = isArchiveView() && YEAR_VIEW_TABS.indexOf(tab) === -1;
+  document.getElementById("tab-" + (yearGated ? "yeargate" : tab)).classList.add("active");
+  if (typeof placeYearSwitch === "function") {
+    placeYearSwitch(); paintYearDue();
+    // Leaving the "year has started" screen: the window has closed, so the tab goes.
+    if (tab !== "year" && nyState.result) { nyState.result = null; renderTabNav(); }
+  }
 
   // Submit area visibility (Record tab only)
   var sa = document.getElementById("submitArea");
@@ -4120,6 +4173,7 @@ function switchTab(tab) {
     else if (members.length > 0) sa.style.display = "block";
   }
 
+  if (yearGated) { renderYearGate(tab); return; }
   if (tab === "communique"        && !communiqueLoaded) loadCommunique();
   if (tab === "birthdays"         && !birthdaysLoaded)  loadBirthdays();
   if (tab === "view"              && !viewInitialized)  initViewTab();
@@ -4129,7 +4183,9 @@ function switchTab(tab) {
   if (tab === "requests"          && !requestsTabLoaded)  initRequestsTab();
   if (tab === "myatt"             && !myAttLoaded)     loadMyAttendance();
   if (tab === "apology"           && !apologyLoaded)   loadApologyTab();
-  if (tab === "members")          { if (!memberListData || memberListData.length === 0) refreshMemberList(); initMemberFilters(); requestAnimationFrame(fitMemberDetailPane); }
+  if (tab === "members")          { if (!isArchiveView() && (!memberListData || memberListData.length === 0)) refreshMemberList(); setMembersMode(activeMembersMode()); }
+  if (tab === "activity"          && !activityLoaded)  loadActivityLog();
+  if (tab === "year")             loadYearPage();
   if (tab === "profile")          { profileMode = "view"; loadProfile(); }
 }
 
@@ -4184,8 +4240,9 @@ function dashGetOpts() {
 // Filter-change hooks (sessFiltersChanged / dashFiltersChanged) are defined in the
 // Sessions + Group Dashboard LOGIC block below, alongside loadSessions/loadGroupDashboard.
 // Sessions list ⇄ detail visibility (detail rendered by the LOGIC block into #sessionDetail).
-function sessShowDetail() { var l = document.getElementById("sessionsList"), d = document.getElementById("sessionDetail"); if (l) l.style.display = "none"; if (d) d.style.display = "block"; }
-function sessShowList()   { var l = document.getElementById("sessionsList"), d = document.getElementById("sessionDetail"); if (d) { d.style.display = "none"; } if (l) l.style.display = "block"; }
+// .sess-detail-open on the tab hides the list's filters while a session is open.
+function sessShowDetail() { var l = document.getElementById("sessionsList"), d = document.getElementById("sessionDetail"), t = document.getElementById("tab-sessions"); if (l) l.style.display = "none"; if (d) d.style.display = "block"; if (t) t.classList.add("sess-detail-open"); }
+function sessShowList()   { var l = document.getElementById("sessionsList"), d = document.getElementById("sessionDetail"), t = document.getElementById("tab-sessions"); if (d) { d.style.display = "none"; } if (l) l.style.display = "block"; if (t) t.classList.remove("sess-detail-open"); }
 
 // Probation + Requests now have their own top-level tabs — reuse the existing render fns.
 function initProbationTab() {
@@ -4197,14 +4254,15 @@ function initProbationTab() {
 function renderRequestsTab() {
   var root = document.getElementById("requestsRoot");
   if (root && typeof renderApologiesView === "function") root.innerHTML = renderApologiesView();
+  if (activeTab === "requests") placeYearSwitch();
   renderReinstateFlags();
   renderProbationOutcomeFlags();
 }
 function initRequestsTab() {
   requestsTabLoaded = true;
   renderRequestsTab();
-  loadReinstatementFlags();
-  loadProbationOutcomeFlags();
+  // Reinstatement + probation-correction flags describe the live year only.
+  if (!isArchiveView()) { loadReinstatementFlags(); loadProbationOutcomeFlags(); }
   if (typeof loadApologyQueue === "function") loadApologyQueue();
 }
 // When the Requests tab is live, refresh its chrome there; else fall back to the legacy view shell.
@@ -4230,12 +4288,14 @@ function loadSessions() {
   var mount = document.getElementById("sessionsList");
   if (!mount) return;
   sessShowList();
-  mount.innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading sessions\u2026</div></div>';
   var filters = (typeof sessGetFilters === "function") ? sessGetFilters() : { range: "month", section: "All", type: "all" };
-  google.script.run
-    .withSuccessHandler(renderSessionsList)
-    .withFailureHandler(function (e) { mount.innerHTML = '<p class="loading">Error: ' + esc(e.message) + '</p>'; })
-    .getSessionsList(filters);
+  // Custom: wait for both dates (Group Dashboard behaviour) — keep the current list meanwhile.
+  var wait = filters.range === "custom" ? customRangeWait(filters.start, filters.end) : "";
+  showRangeWait("sessBusy", wait);
+  if (wait) return;
+  mount.innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading sessions\u2026</div></div>';
+  serverCall("getSessionsList", [filters], renderSessionsList,
+    function (e) { mount.innerHTML = '<p class="loading">Error: ' + esc(e.message) + '</p>'; });
 }
 function sessFiltersChanged() { loadSessions(); }
 
@@ -4311,10 +4371,8 @@ function openSession(dateStr, sessionKey) {
   if (mount) mount.innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading\u2026</div></div>';
   if (typeof sessShowDetail === "function") sessShowDetail();
   ensureMemberPhotos(function () {
-    google.script.run
-      .withSuccessHandler(renderSessionDetail)
-      .withFailureHandler(function (e) { if (mount) mount.innerHTML = '<p class="loading">Error: ' + esc(e.message) + '</p>'; })
-      .getSessionDetail(dateStr, sessionKey);
+    serverCall("getSessionDetail", [dateStr, sessionKey], renderSessionDetail,
+      function (e) { if (mount) mount.innerHTML = '<p class="loading">Error: ' + esc(e.message) + '</p>'; });
   });
 }
 
@@ -4362,9 +4420,12 @@ function paintSessionDetail() {
     cells += '<div class="sess-tally-cell"><div class="lab"><span class="dot" style="background:' + SESS_VAR[stt] + '"></span><span class="ab">' + SESS_ABBR[stt] + '</span></div><div class="num">' + (counts[stt] || 0) + '</div></div>';
   }
 
-  // Register grouped by ensemble → role, 2-col on desktop, with EDITED glow
+  // Register grouped by ensemble → role, 2-col on desktop, with EDITED glow.
+  // The Include filter narrows the rows by their saved status (so a row being corrected
+  // doesn't vanish mid-edit); the tally above always covers the whole session.
+  var whoSet = EXPORT_WHO_SETS[exportWho.session] || null, shown = 0;
   var byEns = {};
-  for (var r = 0; r < viewRecords.length; r++) { var rc = viewRecords[r]; (byEns[rc.group] = byEns[rc.group] || []).push(rc); }
+  for (var r = 0; r < viewRecords.length; r++) { var rc = viewRecords[r]; if (whoSet && whoSet.indexOf(rc.status) === -1) continue; shown++; (byEns[rc.group] = byEns[rc.group] || []).push(rc); }
   var ensKeys = Object.keys(byEns).sort();
   var multiEns = ensKeys.length > 1;
   var reg = isDesktop ? '<div class="view-detail-grid">' : '';
@@ -4399,20 +4460,21 @@ function paintSessionDetail() {
     }
   }
   if (isDesktop) reg += '</div>';
-
+  if (!shown) reg = '<div class="sess-filter-empty">No one in this register is ' + esc(EXPORT_WHO_EMPTY[exportWho.session] || "listed") + '.</div>';
   var groupsTxt = (d.groups || []).join(" \u00b7 ");
   mount.innerHTML = ''
     + '<button class="back-btn" onclick="closeSession()">\u2190 All sessions</button>'
     + '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px">'
     +   '<div><div class="eyebrow">' + esc(groupsTxt.toUpperCase()) + '</div><h2 style="margin-top:4px">' + formatDateDisplay(d.date) + '</h2>'
-    +     '<div style="font-family:var(--f-mono);font-size:10.5px;color:var(--ink-500);letter-spacing:.08em;margin-top:6px">' + (d.recordedBy && d.recordedBy.length ? 'REC \u00b7 ' + esc(d.recordedBy.join(", ").toUpperCase()) : '') + '</div></div>'
-    +   '<button class="btn-export" onclick="exportThisSession()">Export \u00b7 CSV</button>'
+    +     '<div style="font-family:var(--f-mono);font-size:10.5px;color:var(--ink-500);letter-spacing:.08em;margin-top:6px">' + (d.recordedBy && d.recordedBy.length ? 'REC \u00b7 ' + esc(d.recordedBy.join(", ").toUpperCase()) : '') + '</div>' + sessScopeNoteHtml(d) + '</div>'
+    +   exportControlsHtml('session', 'exportThisSession', true)
     + '</div>'
     + '<div class="sess-tally"><div><div class="sess-tally-rate-label">ATTENDANCE</div><div class="sess-tally-rate">' + rate + '%</div></div>'
     +   '<div class="sess-tally-div"></div><div class="sess-tally-counts">' + cells + '</div>'
     +   '<div style="flex:1"></div><div style="text-align:right"><div class="sess-tally-rate-label">APOLOGIES</div><div class="num" style="font-family:var(--f-display);font-size:28px;color:var(--paper);margin-top:4px">' + (d.apologyCount || 0) + '</div></div>'
     + '</div>'
-    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="eyebrow">Register \u00b7 ' + total + ' members</div><span style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-400);letter-spacing:.1em">' + (canEditHistory() ? 'TAP A STATUS TO CORRECT' : 'READ-ONLY \u00b7 RECORD ACCESS') + '</span></div>'
+    + sessWhoChipsHtml()
+    + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px"><div class="eyebrow">Register \u00b7 ' + (whoSet ? shown + ' of ' + total : total) + ' members</div><span style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-400);letter-spacing:.1em">' + (canEditHistory() ? 'TAP A STATUS TO CORRECT' : 'READ-ONLY \u00b7 RECORD ACCESS') + '</span></div>'
     + reg;
   updateChangesBar();
 }
@@ -4421,29 +4483,54 @@ function paintSessionDetail() {
 function closeSession() {
   sessDetailActive = false;
   viewEditedStatuses = {};
+  exportWho.session = "all";
   hideChangesBar();
   if (typeof sessShowList === "function") sessShowList();
 }
 
-// (data-wiring verbatim)
-function exportThisSession() {
+// One session — CSV or PDF, filtered by the "Include" picker (statusFilter).
+function exportThisSession(fmt) {
   if (!sessCurrent) return;
-  google.script.run
-    .withSuccessHandler(function (csv) { downloadCSV_(csv, "session-" + sessCurrent.date + ".csv"); })
-    .withFailureHandler(function (e) { showToast("Export failed: " + e.message, "error"); })
-    .exportSessionCSV(sessCurrent.date, sessCurrent.sessionKey);
+  var d = sessCurrent, who = exportWho.session;
+  if (fmt === "pdf") {
+    serverCall("exportSessionPDF", [d.date, d.sessionKey, who], openPrintHTML,
+      function (e) { showToast("Export failed: " + serverError(e), "error"); });
+    return;
+  }
+  serverCall("exportSessionCSV", [d.date, d.sessionKey, who],
+    function (csv) { downloadCSV_(csv, "session-" + d.date + exportWhoSuffix("session") + ".csv"); },
+    function (e) { showToast("Export failed: " + serverError(e), "error"); });
 }
 
-// (data-wiring verbatim)
-function exportSessionsList() {
+// The sessions list (summary rows, no status filter) — CSV or PDF.
+function exportSessionsList(fmt) {
   var filters = (typeof sessGetFilters === "function") ? sessGetFilters() : { range: "month", section: "All", type: "all" };
-  google.script.run
-    .withSuccessHandler(function (csv) { downloadCSV_(csv, "sessions.csv"); })
-    .withFailureHandler(function (e) { showToast("Export failed: " + e.message, "error"); })
-    .exportSessionsListCSV(filters);
+  if (fmt === "pdf") {
+    serverCall("exportSessionsListPDF", [filters], openPrintHTML,
+      function (e) { showToast("Export failed: " + serverError(e), "error"); });
+    return;
+  }
+  serverCall("exportSessionsListCSV", [filters],
+    function (csv) { downloadCSV_(csv, (ACTIVE_YEAR ? "sessions-" + ACTIVE_YEAR.replace("/", "-") : "sessions") + ".csv"); },
+    function (e) { showToast("Export failed: " + e.message, "error"); });
 }
 
 // ---------- GROUP DASHBOARD ----------
+// Custom ranges load only once both ends are picked (and in order). Until then the
+// last-rendered view stays and a quiet pill says what's missing. Used by the Group
+// Dashboard, Sessions and the Activity log.
+function customRangeWait(start, end) {
+  if (!start || !end) return "Pick a start and end date";
+  if (start > end) return "The end date is before the start date";
+  return "";
+}
+function showRangeWait(busyId, msg) {
+  var b = document.getElementById(busyId); if (!b) return;
+  if (!msg) { b.hidden = true; return; }
+  b.hidden = false;
+  b.innerHTML = '<span class="dash-busy-pill dash-busy-wait">' + esc(msg) + '</span>';
+}
+
 function loadGroupDashboard() {
   var opts = (typeof dashGetOpts === "function") ? dashGetOpts() : { section: "All", range: "month" };
   var body = document.getElementById("dashboardBody");
@@ -4455,19 +4542,12 @@ function loadGroupDashboard() {
   setBusy(true);
   // Custom needs both ends before it means anything — hold the last-rendered view
   // and wait rather than firing a half-specified range.
-  if (opts.range === "custom" && (!opts.start || !opts.end)) {
-    setBusy(false);
-    if (busy) {
-      busy.hidden = false;
-      busy.innerHTML = '<span class="dash-busy-pill dash-busy-wait">Pick a start and end date</span>';
-    }
-    return;
-  }
+  var wait = opts.range === "custom" ? customRangeWait(opts.start, opts.end) : "";
+  if (wait) { setBusy(false); showRangeWait("dashBusy", wait); return; }
   if (busy) busy.innerHTML = '<span class="dash-busy-pill"><span class="dash-busy-spin"></span>Loading</span>';
-  google.script.run
-    .withSuccessHandler(function (d) { setBusy(false); renderGroupDashboard(d); })
-    .withFailureHandler(function (e) { setBusy(false); showToast("Dashboard error: " + e.message, "error"); })
-    .getGroupDashboard(opts);
+  serverCall("getGroupDashboard", [opts],
+    function (d) { setBusy(false); renderGroupDashboard(d); },
+    function (e) { setBusy(false); showToast("Dashboard error: " + e.message, "error"); });
 }
 function dashFiltersChanged() { loadGroupDashboard(); }
 
@@ -5155,18 +5235,25 @@ function renderMeetingsList(list) {
     return;
   }
   var h = "";
+  // An open edit survives reloads; it closes on save, cancel, or when its meeting is gone.
+  if (meetingEditId != null && !list.some(function (x) { return String(x.id) === String(meetingEditId); })) meetingEditId = null;
   for (var i = 0; i < list.length; i++) {
     var m = list[i];
+    if (meetingEditId != null && String(m.id) === String(meetingEditId)) { h += meetingEditFormHtml(m); continue; }
     var grpStr = (m.groups && m.groups.length) ? " · " + esc(m.groups.join(" / ")).toUpperCase() : "";
     h += '<div class="meeting-item">'
       +    '<div class="meeting-item-info">'
       +      '<div class="meeting-item-title">' + esc(m.title || "Meeting") + '</div>'
       +      '<div class="meeting-item-meta">' + esc(m.dayName ? m.dayName + " · " : "") + fmtDayMon(m.date) + " · " + fmtTime12(m.time) + grpStr + '</div>'
       +    '</div>'
-      +    '<button class="meeting-del" onclick="deleteMeeting(\'' + jsStr(m.id) + '\')">Delete</button>'
+      +    '<div class="meeting-acts">'
+      +      (meetingInScope(m) ? '<button class="meeting-edit" data-write onclick="editMeeting(\'' + jsStr(m.id) + '\')">Edit</button>' : '')
+      +      '<button class="meeting-del" onclick="deleteMeeting(\'' + jsStr(m.id) + '\')">Delete</button>'
+      +    '</div>'
       + '</div>';
   }
   c.innerHTML = h;
+  if (meetingEditId != null) lockMeetingGroups(c);
 }
 
 function scheduleMeeting() {
@@ -5192,6 +5279,7 @@ function scheduleMeeting() {
     loadMeetings();
   }).withFailureHandler(function (e) {
     btn.disabled = false; btn.textContent = "Schedule meeting";
+    if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }
     showToast("Failed: " + e.message, "error");
   }).scheduleMeeting({ date: date, time: time, title: title, groups: groups });
 }
@@ -5486,9 +5574,8 @@ function setViewMode(m) {
 }
 
 function loadDateList() {
-  google.script.run.withSuccessHandler(function (d) { viewDateList = d; renderViewTab(); })
-    .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
-    .getAttendanceDates(viewGroup);
+  serverCall("getAttendanceDates", [viewGroup], function (d) { viewDateList = d; renderViewTab(); },
+    function (e) { showToast("Failed: " + e.message, "error"); });
 }
 function onViewGroupChange() {
   viewGroup = document.getElementById("viewGroupSelect").value;
@@ -5497,13 +5584,12 @@ function onViewGroupChange() {
 function loadDateDetail(ds) {
   viewCurrentDate = ds; viewRecords = []; viewOriginalStatuses = {}; viewEditedStatuses = {};
   hideChangesBar(); renderViewTab();
-  google.script.run.withSuccessHandler(function (r) {
+  serverCall("getAttendanceForDate", [ds, viewGroup], function (r) {
     viewRecords = r.records;
     viewOriginalStatuses = {}; viewEditedStatuses = {};
     for (var i = 0; i < viewRecords.length; i++) viewOriginalStatuses[viewRecords[i].rowIndex] = viewRecords[i].status;
     renderViewTab();
-  }).withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
-    .getAttendanceForDate(ds, viewGroup);
+  }, function (e) { showToast("Failed: " + e.message, "error"); });
 }
 
 function editStatus(ri, ns) { if (!canEditHistory()) return; viewEditedStatuses[ri] = ns; updateChangesBar(); if (sessDetailActive) paintSessionDetail(); else renderViewTab(); }
@@ -5534,9 +5620,8 @@ function loadMemberHistory(name) {
   if (inp) inp.value = name;
   var c = document.getElementById("memberHistoryContent");
   if (c) c.innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading…</div></div>';
-  google.script.run.withSuccessHandler(function (r) { renderMemberHistory(name, r); })
-    .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
-    .getMemberHistory(name);
+  serverCall("getMemberHistory", [name], function (r) { renderMemberHistory(name, r); },
+    function (e) { if (c) c.innerHTML = '<p class="loading">' + esc(serverError(e)) + '</p>'; else showToast("Failed: " + e.message, "error"); });
 }
 
 // Probation dashboard
@@ -5564,9 +5649,12 @@ function manualEvaluate() {
 // Scoreboard (admin)
 var scoreboardData = [], sbGroup = "All", sbRankMode = "competitive";
 function loadScoreboard() {
-  google.script.run.withSuccessHandler(function (d) { scoreboardData = d; if (sbGroup === "All") setRosterRanks(d); renderScoreboardContent(); })
-    .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
-    .getScoreboard(sbGroup);
+  serverCall("getScoreboard", [sbGroup], function (d) {
+    scoreboardData = d;
+    // Roster ranks are the live year's — never seed them from an archive.
+    if (sbGroup === "All" && !isArchiveView()) setRosterRanks(d);
+    renderScoreboardContent();
+  }, function (e) { showToast("Failed: " + e.message, "error"); });
 }
 function onSbGroupChange() { sbGroup = document.getElementById("sbGroupSelect").value; loadScoreboard(); }
 
@@ -5588,9 +5676,18 @@ function discardChanges() { viewEditedStatuses = {}; hideChangesBar(); if (sessD
 function saveChanges() {
   if (roBlock()) return;
   var u = [];
+  // Each change carries who/when/where it belongs to, so the backend verifies the row
+  // it targets (rows move after an overwrite or a dedupe) and refuses to overwrite a
+  // record someone else changed in the meantime (oldStatus).
+  var viewDate = (sessDetailActive && sessCurrent) ? sessCurrent.date : viewCurrentDate;
+  var viewSession = (sessDetailActive && sessCurrent) ? (sessCurrent.sessionKey || "") : "";
   for (var ri in viewEditedStatuses) {
     if (viewEditedStatuses[ri] !== viewOriginalStatuses[ri]) {
-      u.push({ rowIndex: parseInt(ri), newStatus: viewEditedStatuses[ri] });
+      var rec = null;
+      for (var k = 0; k < viewRecords.length; k++) if (viewRecords[k].rowIndex === parseInt(ri)) { rec = viewRecords[k]; break; }
+      u.push({ rowIndex: parseInt(ri), newStatus: viewEditedStatuses[ri],
+               name: rec ? rec.name : "", date: rec ? (rec.date || viewDate) : "", group: rec ? rec.group : "",
+               session: rec ? (rec.session || viewSession) : "", oldStatus: viewOriginalStatuses[ri] });
     }
   }
   if (u.length === 0) return;
@@ -5606,8 +5703,18 @@ function saveChanges() {
     if (r.historyUpdated)  parts.push(r.historyUpdated + " probation history row" + (r.historyUpdated === 1 ? "" : "s") + " refreshed");
     var pNote = probationFlagToastPart(r.probationFlags);
     if (pNote) parts.push(pNote);
-    showToast(parts.join(" \u00b7 ") + ".", "success");
+    var skipped = r.skipped || [];
+    if (skipped.length) {
+      showToast((r.changed ? parts.join(" \u00b7 ") + ". " : "") + skipped.length + " change(s) not saved: " + skipped.map(function (s) { return s.reason; }).join(" \u00b7 "), "warning");
+    } else showToast(parts.join(" \u00b7 ") + ".", "success");
     if (pNote || r.offensesRemoved) { loadProbationOutcomeFlags(); loadReinstatementFlags(); }
+    if (skipped.length) {
+      // Reload so the register shows what is actually stored.
+      viewEditedStatuses = {}; hideChangesBar();
+      if (sessDetailActive && sessCurrent) openSession(sessCurrent.date, sessCurrent.sessionKey);
+      else if (viewCurrentDate) loadDateDetail(viewCurrentDate);
+      return;
+    }
     for (var ri2 in viewEditedStatuses) {
       viewOriginalStatuses[ri2] = viewEditedStatuses[ri2];
       for (var i = 0; i < viewRecords.length; i++) {
@@ -5676,8 +5783,9 @@ function submitAddMember() {
           btn.disabled = false; btn.textContent = "Add member";
           showToast(r.name + " added and welcome email sent.", "success");
         })
-        .withFailureHandler(function () {
+        .withFailureHandler(function (e) {
           btn.disabled = false; btn.textContent = "Add member";
+          if (isDuplicateNotice(e)) { showToast(r.name + " added. " + serverError(e), "info"); return; }
           showToast(r.name + " added, but the welcome email failed to send.", "error");
         })
         .sendWelcomeEmail(r.name, memberEmail, groups);
@@ -5687,6 +5795,7 @@ function submitAddMember() {
     }
   }).withFailureHandler(function (e) {
     btn.disabled = false; btn.textContent = "Add member";
+    if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }
     showToast(e.message, "error");
   }).addMember(member);
 }
@@ -5754,6 +5863,7 @@ function submitOffense() {
     document.getElementById("offNameWarn").style.display = "none";
   }).withFailureHandler(function (e) {
     done();
+    if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }
     showToast(serverError(e), "error");
   }).addOffense(date, name, desc);
 }
@@ -6060,6 +6170,7 @@ function loadUpcomingSessions() {
 
 function renderApolSessionOptions(list) {
   apolSessions = (list || []).slice();
+  upcomingCache = apolSessions.slice();
   var sel = document.getElementById("apolSessionSelect");
   if (!sel) return;
   if (!apolSessions.length) {
@@ -6075,11 +6186,17 @@ function renderApolSessionOptions(list) {
     var lbl = (s.dayName || "") + " \u00b7 " + fmtDayMon(s.date)
             + " \u00b7 " + (s.title ? s.title : (isMeeting ? "Meeting" : "Practice"))
             + " \u00b7 " + fmtTime12(s.time);
-    if (s.deadlinePassed) lbl += " \u2014 closed";
-    if (defaultIdx === -1 && !s.deadlinePassed) defaultIdx = i;
+    if (s.myApology) lbl += " \u2014 " + myApologyView(s.myApology).short;
+    else if (s.deadlinePassed) lbl += " \u2014 closed";
+    if (defaultIdx === -1 && !s.deadlinePassed && !s.myApology) defaultIdx = i;
     h += '<option value="' + i + '">' + esc(lbl) + '</option>';
   }
   if (defaultIdx === -1) defaultIdx = 0;
+  // After a submit, stay on the session the member was looking at.
+  if (apolKeepKey) {
+    for (var k = 0; k < apolSessions.length; k++) if (apolSessKey(apolSessions[k]) === apolKeepKey) { defaultIdx = k; break; }
+    apolKeepKey = null;
+  }
   sel.innerHTML = h;
   sel.value = String(defaultIdx);
   apolCustomDate = false;
@@ -6137,6 +6254,18 @@ function updateApolConfirm() {
   var body  = document.getElementById("apolConfirmBody");
   var type  = (document.getElementById("apolType") || {}).value || "Absent";
   var info  = apolNextInfo;
+  var onFile = !apolCustomDate && info && info.myApology;
+  syncApolSubmitBtn(onFile);
+  if (onFile) {
+    var v = myApologyView(info.myApology);
+    if (conf)  conf.className = "apol-confirm " + ({ pending: "passed", ok: "", muted: "muted", no: "refused" }[v.tone] || "");
+    if (mark)  mark.textContent = v.tone === "no" ? "!" : v.tone === "muted" ? "\u2013" : "\u2713";
+    if (title) title.textContent = v.title + ".";
+    if (body)  body.innerHTML = esc(v.body || (info.myApology.longTerm
+      ? "It already covers this session, so there\u2019s nothing more to send."
+      : "Each session takes one apology, so there\u2019s nothing more to send for this one."));
+    return;
+  }
   if (apolCustomDate || !info || !info.date) {
     if (conf)  conf.className = "apol-confirm";
     if (mark)  mark.textContent = "\u2713";
@@ -6243,7 +6372,7 @@ function syncEmergencyHint() {
   var eh = document.getElementById('apolEmHint');
   if (!eh) return;
   var o = emergencyOption;
-  var show = !!(o && o.eligible) && apologyKind !== 'emergency';
+  var show = !!(o && o.eligible) && apologyKind !== 'emergency' && !emergencyHasApology(o);
   eh.style.display = show ? 'flex' : 'none';
   var t = document.getElementById('apolEmHintText');
   if (t && show) {
@@ -6319,9 +6448,12 @@ function submitEmergencyApologyNow() {
     emergencyOption = null;
     loadEmergencyApologyOption();
     loadMyApologies();
+    refreshUpcomingAfterApology();
   }).withFailureHandler(function (e) {
     if (btn) { btn.disabled = false; btn.textContent = 'File emergency apology'; }
-    showToast(e.message, 'error');
+    if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }
+    showToast(serverError(e), 'error');
+    refreshUpcomingAfterApology();
   }).submitEmergencyApology(reason);
 }
 
@@ -6400,18 +6532,24 @@ function submitMemberApology() {
       showToast(r.onTime ? "Apology submitted on time." : "Apology submitted but past the deadline.", r.onTime ? "success" : "error");
       document.getElementById("apolReason").value = "";
       loadMyApologies();
+      refreshUpcomingAfterApology();
     }).withFailureHandler(function (e) {
       btn.disabled = false; btn.textContent = "Submit apology";
-      showToast("Failed: " + e.message, "error");
+      if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }
+      // A refusal already says what happened to the first apology — show it as is.
+      showToast(serverError(e), "error");
+      refreshUpcomingAfterApology();
     }).submitApology(dateStr, type, reason, sessionTime, selLabel, selGroups);
   }).withFailureHandler(function () {
     google.script.run.withSuccessHandler(function () {
       btn.disabled = false; btn.textContent = "Submit apology";
       showToast("Apology submitted (no schedule found for timing check).", "success");
-      document.getElementById("apolReason").value = ""; loadMyApologies();
+      document.getElementById("apolReason").value = ""; loadMyApologies(); refreshUpcomingAfterApology();
     }).withFailureHandler(function (e) {
       btn.disabled = false; btn.textContent = "Submit apology";
-      showToast("Failed: " + e.message, "error");
+      if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }
+      showToast(serverError(e), "error");
+      refreshUpcomingAfterApology();
     }).submitApology(dateStr, type, reason, "", selLabel, selGroups);
   }).getSessionTime(dateStr, lookupGroups);
 }
@@ -6446,10 +6584,11 @@ function submitLtApology() {
   google.script.run.withSuccessHandler(function (r) {
     btn.disabled = false; btn.textContent = "Submit apology";
     showToast("Long-term apology submitted for " + r.startDate + " to " + r.endDate + ". Awaiting admin approval.", "success");
-    document.getElementById("ltReason").value = ""; loadMyApologies();
+    document.getElementById("ltReason").value = ""; loadMyApologies(); refreshUpcomingAfterApology();
   }).withFailureHandler(function (e) {
     btn.disabled = false; btn.textContent = "Submit apology";
-    showToast(e.message, "error");
+    if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }
+    showToast(serverError(e), "error");
   }).submitLongTermApology(start, end, reason);
 }
 
@@ -6461,14 +6600,12 @@ function submitLtApology() {
 var apologyQueue = [];
 
 function loadApologyQueue() {
-  google.script.run.withSuccessHandler(function (data) {
+  serverCall("getApologyQueue", [], function (data) {
     apologyQueue = data;
     if (activeTab === "requests") refreshRequestsChrome(); // refresh type-filter counts
     else if (viewMode === "apologies") renderViewTab();
     renderApologyQueueContent();
-  })
-    .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
-    .getApologyQueue();
+  }, function (e) { showToast("Failed: " + e.message, "error"); });
 }
 
 function adminApprove(rowIndex) {
@@ -6720,14 +6857,12 @@ function applyProbationCorrection(name, i) {
 
 function exportSingleDate(f) {
   showToast("Preparing…", "success");
+  var who = exportWho.date;
   if (f === "pdf") {
-    google.script.run.withSuccessHandler(openPrintHTML)
-      .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
-      .exportDatePDF(viewCurrentDate, viewGroup);
+    serverCall("exportDatePDF", [viewCurrentDate, viewGroup, who], openPrintHTML, function (e) { showToast("Failed: " + e.message, "error"); });
   } else {
-    google.script.run.withSuccessHandler(function (csv) { downloadCSV(csv, "attendance_" + viewCurrentDate + ".csv"); })
-      .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
-      .exportDateCSV(viewCurrentDate, viewGroup);
+    serverCall("exportDateCSV", [viewCurrentDate, viewGroup, who], function (csv) { downloadCSV(csv, "attendance_" + viewCurrentDate + exportWhoSuffix("date") + ".csv"); },
+      function (e) { showToast("Failed: " + e.message, "error"); });
   }
 }
 
@@ -6737,14 +6872,12 @@ function exportDateRange(f) {
   if (!s || !e)    { showToast("Select both dates.",          "error"); return; }
   if (s > e)       { showToast("Start must be before end.",   "error"); return; }
   showToast("Preparing…", "success");
+  var who = exportWho.range;
   if (f === "pdf") {
-    google.script.run.withSuccessHandler(openPrintHTML)
-      .withFailureHandler(function (err) { showToast("Failed: " + err.message, "error"); })
-      .exportDateRangePDF(s, e, viewGroup);
+    serverCall("exportDateRangePDF", [s, e, viewGroup, who], openPrintHTML, function (err) { showToast("Failed: " + err.message, "error"); });
   } else {
-    google.script.run.withSuccessHandler(function (csv) { downloadCSV(csv, "attendance_" + s + "_to_" + e + ".csv"); })
-      .withFailureHandler(function (err) { showToast("Failed: " + err.message, "error"); })
-      .exportDateRangeCSV(s, e, viewGroup);
+    serverCall("exportDateRangeCSV", [s, e, viewGroup, who], function (csv) { downloadCSV(csv, "attendance_" + s + "_to_" + e + exportWhoSuffix("range") + ".csv"); },
+      function (err) { showToast("Failed: " + err.message, "error"); });
   }
 }
 
@@ -6762,15 +6895,16 @@ function exportProbation(f) {
 }
 
 function exportScoreboard(f) {
+  // The scoreboard print isn't one of the past-year reports — the CSV is.
+  if (f === "pdf" && isArchiveView()) { showToast("Printing isn\u2019t available for past years \u2014 export the CSV instead.", "info"); return; }
   showToast("Preparing…", "success");
   if (f === "pdf") {
     google.script.run.withSuccessHandler(openPrintHTML)
       .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
       .exportScoreboardPDF(sbGroup);
   } else {
-    google.script.run.withSuccessHandler(function (csv) { downloadCSV(csv, "scoreboard.csv"); })
-      .withFailureHandler(function (e) { showToast("Failed: " + e.message, "error"); })
-      .exportScoreboardCSV(sbGroup);
+    serverCall("exportScoreboardCSV", [sbGroup], function (csv) { downloadCSV(csv, (ACTIVE_YEAR ? "scoreboard-" + ACTIVE_YEAR.replace("/", "-") : "scoreboard") + ".csv"); },
+      function (e) { showToast("Failed: " + e.message, "error"); });
   }
 }
 
@@ -6876,6 +7010,7 @@ function confirmSendReminder(){
     else showToast(r.message||"No reminders sent.","error");
   }).withFailureHandler(function(e){
     btn.disabled=false; btn.textContent="Send reminder";
+    if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }
     showToast("Failed: "+e.message,"error");
   }).sendPracticeReminder(p.ds,p.groups,p.time,note,sig);
 }
@@ -6886,7 +7021,7 @@ function emailSessionSummary(dateStr,group){
   google.script.run.withSuccessHandler(function(r){
     if(r.success)showToast("Summary sent to "+r.count+" admin(s).","success");
     else showToast(r.message||"Failed to send.","error");
-  }).withFailureHandler(function(e){showToast("Failed: "+e.message,"error");}).emailAttendanceSummary(dateStr,group||"All");
+  }).withFailureHandler(function(e){if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }showToast("Failed: "+e.message,"error");}).emailAttendanceSummary(dateStr,group||"All");
 }
 
 // =============================================================
@@ -6903,7 +7038,9 @@ function loadCommunique(){
   google.script.run.withSuccessHandler(function(opts){
     communiqueData.options=opts;
     renderCommunique();
+    commMarkClean();
     refreshScheduledCount();
+    refreshDraftsCount();
   }).withFailureHandler(function(e){c.innerHTML='<p class="loading">Error: '+esc(e.message)+'</p>';}).getCommuniqueRecipientOptions();
 }
 
@@ -6916,7 +7053,8 @@ function renderCommunique(){
   var rtype=communiqueData.recipientType||"all";
   if(!communiqueData.sendMode)communiqueData.sendMode="now";
   var mode=communiqueData.sendMode;
-  var h='';
+  // Draft context (editing a saved draft / a copy of someone else's) — §12d
+  var h='<div id="commDraftStrip">'+commDraftStripHtml()+'</div>';
 
   // Subject
   h+='<div class="form-group"><label class="form-label">Subject *</label><input type="text" id="commSubject" class="form-input" placeholder="What is this message about?" oninput="renderCommuniquePreview()"></div>';
@@ -7002,8 +7140,15 @@ function renderCommunique(){
   // Delivery disclosure — filled by getCommuniquePlan() when attachments are present
   h+='<div id="commPlanNotice" class="comm-plan-notice" style="display:none"></div>';
 
-  // Send / Schedule
-  h+='<button class="btn-primary" id="btnSendComm" onclick="submitCommunique()">'+(mode==="later"?"Schedule message":"Send message")+'</button>';
+  // Draft conflicts land here ("saved somewhere else" → Save as new draft) — §12d
+  h+='<div id="commDraftNotice"></div>';
+
+  // Send / Schedule, with Save draft beside it
+  h+='<div class="comm-actions">'
+   +   '<button type="button" class="btn btn-secondary" id="btnSaveDraft" onclick="saveCommuniqueDraftNow()">Save draft</button>'
+   +   '<button class="btn-primary" id="btnSendComm" onclick="submitCommunique()">'+(mode==="later"?"Schedule message":"Send message")+'</button>'
+   + '</div>'
+   + '<div class="comm-draft-state" id="commDraftState"></div>';
 
   c.innerHTML=h;
   if(rtype==="individuals")renderCommMemberList();
@@ -7188,6 +7333,7 @@ function renderCommuniquePreview(){
     + '</div></div>';
   c.innerHTML=h;
   scheduleCommPlanRefresh();
+  paintDraftState();
 }
 
 // Small attachments strip for the live preview (mirrors what recipients will see).
@@ -7253,6 +7399,7 @@ function resetCommuniqueForm(){
   communiqueData.uploading=[];
   communiqueData.plan=null;
   renderCommunique();
+  commMarkClean();
 }
 
 // Success-toast copy — surfaces how attachments were delivered (attach vs Drive link).
@@ -7275,11 +7422,15 @@ function sendCommuniqueNow(){
   if(inFlight.communique)return;
   if(!confirm("Send this message now? It will go out with the letterhead to the selected recipients."))return;
   var done=beginAction("communique",[document.getElementById("btnSendComm")],"Sending\u2026");if(!done)return;
+  // Tag the payload so the backend removes the spent draft.
+  if(composerDraft.id)payload.draftId=composerDraft.id;
   google.script.run.withSuccessHandler(function(r){
     done();
     showToast(commSentToast(r),"success");
+    composerDraft={id:null,updatedAt:null};commDraftOwner="";
     resetCommuniqueForm();
-  }).withFailureHandler(function(e){done();showToast(serverError(e),"error");
+    refreshDraftsCount();
+  }).withFailureHandler(function(e){done();if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }showToast(serverError(e),"error");
   }).sendCommunique(payload);
 }
 
@@ -7293,25 +7444,30 @@ function scheduleCommuniqueSend(){
   if(when.getTime()<Date.now()+60*1000){showToast("Please schedule at least a minute in the future.","error");return;}
   payload.sendAt=when.toISOString();
   var done=beginAction("communique",[document.getElementById("btnSendComm")],"Scheduling\u2026");if(!done)return;
+  if(composerDraft.id)payload.draftId=composerDraft.id;
   google.script.run.withSuccessHandler(function(r){
     done();
     showToast("Scheduled for "+fmtSchedWhen(r.sendAt)+" \u2014 "+r.recipientCount+" recipient"+(r.recipientCount===1?"":"s")+".","success");
+    composerDraft={id:null,updatedAt:null};commDraftOwner="";
     resetCommuniqueForm();
+    refreshDraftsCount();
     showCommSubtab("scheduled");
-  }).withFailureHandler(function(e){done();showToast(serverError(e),"error");
+  }).withFailureHandler(function(e){done();if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }showToast(serverError(e),"error");
   }).scheduleCommunique(payload);
 }
 
 // ── Compose / Scheduled sub-tabs ─────────────────────────────────────────────
 function showCommSubtab(which){
-  var scheduled=which==="scheduled";
-  var compose=document.getElementById("commComposePane"),sched=document.getElementById("commScheduledPane");
-  var tc=document.getElementById("commSubtabCompose"),ts=document.getElementById("commSubtabScheduled");
-  if(compose)compose.style.display=scheduled?"none":"block";
-  if(sched)sched.style.display=scheduled?"block":"none";
-  if(tc)tc.classList.toggle("is-active",!scheduled);
-  if(ts)ts.classList.toggle("is-active",scheduled);
-  if(scheduled)loadScheduledEmails();
+  // Compose · Drafts · Scheduled
+  var panes={compose:"commComposePane",drafts:"commDraftsPane",scheduled:"commScheduledPane"};
+  var tabs={compose:"commSubtabCompose",drafts:"commSubtabDrafts",scheduled:"commSubtabScheduled"};
+  if(!panes[which])which="compose";
+  for(var k in panes){
+    var p=document.getElementById(panes[k]);if(p)p.style.display=(k===which)?"block":"none";
+    var t=document.getElementById(tabs[k]);if(t)t.classList.toggle("is-active",k===which);
+  }
+  if(which==="scheduled")loadScheduledEmails();
+  if(which==="drafts")loadCommuniqueDrafts();
 }
 
 // Lightweight: just refresh the count pill on the Scheduled sub-tab.
@@ -7686,6 +7842,7 @@ function sendBdayCard(id) {
     renderBirthdays();
   }).withFailureHandler(function (e) {
     if (btn) { btn.disabled = false; btn.textContent = "Send card"; }
+    if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }
     showToast("Failed: " + e.message, "error");
   }).sendCustomBirthdayCard(p.email, msg);
 }
@@ -7710,6 +7867,7 @@ function sendBdayCardNow(id, btn) {
     renderBirthdays();
   }).withFailureHandler(function (e) {
     if (btn) { btn.disabled = false; btn.textContent = "Send card"; }
+    if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }
     showToast("Failed: " + e.message, "error");
   }).sendBirthdayCardNow(p.email);
 }
@@ -7765,5 +7923,1258 @@ function fallbackCopy(text, cb) {
     document.body.removeChild(ta);
     cb(ok);
   } catch (e) { cb(false); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  12.  BACKEND UPDATE · 15 OCT 2026
+//       12a Chorale years (past-year views) · 12b New-year rollover
+//       12c Activity log · 12d Communiqué drafts
+//       (Duplicate-submission notices: isDuplicateNotice() beside showToast.)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─── 12a. CHORALE YEARS · past-year views ─────────────────────────────────
+var ACTIVE_YEAR = null;   // null = the live year; otherwise a past label like "2025/26"
+
+// Use this instead of google.script.run.<fn>(...) in every view that supports past years.
+function serverCall(fnName, args, onOk, onErr) {
+  var r = google.script.run.withSuccessHandler(onOk)
+            .withFailureHandler(onErr || function (e) { showToast(e.message, "error"); });
+  if (ACTIVE_YEAR) return r.callForYear(ACTIVE_YEAR, fnName, args || []);
+  return r[fnName].apply(r, args || []);
+}
+
+function setActiveYear(label) {          // label null/"" = back to the live year
+  ACTIVE_YEAR = label || null;
+  document.body.classList.toggle("year-archived", !!ACTIVE_YEAR);
+  refreshCurrentView();                   // <- re-run the current tab's loader
+}
+
+// Views that exist per year (their loaders go through serverCall). Everything
+// else is live-year only and shows renderYearGate() while an archive is open.
+var YEAR_VIEW_TABS = ["sessions", "dashboard", "members", "requests", "activity", "view", "year", "profile"];
+var yearInfo = null;
+var activityLoaded = false;
+NAV_GLYPHS.activity = "\u2261";
+NAV_HINTS.activity = "Who changed what";
+NAV_GLYPHS.year = "\u21BB";
+NAV_HINTS.year = "Past years \u00b7 new year";
+
+var YR_MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+var YR_MONTH = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+function yrParts(ds) { var p = String(ds || "").split("-"); return p.length === 3 ? p : null; }
+function niceDay(ds) { var p = yrParts(ds); return p ? Number(p[2]) + " " + YR_MON[Number(p[1]) - 1] + " " + p[0] : (ds || ""); }
+function niceDayLong(ds) { var p = yrParts(ds); return p ? Number(p[2]) + " " + YR_MONTH[Number(p[1]) - 1] + " " + p[0] : (ds || ""); }
+// A past year's endsOn is the day the next year started (exclusive) — show the last day.
+function prevDayStr(ds) {
+  var p = yrParts(ds); if (!p) return ds || "";
+  var d = new Date(+p[0], +p[1] - 1, +p[2] - 1);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function yearLabelShort(l) { return String(l || "").replace(/^20(\d\d)\/(\d\d)$/, "$1/$2"); }
+
+function loadYearInfo(cb) {
+  if (!userAccess.canViewPastYears) { if (cb) cb(null); return; }
+  google.script.run.withSuccessHandler(function (y) {
+    var wasVisible = yearTabVisible();
+    yearInfo = y || null;
+    if (yearTabVisible() !== wasVisible) renderTabNav();
+    renderYearChrome();
+    // Recording into an archived year is refused server-side — keep the picker honest.
+    var ad = document.getElementById("attendanceDate");
+    if (ad && yearInfo && yearInfo.currentStartsOn) ad.min = yearInfo.currentStartsOn;
+    if (cb) cb(yearInfo);
+  }).withFailureHandler(function () { yearInfo = null; renderYearChrome(); if (cb) cb(null); }).getYearInfo();
+}
+
+// Drops every year-bound cache so the next open re-fetches from the right year.
+function resetYearCaches() {
+  sessionsLoaded = false; dashboardLoaded = false; requestsTabLoaded = false; activityLoaded = false;
+  membersScoreboardInit = false; membersMemberInit = false; viewInitialized = false;
+  sessDetailActive = false; sessCurrent = null; scoreboardData = []; apologyQueue = []; selectedApologyIdx = null;
+  reinstateFlags = []; probationOutcomeFlags = [];
+  if (typeof actRange === "function" && (actRange() === "7" || actRange() === "30")) actResetRange();
+  viewCurrentDate = null; viewRecords = []; viewEditedStatuses = {}; hideChangesBar();
+}
+function refreshCurrentView() {
+  resetYearCaches();
+  syncYearRanges();
+  renderYearChrome();
+  window.scrollTo(0, 0);
+  switchTab(activeTab || (activeTabs()[0] || {}).id);
+}
+// Inside an archive "This week / This month" mean the whole year — swap them for All.
+function syncYearRanges() {
+  ["sessRangeSeg", "dashRangeSeg"].forEach(function (id) {
+    var seg = document.getElementById(id); if (!seg) return;
+    var act = seg.querySelector(".active"), r = act ? act.getAttribute("data-range") : "";
+    var want = (ACTIVE_YEAR && (r === "week" || r === "month")) ? "all" : (!ACTIVE_YEAR && r === "all") ? "month" : null;
+    var b = want && seg.querySelector('[data-range="' + want + '"]');
+    if (b) segSelect(b);
+  });
+  sessToggleCustom(); dashToggleCustom();
+}
+function activeMembersMode() {
+  var b = document.querySelector("#membersModeToggle button.active");
+  return b ? b.getAttribute("data-mode") : "roster";
+}
+
+// Year switch — a quiet text control inside the page eyebrow ("RECORDED SESSIONS · ADMIN · 2025/26 ▾"),
+// shown only on views that exist per year. Plus the archived-year banner.
+var YEAR_SWITCH_TABS = ["sessions", "dashboard", "members", "requests", "activity", "view"];
+function renderYearChrome() {
+  var ban = document.getElementById("yearBanner");
+  if (ban) {
+    var py = yearInfo && ACTIVE_YEAR && (yearInfo.pastYears || []).filter(function (y) { return y.label === ACTIVE_YEAR; })[0];
+    ban.innerHTML = (yearInfo && ACTIVE_YEAR)
+      ? '<div class="yr-banner" role="status"><span class="yr-banner-tag">Archive \u00b7 read-only</span>'
+        + '<span class="yr-banner-text">Viewing <b>' + esc(ACTIVE_YEAR) + '</b> \u2014 archived, read-only</span>'
+        + (py && py.archiveUrl ? '<a class="yr-banner-link" href="' + esc(py.archiveUrl) + '" target="_blank" rel="noopener">Open archive spreadsheet \u2197</a>' : '')
+        + '<button type="button" class="yr-banner-back" onclick="pickYear(null)">Back to ' + esc(yearInfo.currentLabel) + ' \u2192</button></div>'
+      : "";
+  }
+  placeYearSwitch();
+  paintYearDue();
+  markYearNav();
+}
+// The rollover lives on the Chorale year page. When the window is open (1 November
+// until it's started) full admins get a prompt across the top of every page, and the
+// nav item carries a gold marker. "Later" hides the prompt for this session.
+function yearTabVisible() {
+  return (userRole === "admin" || userRole === "superAdmin") && !!yearInfo && (!!yearInfo.canStartNow || !!nyState.result);
+}
+function yearDue() { return !!yearInfo && !ACTIVE_YEAR && yearInfo.canRollover && yearInfo.canStartNow; }
+function paintYearDue() {
+  var m = document.getElementById("yearDue"); if (!m) return;
+  var later = false; try { later = sessionStorage.getItem("chorale.yearDueLater") === (yearInfo && yearInfo.nextLabel); } catch (e) {}
+  if (!yearDue() || later || activeTab === "year") { m.innerHTML = ""; return; }
+  var y = yearInfo;
+  m.innerHTML = '<div class="yr-due" role="region" aria-label="New chorale year">'
+    + '<span class="yr-due-tag">New year</span>'
+    + '<div class="yr-due-text"><div class="yr-due-t">' + esc(y.nextLabel) + ' can be started.</div>'
+    +   '<div class="yr-due-s">Archive ' + esc(y.currentLabel) + ' and reset attendance, points and requests from ' + esc(niceDayLong(y.defaultStartsOn)) + '.</div></div>'
+    + '<div class="yr-due-acts"><button type="button" class="yr-due-later" onclick="yearDueLater()">Later</button>'
+    +   '<button type="button" class="btn btn-primary yr-due-go" onclick="openYearPage()">Review &amp; start ' + esc(y.nextLabel) + ' \u2192</button></div>'
+    + '</div>';
+}
+function yearDueLater() {
+  try { sessionStorage.setItem("chorale.yearDueLater", yearInfo ? yearInfo.nextLabel : "1"); } catch (e) {}
+  paintYearDue();
+}
+function markYearNav() {
+  var due = yearDue();
+  document.querySelectorAll('[data-tab="year"]').forEach(function (el) {
+    el.classList.toggle("is-due", due);
+    var hint = el.querySelector(".hint");
+    if (hint) hint.innerHTML = due ? '<span class="yr-dot"></span>' + esc(yearInfo.nextLabel) + ' ready to start' : NAV_HINTS.year;
+  });
+}
+function yearSwitchHtml() {
+  // Switching only — starting a new year lives on the Chorale year page.
+  var shown = ACTIVE_YEAR || yearInfo.currentLabel;
+  return '<span class="yr-sep" aria-hidden="true">\u00b7</span>'
+    + '<button type="button" class="yr-switch' + (ACTIVE_YEAR ? ' is-archived' : '') + '" onclick="toggleYearMenu(this)" aria-haspopup="true" title="Change chorale year">'
+    + '<span class="yr-switch-v">' + esc(shown) + '</span>'
+    + '<svg class="yr-switch-caret" viewBox="0 0 8 5" aria-hidden="true"><path d="M.5.5 4 4 7.5.5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>'
+    + '</button>';
+}
+// Re-placed after every tab switch and after the JS-rendered headers (Requests, View) redraw.
+function placeYearSwitch() {
+  document.querySelectorAll(".yr-switch-wrap, .yr-solo").forEach(function (el) { el.remove(); });
+  if (!yearInfo || YEAR_SWITCH_TABS.indexOf(activeTab) === -1) return;
+  var page = document.getElementById("tab-" + activeTab); if (!page) return;
+  var eb = page.querySelector(".section-head .eyebrow");
+  var wrap = document.createElement("span");
+  wrap.className = "yr-switch-wrap"; wrap.innerHTML = yearSwitchHtml();
+  if (eb) { eb.appendChild(wrap); return; }
+  // No eyebrow on this page (Requests): a one-line caption of its own.
+  var solo = document.createElement("div");
+  solo.className = "eyebrow yr-solo"; solo.textContent = "Chorale year";
+  solo.appendChild(wrap);
+  page.insertBefore(solo, page.firstChild);
+}
+
+function toggleYearMenu(anchor) {
+  if (document.getElementById("yearMenu")) { closeYearMenu(); return; }
+  if (!yearInfo) return;
+  var y = yearInfo, past = y.pastYears || [];
+  var h = '<div class="yr-menu-head">Chorale year</div>'
+        + yearMenuItem(null, y.currentLabel, "Current \u00b7 since " + niceDay(y.currentStartsOn), !ACTIVE_YEAR);
+  past.forEach(function (p) { h += yearMenuItem(p.label, p.label, niceDay(p.startsOn) + " \u2013 " + niceDay(prevDayStr(p.endsOn)), ACTIVE_YEAR === p.label); });
+  if (!past.length) h += '<div class="yr-menu-empty">No past years yet \u2014 the first archive appears after the first rollover.</div>';
+  var m = document.createElement("div");
+  m.id = "yearMenu"; m.className = "yr-menu"; m.innerHTML = h;
+  anchor.setAttribute("aria-expanded", "true");
+  document.body.appendChild(m);
+  var r = anchor.getBoundingClientRect(), w = 268;
+  m.style.width = w + "px";
+  m.style.left = Math.max(8, Math.min(r.left - 10, window.innerWidth - w - 8)) + "px";
+  m.style.top = (r.bottom + 8) + "px";
+  yearMenuAnchor = anchor;
+  setTimeout(function () { document.addEventListener("click", yearMenuOutside, true); window.addEventListener("scroll", placeYearMenu, true); }, 0);
+}
+var yearMenuAnchor = null;
+function placeYearMenu() {
+  var m = document.getElementById("yearMenu"), a = yearMenuAnchor; if (!m || !a) return;
+  var r = a.getBoundingClientRect();
+  if (!a.isConnected || r.bottom < 0 || r.top > window.innerHeight) { closeYearMenu(); return; }
+  m.style.left = Math.max(8, Math.min(r.left - 10, window.innerWidth - m.offsetWidth - 8)) + "px";
+  m.style.top = (r.bottom + 8) + "px";
+}
+function yearMenuItem(val, label, sub, active) {
+  return '<button type="button" class="yr-menu-item' + (active ? ' is-active' : '') + '" onclick="pickYear(' + (val ? "'" + esc(val) + "'" : "null") + ')">'
+       + '<span class="yr-menu-label">' + esc(label) + '</span>' + (active ? '<span class="yr-menu-check">\u2713</span>' : '')
+       + '<span class="yr-menu-sub">' + esc(sub) + '</span></button>';
+}
+function yearMenuOutside(e) {
+  var m = document.getElementById("yearMenu");
+  if (m && !m.contains(e.target) && !(e.target.closest && e.target.closest(".yr-switch"))) closeYearMenu();
+}
+function closeYearMenu() {
+  var m = document.getElementById("yearMenu"); if (m) m.remove();
+  document.querySelectorAll('.yr-switch[aria-expanded="true"]').forEach(function (b) { b.setAttribute("aria-expanded", "false"); });
+  document.removeEventListener("click", yearMenuOutside, true);
+  window.removeEventListener("scroll", placeYearMenu, true);
+  yearMenuAnchor = null;
+}
+function pickYear(label) {
+  closeYearMenu();
+  if ((label || null) === ACTIVE_YEAR) return;
+  if (Object.keys(viewEditedStatuses || {}).length && !confirm("Discard your unsaved register changes?")) return;
+  setActiveYear(label);
+}
+
+// Live-year-only pages while an archive is open.
+function renderYearGate(tab) {
+  var g = document.getElementById("yearGate"); if (!g) return;
+  var t = adminTabs.concat(memberTabs).filter(function (x) { return x.id === tab; })[0];
+  var name = t ? t.label : (tab === "apology" ? "Submit apology" : "This page");
+  var live = yearInfo ? yearInfo.currentLabel : "the live year";
+  g.innerHTML = '<div class="section-head yr-gate">'
+    + '<div class="eyebrow">' + esc(ACTIVE_YEAR) + ' \u00b7 archived</div><span class="gold-rule"></span>'
+    + '<h2>' + esc(name) + ' is live-year only.</h2>'
+    + '<p class="subtitle">Past years keep sessions, dashboards, requests, standings and the activity log. ' + esc(name) + ' only exists for the year in progress.</p>'
+    + '<div class="yr-gate-actions"><button type="button" class="btn btn-primary" onclick="pickYear(null)">Back to ' + esc(live) + '</button></div></div>';
+}
+
+// ─── 12b. YEARS PAGE + NEW-YEAR ROLLOVER ──────────────────────────────────
+// Opened from the year chip. Past years for everyone who can view them; the
+// rollover panel for full admins (canRollover) and, preview-only, the Super Admin.
+var yearPageReturnTab = null;
+var nyState = { date: "", plan: null, loading: false, error: "", typed: "", running: false, startError: "", result: null };
+
+function openYearPage() {
+  nyState.result = null; nyState.startError = ""; nyState.typed = "";
+  switchTab("year");
+}
+function closeYearPage() {
+  var back = yearPageReturnTab && yearPageReturnTab !== "year" ? yearPageReturnTab : (activeTabs()[0] || {}).id;
+  switchTab(back);
+}
+function nyVisible() { return !!yearInfo && (yearInfo.canRollover || isReadOnly()); }
+function loadYearPage() {
+  renderYearPage();
+  loadYearInfo(function (y) {
+    if (y && nyVisible() && !ACTIVE_YEAR && y.canStartNow && !nyState.result && !nyState.running) {
+      if (!nyState.date || nyState.date < y.defaultStartsOn || nyState.date > y.latestStartsOn) nyState.date = y.defaultStartsOn;
+      runYearPreview();
+    }
+    renderYearPage();
+  });
+}
+function nyStartArg() { return (yearInfo && nyState.date && nyState.date !== yearInfo.defaultStartsOn) ? nyState.date : ""; }
+function runYearPreview() {
+  nyState.loading = true; nyState.error = ""; renderYearPage();
+  google.script.run.withSuccessHandler(function (plan) {
+    nyState.loading = false; nyState.plan = plan || null; renderYearPage();
+  }).withFailureHandler(function (e) {
+    nyState.loading = false; nyState.plan = null; nyState.error = serverError(e); renderYearPage();
+  }).previewNewYear(nyStartArg());
+}
+function nyDateChanged(v) {
+  var y = yearInfo; if (!y) return;
+  if (!v || v < y.defaultStartsOn) v = y.defaultStartsOn;
+  if (v > y.latestStartsOn) v = y.latestStartsOn;
+  nyState.date = v;
+  runYearPreview();
+}
+function nyTyped(v) {
+  nyState.typed = String(v || "").trim();
+  var b = document.getElementById("btnStartYear");
+  if (b) b.disabled = !nyCanStart();
+}
+function nyCanStart() { return !!yearInfo && nyState.typed === yearInfo.nextLabel && !nyState.running && !!nyState.plan && !nyState.loading; }
+
+function renderYearPage() {
+  var c = document.getElementById("yearPage"); if (!c) return;
+  if (!yearInfo) { c.innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading the chorale year\u2026</div></div>'; return; }
+  var y = yearInfo, showNy = nyVisible();
+  var h = '<div class="section-head"><div class="eyebrow">Chorale year \u00b7 ' + (isReadOnly() ? 'view only' : 'admin') + '</div><span class="gold-rule"></span>'
+        + '<h2>' + esc(y.currentLabel) + '.</h2>'
+        + '<p class="subtitle">The chorale year runs November to October. ' + esc(y.currentLabel) + ' started on ' + esc(niceDayLong(y.currentStartsOn)) + '.</p></div>';
+  h += '<div class="yr-page' + (showNy ? '' : ' is-single') + '">';
+  if (showNy) h += '<div class="yr-page-main">' + nyPanelHtml() + '</div>';
+  h += '<div class="yr-page-side">' + pastYearsHtml() + '</div></div>';
+  c.innerHTML = h;
+}
+function pastYearsHtml() {
+  var list = (yearInfo && yearInfo.pastYears) || [];
+  var h = '<div class="eyebrow yr-past-h">Past years</div>';
+  if (!list.length) return h + '<div class="yr-past-empty">No past years yet. Each rollover archives the year that ended, and it appears here.</div>';
+  h += '<div class="yr-past">';
+  list.forEach(function (p) {
+    var open = ACTIVE_YEAR === p.label;
+    h += '<div class="yr-past-row' + (open ? ' is-open' : '') + '">'
+       +   '<div class="yr-past-main"><div class="yr-past-label">' + esc(p.label) + '</div>'
+       +     '<div class="yr-past-dates">' + esc(niceDay(p.startsOn)) + ' \u2013 ' + esc(niceDay(prevDayStr(p.endsOn))) + '</div>'
+       +     (p.rolledOverOn ? '<div class="yr-past-meta">Archived ' + esc(niceDay(p.rolledOverOn)) + (p.rolledOverBy ? ' by ' + esc(p.rolledOverBy) : '') + '</div>' : '')
+       +   '</div>'
+       +   '<div class="yr-past-acts">'
+       +     (open ? '<span class="yr-past-viewing">Viewing</span>' : '<button type="button" class="btn-export" onclick="pickYear(\'' + esc(p.label) + '\')">View</button>')
+       +     (p.archiveUrl ? '<a class="yr-past-link" href="' + esc(p.archiveUrl) + '" target="_blank" rel="noopener">Open archive spreadsheet \u2197</a>' : '')
+       +   '</div></div>';
+  });
+  return h + '</div>';
+}
+function nyPanelHtml() {
+  var y = yearInfo, s = nyState, ro = isReadOnly() || !y.canRollover;
+  var h = '<div class="ny-card">'
+        + '<div class="ny-head"><div><div class="eyebrow">New year</div><div class="ny-title">Start ' + esc(y.nextLabel) + '</div></div>'
+        + '<div class="ny-when">From ' + esc(niceDay((y.canStartNow && s.date) || y.nextStartsOn)) + '</div></div>';
+  if (ACTIVE_YEAR) {
+    return h + '<p class="ny-explain">You\u2019re viewing ' + esc(ACTIVE_YEAR) + '. Go back to ' + esc(y.currentLabel) + ' to start the new year.</p>'
+             + '<div class="ny-go"><button type="button" class="btn btn-secondary" onclick="pickYear(null)">Back to ' + esc(y.currentLabel) + '</button></div></div>';
+  }
+  if (s.result) return h + nyResultHtml(s.result) + '</div>';
+  h += '<p class="ny-explain">Starting archives ' + esc(y.currentLabel) + ' to its own spreadsheet and resets attendance, points, offenses, rewards and apologies for ' + esc(y.nextLabel)
+     + '. Members part-way through probation carry their sessions forward. Past years stay viewable from the year picker.</p>';
+  if (!y.canStartNow) {
+    return h + '<div class="ny-blocked"><span class="ny-blocked-mark">II</span><span>' + esc(y.blockReason || "Not available yet.") + '</span></div>'
+             + (ro ? '' : '<div class="ny-go"><button type="button" class="btn btn-primary" disabled>Start ' + esc(y.nextLabel) + '</button></div>') + '</div>';
+  }
+  var cw = nyCustomWarning();
+  h += nyStep(1, "Start date",
+        '<input type="date" id="nyDate" class="form-input ny-date" min="' + esc(y.defaultStartsOn) + '" max="' + esc(y.latestStartsOn) + '" value="' + esc(s.date) + '" onchange="nyDateChanged(this.value)"' + (s.running || ro ? ' disabled' : '') + '>'
+      + '<p class="ny-hint">Most years this stays on ' + esc(niceDayLong(y.defaultStartsOn)) + '. Pick a later day only if the year genuinely began late \u2014 everything recorded before it stays in ' + esc(y.currentLabel) + '.</p>'
+      + (cw ? '<div class="ny-warn is-strong"><b>Custom start.</b> ' + esc(cw.replace(/^Custom start:\s*/, "")) + '</div>' : ''));
+  h += nyStep(2, "Preview", nyPreviewHtml());
+  h += nyStep(3, "Confirm", nyConfirmHtml(ro));
+  return h + '</div>';
+}
+function nyStep(n, title, body) {
+  return '<div class="ny-step"><div class="ny-step-n">' + n + '</div><div class="ny-step-body"><div class="ny-step-t">' + title + '</div>' + body + '</div></div>';
+}
+function nyCustomWarning() {
+  var p = nyState.plan;
+  if (!p || !p.customStart) return "";
+  return (p.warnings || []).filter(function (w) { return /^Custom start/.test(w); })[0] || "Custom start date.";
+}
+function nyPreviewHtml() {
+  var s = nyState, p = s.plan;
+  if (s.loading && !p) return '<div class="ny-loading"><div class="spinner"></div><span>Checking what moves\u2026</span></div>';
+  if (s.error) return '<div class="ny-error">' + esc(s.error) + '</div>';
+  if (!p) return '';
+  var h = s.loading ? '<div class="ny-refresh">Updating the preview\u2026</div>' : '';
+  var pend = p.pendingApologiesArchived || [];
+  if (pend.length) {
+    h += '<div class="ny-pending"><div class="ny-pending-head"><span class="ny-pending-n">' + pend.length + '</span><div>'
+       + '<div class="ny-pending-t">Resolve these first</div>'
+       + '<div class="ny-pending-s">After the rollover they\u2019re archived unresolved.</div></div></div>';
+    pend.forEach(function (a) { h += nyApologyCard(a); });
+    h += '</div>';
+  }
+  var sheets = p.sheets || {}, names = Object.keys(sheets);
+  if (names.length) {
+    h += '<div class="ny-sub-t">Rows moving to the ' + esc(p.currentLabel) + ' archive</div><div class="ny-table">'
+       + '<div class="ny-tr ny-th"><span>Sheet</span><span>Archived</span><span>Stay live</span></div>';
+    names.forEach(function (n) {
+      var r = sheets[n] || {};
+      h += '<div class="ny-tr"><span>' + esc(n) + '</span><span class="num">' + (r.archive || 0) + '</span><span class="num">' + (r.live || 0)
+         + (r.both ? ' <em title="Long-term apologies spanning the boundary are kept in both">+' + r.both + ' in both</em>' : '') + '</span></div>';
+    });
+    h += '</div>';
+  }
+  h += nyListHtml("Probation carried forward", p.probationCarry, function (c) {
+    return '<b>' + esc(c.name) + '</b> \u00b7 ' + c.carriedSessions + ' session' + (c.carriedSessions === 1 ? '' : 's') + ' done, ' + c.carriedAttended + ' attended \u00b7 since ' + esc(niceDay(c.probationStart));
+  }, "Nobody is part-way through probation.");
+  h += nyListHtml("Probation penalties cleared", p.penaltiesCleared, function (x) { return '<b>' + esc(x.name) + '</b> \u00b7 ' + esc(String(x.penalty)) + ' pts'; }, "None.");
+  h += nyListHtml("3-AU offenses dropped", p.auOffensesDropped, function (x) { return '<b>' + esc(x.name) + '</b> \u00b7 ' + esc(niceDay(x.date)); }, "None \u2014 no streak crosses the boundary.");
+  (p.warnings || []).filter(function (w) { return !/^Custom start/.test(w) && !/still Pending/i.test(w); })
+    .forEach(function (w) { h += '<div class="ny-warn">' + esc(w) + '</div>'; });
+  return h;
+}
+function nyListHtml(title, arr, fmt, emptyTxt) {
+  arr = arr || [];
+  var h = '<div class="ny-sub-t">' + title + ' <span class="ny-count">' + arr.length + '</span></div>';
+  if (!arr.length) return h + '<div class="ny-empty">' + emptyTxt + '</div>';
+  return h + '<ul class="ny-list">' + arr.map(function (x) { return '<li>' + fmt(x) + '</li>'; }).join('') + '</ul>';
+}
+// The apology-queue card (mobile treatment), with Approve / Reject wired to the
+// existing approveApology / rejectApology. Admin requests go back to Requests.
+function nyApologyCard(a) {
+  var pr = parseRequest(a);
+  var isApol = ["late", "absent", "longterm", "emergency"].indexOf(a.kind) !== -1
+            || (!a.kind && !/Transfer|Name Change|Course|Restart|Rejoin/.test(a.type || ""));
+  var isEm = a.kind === "emergency";
+  var h = '<div class="stat-card ny-apol' + (isEm ? ' is-em' : '') + '">'
+        + '<div class="ny-apol-top"><div style="flex:1;min-width:0">'
+        +   '<div class="ny-apol-name">' + esc(a.name) + (isEm ? ' <span class="em-tag">EMERGENCY</span>' : '') + '</div>'
+        +   '<div class="ny-apol-sub">' + apologySubLine(a) + ' \u00b7 ' + esc(apologyKindLabel(a).toUpperCase()) + '</div>'
+        +   '<div class="ny-apol-reason">\u201c' + esc(pr.cleanReason || a.reason || "") + '\u201d</div>'
+        + '</div><span class="ny-apol-st">PENDING</span></div>';
+  if (!isReadOnly()) {
+    h += '<div class="ny-apol-acts">' + (isApol
+      ? '<button type="button" class="btn-export ny-rej" onclick="nyReject(' + a.rowIndex + ')">Reject</button><button type="button" class="btn-export ny-app" onclick="nyApprove(' + a.rowIndex + ')">Approve</button>'
+      : '<button type="button" class="btn-export" onclick="switchTab(\'requests\')">Decide in Requests \u2192</button>') + '</div>';
+  }
+  return h + '</div>';
+}
+function nyApprove(rowIndex) { nyDecide(rowIndex, true); }
+function nyReject(rowIndex) { nyDecide(rowIndex, false); }
+function nyDecide(rowIndex, approve) {
+  if (roBlock()) return;
+  var note = prompt(approve ? "Optional note (leave blank for none):" : "Reason for rejection:");
+  if (note === null) return;
+  var done = beginDecision(rowIndex); if (!done) return;
+  var run = google.script.run.withSuccessHandler(function (r) {
+    done(); r = r || {};
+    var parts = [approve ? "Approved" : "Rejected"];
+    if (r.backfilled) parts.push(r.backfilled + " past record" + (r.backfilled === 1 ? "" : "s") + " updated");
+    if (r.offensesRemoved) parts.push(r.offensesRemoved + " offense" + (r.offensesRemoved === 1 ? "" : "s") + " removed");
+    showToast(parts.join(" \u00b7 ") + ".", "success");
+    requestsTabLoaded = false;   // the queue changed
+    runYearPreview();            // row numbers shift when the sheet changes — never reuse an old rowIndex
+  }).withFailureHandler(function (e) { done(); showToast(serverError(e), "error"); runYearPreview(); });
+  if (approve) run.approveApology(rowIndex, note || ""); else run.rejectApology(rowIndex, note || "");
+}
+function nyConfirmHtml(ro) {
+  var y = yearInfo, s = nyState;
+  if (ro) return '<div class="ny-ro">VIEW ONLY \u00b7 STARTING THE YEAR IS FOR FULL ADMINS</div>';
+  var pend = ((s.plan && s.plan.pendingApologiesArchived) || []).length;
+  var h = '<label class="ny-confirm-l" for="nyConfirm">Type <b>' + esc(y.nextLabel) + '</b> to confirm</label>'
+    + '<input type="text" id="nyConfirm" class="form-input ny-confirm" autocomplete="off" spellcheck="false" placeholder="' + esc(y.nextLabel) + '" value="' + esc(s.typed) + '" oninput="nyTyped(this.value)"' + (s.running ? ' disabled' : '') + '>'
+    + '<p class="ny-hint">It takes a minute or two. Make sure nobody is recording attendance while it runs.</p>'
+    + '<div class="ny-go"><button type="button" class="btn btn-crimson" id="btnStartYear" onclick="startNewYearNow()"' + (nyCanStart() ? '' : ' disabled') + '>'
+    +   (s.running ? 'Starting ' + esc(y.nextLabel) + '\u2026' : 'Start ' + esc(y.nextLabel)) + '</button>'
+    +   (pend ? '<span class="ny-go-pend">' + pend + ' pending \u00b7 archived unresolved if left</span>' : '') + '</div>';
+  if (s.running) h += '<div class="ny-running"><div class="spinner"></div><span>Archiving ' + esc(y.currentLabel) + ' and resetting the live sheets. Keep this page open.</span></div>';
+  if (s.startError) h += '<div class="ny-error">' + esc(s.startError) + '</div>';
+  return h;
+}
+function startNewYearNow() {
+  if (roBlock()) return;
+  if (!nyCanStart() || !yearInfo) { showToast("Type " + (yearInfo ? yearInfo.nextLabel : "the new year") + " exactly to confirm.", "error"); return; }
+  nyState.running = true; nyState.startError = ""; renderYearPage();
+  google.script.run.withSuccessHandler(function (r) {
+    nyState.running = false; nyState.result = r || { success: true }; nyState.plan = null; nyState.typed = "";
+    resetYearCaches();
+    renderYearPage();
+    reloadRoleAndYear();
+  }).withFailureHandler(function (e) {
+    // Shown as-is: the backend says whether anything changed.
+    nyState.running = false; nyState.startError = serverError(e); renderYearPage();
+  }).startNewYear(nyState.typed, nyStartArg());
+}
+function nyResultHtml(r) {
+  var sm = r.summary || {}, bits = [], archived = 0;
+  if (sm.archived && typeof sm.archived === "object") { for (var k in sm.archived) archived += Number(sm.archived[k]) || 0; }
+  else archived = Number(sm.archived) || 0;
+  if (archived) bits.push(archived.toLocaleString() + " rows archived");
+  if (sm.probationCarried) bits.push(sm.probationCarried + " probation" + (sm.probationCarried === 1 ? "" : "s") + " carried forward");
+  if (sm.penaltiesCleared) bits.push(sm.penaltiesCleared + " penalt" + (sm.penaltiesCleared === 1 ? "y" : "ies") + " cleared");
+  if (sm.auOffensesDropped) bits.push(sm.auOffensesDropped + " 3-AU offense" + (sm.auOffensesDropped === 1 ? "" : "s") + " dropped");
+  var h = '<div class="ny-done"><div class="ny-done-mark">\u2713</div><div class="ny-done-body">'
+        + '<div class="ny-done-msg">' + esc(r.message || ("The " + (r.label || "new") + " year has started.")) + '</div>'
+        + (bits.length ? '<div class="ny-done-sum">' + esc(bits.join(" \u00b7 ")) + '</div>' : '')
+        + '<div class="ny-done-links">'
+        +   (r.archiveUrl ? '<a class="btn-export" href="' + esc(r.archiveUrl) + '" target="_blank" rel="noopener">Open ' + esc(r.previousLabel || "") + ' archive \u2197</a>' : '')
+        +   (r.backupUrl ? '<a class="btn-export" href="' + esc(r.backupUrl) + '" target="_blank" rel="noopener">Open backup \u2197</a>' : '')
+        + '</div></div></div>';
+  (r.warnings || []).forEach(function (w) { h += '<div class="ny-warn">' + esc(w) + '</div>'; });
+  return h;
+}
+function reloadRoleAndYear() {
+  google.script.run.withSuccessHandler(function (r) {
+    r = r || {};
+    userAccess.canViewPastYears = !!r.canViewPastYears;
+    userAccess.canStartNewYear = !!r.canStartNewYear;
+    loadYearInfo(function () { if (activeTab === "year") renderYearPage(); });
+  }).withFailureHandler(function () { loadYearInfo(); }).getUserRole();
+}
+
+// ─── 12c. ACTIVITY LOG (full admins + Super Admin) ────────────────────────
+var activityLimit = 200, activityTimer = null;
+var actActor = { value: "", label: "" };   // By: an email, or "System"
+var actPeople = {};                        // email -> name, everyone who appears in the log
+function actYmd(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+function actRange() { var b = document.querySelector("#actRangeSeg button.active"); return b ? b.getAttribute("data-range") : "all"; }
+function actRangeChanged() {
+  var c = document.getElementById("actCustomRange");
+  if (c) c.style.display = actRange() === "custom" ? "flex" : "none";
+  activityChanged();
+}
+function activityFilters() {
+  function v(id) { var el = document.getElementById(id); return el ? String(el.value || "").trim() : ""; }
+  var f = { limit: activityLimit }, r = actRange();
+  if (r === "custom") {
+    // Applied only once both ends are set; until then the loader waits (see customRangeWait).
+    var wait = customRangeWait(v("actFrom"), v("actTo"));
+    if (wait) f._wait = wait; else { f.from = v("actFrom"); f.to = v("actTo"); }
+  }
+  else if ((r === "7" || r === "30") && !ACTIVE_YEAR) {
+    var d = new Date(); f.to = actYmd(d); d.setDate(d.getDate() - Number(r) + 1); f.from = actYmd(d);
+  }
+  if (actActionVal) f.action = actActionVal;
+  if (actActor.value) f.actor = actActor.value;
+  // Find: a date in any everyday form is sent as yyyy-MM-dd (the backend matches its
+  // written forms); anything else is a plain text match over the subject + details.
+  var q = v("actSearch");
+  if (q) { var iso = actParseDate(q); f.search = iso || q; if (iso) f.searchIsDate = true; }
+  return f;
+}
+// "15/9/26", "15-09-2026", "2026-09-15", "15th Sep", "Sep 15 2026", "15th" → "2026-09-15".
+// Day first (15/9 = 15 Sep). No year → the most recent one; "15th" alone → the latest 15th.
+// A bare number is text, not a date.
+function actParseDate(q) {
+  var t = String(q || "").toLowerCase().trim().replace(/,/g, " ").replace(/\s+of\s+/g, " ").replace(/\s+/g, " ");
+  var hadOrdinal = /\d(st|nd|rd|th)\b/.test(t);
+  t = t.replace(/(\d+)(st|nd|rd|th)\b/g, "$1");
+  var MON = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 };
+  function mon(w) { w = String(w || "").slice(0, 4); return MON[w] || MON[w.slice(0, 3)] || 0; }
+  var base = actDateBase(), y = 0, m = 0, d = 0, mm;
+  if ((mm = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) { y = +mm[1]; m = +mm[2]; d = +mm[3]; }
+  else if ((mm = t.match(/^(\d{1,2})[\/.\-](\d{1,2})(?:[\/.\-](\d{2}|\d{4}))?$/))) {
+    d = +mm[1]; m = +mm[2]; y = mm[3] ? +mm[3] : 0;
+    if (m > 12 && d <= 12) { var x = d; d = m; m = x; }
+  }
+  else if ((mm = t.match(/^(\d{1,2}) ([a-z]{3,9})\.?(?: (\d{2}|\d{4}))?$/)) && mon(mm[2])) { d = +mm[1]; m = mon(mm[2]); y = mm[3] ? +mm[3] : 0; }
+  else if ((mm = t.match(/^([a-z]{3,9})\.? (\d{1,2})(?: (\d{2}|\d{4}))?$/)) && mon(mm[1])) { m = mon(mm[1]); d = +mm[2]; y = mm[3] ? +mm[3] : 0; }
+  else if (hadOrdinal && (mm = t.match(/^(\d{1,2})$/))) { d = +mm[1]; }
+  else return "";
+  if (y && y < 100) y += 2000;
+  if (!m) {                                         // "15th": this month's, else last month's
+    m = base.getMonth() + 1; y = base.getFullYear();
+    if (d > base.getDate()) { m -= 1; if (!m) { m = 12; y -= 1; } }
+  } else if (!y) {                                  // "15 Sep": the most recent one
+    y = base.getFullYear();
+    if (new Date(y, m - 1, d) > base) y -= 1;
+  }
+  var dt = new Date(y, m - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return "";
+  return actYmd(dt);
+}
+// "Today" for inferring a missing month/year — the archived year's last day when viewing one.
+function actDateBase() {
+  var py = ACTIVE_YEAR && yearInfo && (yearInfo.pastYears || []).filter(function (y) { return y.label === ACTIVE_YEAR; })[0];
+  if (py && py.endsOn) { var p = yrParts(prevDayStr(py.endsOn)); if (p) return new Date(+p[0], +p[1] - 1, +p[2]); }
+  var n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+}
+
+// ─── By: people picker (everyone who appears in the log, plus Automatic) ───
+function setActivityActor(value, label) {
+  actActor = { value: value || "", label: value ? (label || actPeople[value] || value) : "" };
+  var l = document.getElementById("actByLabel"), b = document.getElementById("actByBtn");
+  if (l) l.textContent = actActor.value ? (actActor.value === "System" ? "Automatic" : actActor.label) : "Anyone";
+  if (b) b.classList.toggle("is-empty", !actActor.value);
+  closeActorMenu();
+  activityChanged();
+}
+function actorMenuItems(q) {
+  q = String(q || "").toLowerCase().trim();
+  var ppl = Object.keys(actPeople).filter(function (e) { return e && e !== "System"; })
+    .map(function (e) { return { value: e, name: actPeople[e] || e, mail: e }; })
+    .sort(function (a, b) { return a.name.localeCompare(b.name); });
+  var all = [{ value: "", name: "Anyone", mail: "" }, { value: "System", name: "Automatic", mail: "Scheduled & system changes", sys: true }, { sep: true }].concat(ppl);
+  if (!q) return all;
+  return all.filter(function (o) { return !o.sep && o.value && (o.name + " " + o.mail).toLowerCase().indexOf(q) !== -1; });
+}
+function actorMenuHtml(q) {
+  var items = actorMenuItems(q), first = true;
+  if (!items.length) return '<div class="act-pop-empty">Nobody by that name in the log.</div>';
+  return items.map(function (o) {
+    if (o.sep) return '<div class="act-pop-sep"></div>';
+    var on = o.value === actActor.value, hi = q && first; first = false;
+    var av = o.value === "" ? '<span class="act-pop-dot is-all"></span>' : '<span class="act-av' + (o.sys ? ' is-system' : '') + '">' + (o.sys ? 'SYS' : esc(actInitials(o.name))) + '</span>';
+    return '<button type="button" role="option" class="act-pop-item' + (on ? ' is-active' : '') + (hi ? ' is-hi' : '') + '" data-v="' + esc(o.value) + '" onclick="setActivityActor(this.getAttribute(\'data-v\'))">'
+         + av + '<span class="act-pop-txt"><div class="act-pop-name">' + esc(o.name) + '</div>' + (o.mail ? '<div class="act-pop-mail">' + esc(o.mail) + '</div>' : '') + '</span>'
+         + (on ? '<span class="act-pop-check">\u2713</span>' : '') + '</button>';
+  }).join("");
+}
+
+var pickPop = null;   // { el, anchor } — the open picker (By / Action)
+function openPickPop(anchor, placeholder, render, noSearch) {
+  var same = pickPop && pickPop.anchor === anchor;
+  closePickPop();
+  if (same) return;                                  // second click on the same button closes it
+  var m = document.createElement("div");
+  m.className = "act-pop" + (noSearch ? " is-compact" : ""); m.setAttribute("role", "listbox");
+  m.innerHTML = '<input type="search" class="act-pop-search" placeholder="' + esc(placeholder) + '" autocomplete="off"' + (noSearch ? ' hidden' : '') + '><div class="act-pop-list"></div>';
+  document.body.appendChild(m);
+  var inp = m.querySelector("input"), list = m.querySelector(".act-pop-list");
+  function draw() { list.innerHTML = render(inp.value); }
+  draw();
+  inp.addEventListener("input", draw);
+  m.addEventListener("keydown", function (e) { if (e.key === "Escape") closePickPop(); });
+  inp.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") closePickPop();
+    if (e.key === "Enter") { var b = list.querySelector(".act-pop-item"); if (b) b.click(); }
+  });
+  pickPop = { el: m, anchor: anchor };
+  anchor.setAttribute("aria-expanded", "true");
+  placePickPop();
+  setTimeout(function () {
+    if (noSearch) { var f = list.querySelector(".act-pop-item.is-active") || list.querySelector(".act-pop-item"); if (f) f.focus(); }
+    else inp.focus();
+    document.addEventListener("click", pickPopOutside, true);
+    window.addEventListener("scroll", placePickPop, true);
+    window.addEventListener("resize", placePickPop);
+  }, 0);
+}
+// Follows the button as the page scrolls; closes once the button leaves the screen.
+function placePickPop(e) {
+  if (!pickPop) return;
+  if (e && e.target && e.target.nodeType === 1 && pickPop.el.contains(e.target)) return;   // scrolling the list itself
+  var a = pickPop.anchor, m = pickPop.el;
+  if (!a.isConnected) { closePickPop(); return; }
+  var r = a.getBoundingClientRect(), w = m.offsetWidth || 290;
+  if (r.bottom < 0 || r.top > window.innerHeight) { closePickPop(); return; }
+  m.style.left = Math.max(8, Math.min(r.left - 40, window.innerWidth - w - 8)) + "px";
+  m.style.top = (r.bottom + 10) + "px";
+}
+function pickPopOutside(e) {
+  if (pickPop && !pickPop.el.contains(e.target) && !pickPop.anchor.contains(e.target)) closePickPop();
+}
+function closePickPop() {
+  if (!pickPop) return;
+  pickPop.el.remove(); pickPop.anchor.setAttribute("aria-expanded", "false"); pickPop = null;
+  document.removeEventListener("click", pickPopOutside, true);
+  window.removeEventListener("scroll", placePickPop, true);
+  window.removeEventListener("resize", placePickPop);
+}
+function toggleActorMenu(anchor) { openPickPop(anchor, "Search people", actorMenuHtml); }
+
+// ─── Action: same picker, with each action's colour ───
+var actActionVal = "", actActionsKnown = [];
+function toggleActionMenu(anchor) { openPickPop(anchor, "Search actions", actionMenuHtml); }
+function actionMenuHtml(q) {
+  q = String(q || "").toLowerCase().trim();
+  var acts = actActionsKnown.filter(function (a) { return !q || a.toLowerCase().indexOf(q) !== -1; });
+  if (!acts.length && q) return '<div class="act-pop-empty">No action by that name.</div>';
+  return (q ? "" : actionItemHtml("", "All actions") + '<div class="act-pop-sep"></div>') + acts.map(function (a) { return actionItemHtml(a, a); }).join("");
+}
+function actionItemHtml(val, label) {
+  var on = val === actActionVal;
+  return '<button type="button" role="option" class="act-pop-item' + (on ? ' is-active' : '') + '" data-v="' + esc(val) + '" onclick="setActivityAction(this.getAttribute(\'data-v\'))">'
+       + '<span class="act-pop-dot ' + (val ? activityTone(val) : 'is-all') + '"></span>'
+       + '<span class="act-pop-txt"><div class="act-pop-name is-plain">' + esc(label) + '</div></span>'
+       + (on ? '<span class="act-pop-check">\u2713</span>' : '') + '</button>';
+}
+function setActivityAction(val) {
+  actActionVal = val || "";
+  var l = document.getElementById("actActionLabel"), b = document.getElementById("actActionBtn");
+  if (l) l.textContent = actActionVal || "All actions";
+  if (b) b.classList.toggle("is-empty", !actActionVal);
+  closePickPop();
+  activityChanged();
+}
+function closeActorMenu() { closePickPop(); }
+function activityHasFilters() { var f = activityFilters(); return !!(f.from || f.to || f.action || f.actor || f.search); }
+function loadActivityLog() {
+  activityLoaded = true;
+  var list = document.getElementById("activityList"); if (!list) return;
+  var f = activityFilters();
+  if (!f._wait && !list.querySelector(".act-day")) list.innerHTML = '<div class="loading"><div class="spinner"></div><div>Loading activity\u2026</div></div>';
+  renderActivityActive();
+  showRangeWait("actBusy", f._wait || "");
+  if (f._wait) { if (!list.querySelector(".act-day") && !list.querySelector(".empty-pane")) list.innerHTML = ""; return; }
+  delete f._wait;
+  list.classList.add("is-busy");
+  serverCall("getActivityLog", [f], function (r) { list.classList.remove("is-busy"); renderActivityLog(r || {}); },
+    function (e) { list.classList.remove("is-busy"); list.innerHTML = '<p class="loading">' + esc(serverError(e)) + '</p>'; });
+}
+function activityChanged(debounce) {
+  activityLimit = 200;
+  clearTimeout(activityTimer);
+  activityTimer = setTimeout(loadActivityLog, debounce ? 300 : 0);
+}
+function activityMore() { activityLimit = Math.min(1000, activityLimit + 200); loadActivityLog(); }
+function actResetRange() {
+  var all = document.querySelector('#actRangeSeg [data-range="all"]'); if (all) segSelect(all);
+  ["actFrom", "actTo"].forEach(function (id) { var el = document.getElementById(id); if (el) el.value = ""; });
+  var c = document.getElementById("actCustomRange"); if (c) c.style.display = "none";
+}
+function clearActivityFilters() {
+  actResetRange();
+  var el = document.getElementById("actSearch"); if (el) el.value = "";
+  actActionVal = ""; var al = document.getElementById("actActionLabel"), ab = document.getElementById("actActionBtn");
+  if (al) al.textContent = "All actions"; if (ab) ab.classList.add("is-empty");
+  setActivityActor("");
+}
+function clearActivityFilter(which) {
+  if (which === "actActor") { setActivityActor(""); return; }
+  if (which === "actAction") { setActivityAction(""); return; }
+  if (which === "range") actResetRange();
+  else { var el = document.getElementById(which); if (el) el.value = ""; }
+  activityChanged();
+}
+function activityByPerson(who) { setActivityActor(who); }
+// Filters in force, as removable chips (filter-chip.active) with "Clear all".
+function renderActivityActive() {
+  var m = document.getElementById("activityActive"); if (!m) return;
+  var f = activityFilters(), chips = [];
+  function chip(k, label, val, tag) { chips.push('<button type="button" class="filter-chip active" onclick="clearActivityFilter(\'' + k + '\')" title="Remove">' + label + ' <b>' + esc(val) + '</b>' + (tag ? '<span class="t">' + tag + '</span>' : '') + '<span class="x">\u00d7</span></button>'); }
+  if (f.from || f.to) chip("range", "When", (f.from ? niceDay(f.from) : "\u2026") + " \u2192 " + (f.to ? niceDay(f.to) : "\u2026"));
+  if (f.action) chip("actAction", "Action", f.action);
+  if (f.actor) chip("actActor", "By", f.actor === "System" ? "Automatic" : actActor.label);
+  if (f.search) chip("actSearch", "Find", f.searchIsDate ? niceDay(f.search) : f.search, f.searchIsDate ? "date" : "");
+  m.innerHTML = chips.length ? '<div class="act-active">' + chips.join("") + (chips.length > 1 ? '<button type="button" class="act-clear" onclick="clearActivityFilters()">Clear all</button>' : '') + '</div>' : "";
+}
+function activityTone(action) {
+  var a = String(action || "");
+  if (/Removed|inactive|offense|Deleted|Cancelled|Rejected/i.test(a)) return "t-crimson";
+  if (/Approved|Reinstated|reward|Corrected|Passed/i.test(a)) return "t-green";
+  if (/communique|meeting|year|draft|birthday|welcome/i.test(a)) return "t-ink";
+  if (/apology|request|transfer|Probation|rejoin|restart/i.test(a)) return "t-gold";
+  return "";
+}
+var ACT_DOW = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
+function actInitials(n) {
+  var p = String(n || "").replace(/@.*/, "").split(/[\s._-]+/).filter(Boolean);
+  return ((p[0] || "?").charAt(0) + (p.length > 1 ? p[p.length - 1].charAt(0) : "")).toUpperCase();
+}
+function renderActivityLog(r) {
+  var entries = r.entries || [], total = r.total || 0;
+  actActionsKnown = (r.actions || []).slice();
+  if (actActionVal && actActionsKnown.indexOf(actActionVal) === -1) actActionsKnown.unshift(actActionVal);
+  (r.actors || []).forEach(function (a) { if (a && a.email) actPeople[a.email] = a.name || a.email; });
+  entries.forEach(function (e) { if (e.actor && !actPeople[e.actor]) actPeople[e.actor] = e.actorName || e.actor; });
+  renderActivityActive();
+  var list = document.getElementById("activityList"); if (!list) return;
+  if (!entries.length) {
+    list.innerHTML = activityHasFilters()
+      ? '<div class="empty-pane">Nothing matches these filters.<div style="margin-top:14px"><button type="button" class="btn-export" style="font-style:normal" onclick="clearActivityFilters()">Clear filters</button></div></div>'
+      : '<div class="empty-pane">No activity recorded yet.</div>';
+    return;
+  }
+  // Group by day, keeping newest-first order.
+  var days = [], byDay = {};
+  entries.forEach(function (e) {
+    var d = String(e.timestamp || "").slice(0, 10);
+    if (!byDay[d]) { byDay[d] = []; days.push(d); }
+    byDay[d].push(e);
+  });
+  var h = '<div class="act-head"><div class="eyebrow">' + Number(total).toLocaleString() + ' change' + (total === 1 ? '' : 's') + (ACTIVE_YEAR ? ' \u00b7 ' + esc(ACTIVE_YEAR) : '') + '</div>'
+        + '<span class="act-head-r">Newest first' + (entries.length < total ? ' \u00b7 showing ' + entries.length.toLocaleString() : '') + '</span></div>';
+  days.forEach(function (d) {
+    var p = yrParts(d), dt = p ? new Date(+p[0], +p[1] - 1, +p[2]) : null, n = byDay[d].length;
+    h += '<div class="act-day"><div class="act-datebox">'
+       +   (dt ? '<div class="sess-dow">' + ACT_DOW[dt.getDay()] + '</div><div class="sess-daynum">' + dt.getDate() + '</div><div class="sess-mon">' + YR_MON[dt.getMonth()].toUpperCase() + ' ' + dt.getFullYear() + '</div>'
+               : '<div class="sess-mon">' + esc(d) + '</div>')
+       +   '<div class="act-daycount">' + n + ' change' + (n === 1 ? '' : 's') + '</div>'
+       + '</div><div class="act-entries">';
+    byDay[d].forEach(function (e) {
+      var tone = activityTone(e.action), who = e.actorName || e.actor || "", sys = who === "System";
+      h += '<div class="act-entry"><div class="act-time">' + esc(String(e.timestamp || "").slice(11, 16)) + '</div>'
+         +   '<div class="act-rail"><span class="act-node ' + tone + '"></span></div>'
+         +   '<div class="act-body">'
+         +     '<div class="act-cardhead"><span class="act-badge ' + tone + '">' + esc(e.action) + '</span>'
+         +     '<button type="button" class="act-by" onclick="activityByPerson(\'' + jsAttr(sys ? "System" : (e.actor || who)) + '\')" title="Show only ' + esc(sys ? "automatic changes" : who) + '">'
+         +       '<span class="act-av' + (sys ? ' is-system' : '') + '">' + (sys ? 'SYS' : esc(actInitials(who))) + '</span>'
+         +       '<span>' + (sys ? 'Automatic' : 'By <span class="act-by-name">' + esc(who) + '</span>') + '</span></button></div>'
+         +     (e.target ? '<div class="act-title">' + esc(e.target) + '</div>' : '')
+         +     (e.details ? '<div class="act-details">' + esc(e.details) + '</div>' : '')
+         +   '</div></div>';
+    });
+    h += '</div></div>';
+  });
+  if (entries.length < total && activityLimit < 1000) {
+    h += '<div class="act-more"><button type="button" class="btn-export" onclick="activityMore()">Show ' + Math.min(200, total - entries.length) + ' more</button>'
+       + '<span class="act-more-n">' + (total - entries.length).toLocaleString() + ' older</span></div>';
+  }
+  list.innerHTML = h;
+}
+
+// ─── 12d. COMMUNIQUÉ DRAFTS ───────────────────────────────────────────────
+// Per person; full admins also see everyone's (to clean up and hand over). A draft
+// is removed by the backend once it is sent or scheduled (payload.draftId).
+var composerDraft = { id: null, updatedAt: null };
+var commDraftLabel = "", commDraftOwner = "", commCleanSig = null, commDraftsList = [], commLastSavedId = null;
+
+// Non-validating read of the composer — the fields the send payload carries, so a
+// half-written message can be saved.
+function buildCommuniquePayloadForSend() {
+  function g(id) { return document.getElementById(id); }
+  var rtype = communiqueData.recipientType || "all";
+  var p = { subject: g("commSubject") ? g("commSubject").value.trim() : "", body: commBodyHtml(), format: "html",
+            signatureKey: g("commSignature") ? g("commSignature").value : "", recipientType: rtype,
+            ccAdmins: !!(g("commCcAdmins") && g("commCcAdmins").checked),
+            attachments: (communiqueData.attachments || []).map(function (a) { return { id: a.id, name: a.name }; }) };
+  if (rtype === "groups") {
+    var gs = []; document.querySelectorAll(".commGroup:checked").forEach(function (cb) { if (sectionAllowed(cb.value)) gs.push(cb.value); });
+    p.groups = gs;
+  } else if (rtype === "individuals") p.emails = selectedCommMembers();
+  if ((communiqueData.sendMode || "now") === "later" && g("commSendAt") && g("commSendAt").value) {
+    var w = new Date(g("commSendAt").value); if (!isNaN(w.getTime())) p.sendAt = w.toISOString();
+  }
+  return p;
+}
+function commSig() { try { return JSON.stringify(buildCommuniquePayloadForSend()); } catch (e) { return ""; } }
+function commMarkClean() { commCleanSig = commSig(); paintDraftState(); }
+function commIsDirty() { return commCleanSig !== null && document.getElementById("commSubject") && commSig() !== commCleanSig; }
+
+function saveCommuniqueDraftNow(asNew) {
+  if (roBlock()) return;
+  var done = beginAction("draft", [document.getElementById("btnSaveDraft")], "Saving\u2026"); if (!done) return;
+  dismissDraftNotice();
+  var p = buildCommuniquePayloadForSend();
+  if (!asNew && composerDraft.id) { p.id = composerDraft.id; p.expectedUpdatedAt = composerDraft.updatedAt; }
+  google.script.run.withSuccessHandler(function (r) {
+    done();
+    // Saved: clear the composer and land on Drafts, with the saved one marked.
+    showToast("Draft saved \u00b7 " + (r.savedLabel || ""), "success");
+    composerDraft = { id: null, updatedAt: null }; commDraftOwner = ""; commDraftLabel = "";
+    commLastSavedId = r.id;
+    resetCommuniqueForm();
+    showCommSubtab("drafts");
+  }).withFailureHandler(function (e) {
+    done();
+    // Conflict (saved in another tab/device) or someone else's draft: offer "Save as new draft".
+    if (/saved somewhere else|Save it as a new draft|no longer exists/.test(e.message)) offerSaveAsNew(serverError(e));
+    else showToast(serverError(e), "error");
+  }).saveCommuniqueDraft(p);
+}
+function showDraftSavedState(label) {
+  commDraftLabel = label || "";
+  commMarkClean();
+  var strip = document.getElementById("commDraftStrip"); if (strip) strip.innerHTML = commDraftStripHtml();
+  var st = document.getElementById("commDraftState");
+  if (st) { st.classList.remove("is-flash"); void st.offsetWidth; st.classList.add("is-flash"); }
+  refreshDraftsCount();
+}
+function paintDraftState() {
+  var st = document.getElementById("commDraftState"); if (!st) return;
+  var dirty = commIsDirty(), txt = "", cls = "";
+  if (composerDraft.id && !dirty) { txt = "Draft saved \u00b7 " + commDraftLabel; cls = "is-saved"; }
+  else if (composerDraft.id && dirty) { txt = "Unsaved changes \u00b7 draft last saved " + commDraftLabel; cls = "is-dirty"; }
+  else if (dirty) { txt = commDraftOwner ? "Not saved \u2014 saving creates your own copy" : "Not saved as a draft yet"; cls = "is-dirty"; }
+  st.textContent = txt;
+  st.className = "comm-draft-state" + (cls ? " " + cls : "");
+}
+function commDraftStripHtml() {
+  if (commDraftOwner) {
+    return '<div class="comm-draft-strip"><span class="cds-tag is-copy">COPY</span>'
+         + '<span>Opened from <b>' + esc(commDraftOwner) + '</b>\u2019s draft \u2014 saving creates your own copy; theirs stays as it is.</span>'
+         + '<button type="button" class="cds-new" onclick="newCommuniqueMessage()">New message</button></div>';
+  }
+  if (!composerDraft.id) return '';
+  return '<div class="comm-draft-strip"><span class="cds-tag">DRAFT</span>'
+       + '<span>Editing a saved draft' + (commDraftLabel ? ' \u00b7 last saved ' + esc(commDraftLabel) : '') + '</span>'
+       + '<button type="button" class="cds-new" onclick="newCommuniqueMessage()">New message</button></div>';
+}
+function offerSaveAsNew(msg) {
+  var n = document.getElementById("commDraftNotice"); if (!n) { showToast(msg, "error"); return; }
+  var stale = /saved somewhere else/.test(msg) && composerDraft.id;
+  n.innerHTML = '<div class="comm-draft-conflict" role="alert"><div class="cdc-msg">' + esc(msg) + '</div><div class="cdc-actions">'
+    + '<button type="button" class="btn-export" onclick="dismissDraftNotice()">Dismiss</button>'
+    + (stale ? '<button type="button" class="btn-export" onclick="reopenLatestDraft()">Reopen latest</button>' : '')
+    + '<button type="button" class="btn-export cdc-strong" onclick="saveCommuniqueDraftNow(true)">Save as new draft</button></div></div>';
+}
+function dismissDraftNotice() { var n = document.getElementById("commDraftNotice"); if (n) n.innerHTML = ""; }
+function reopenLatestDraft() {
+  if (!composerDraft.id) return;
+  if (!confirm("Reopen the latest saved version? Your changes here will be discarded.")) return;
+  openCommuniqueDraft(composerDraft.id);
+}
+function newCommuniqueMessage() {
+  if (commIsDirty() && !confirm("Start a new message? Your unsaved changes will be discarded.")) return;
+  composerDraft = { id: null, updatedAt: null }; commDraftOwner = ""; commDraftLabel = "";
+  resetCommuniqueForm();
+}
+
+function openCommuniqueDraft(id) {
+  commLastSavedId = null;
+  google.script.run.withSuccessHandler(function (d) {
+    loadPayloadIntoComposer(d.payload);      // fill subject, body, recipients, signature, attachments
+    composerDraft = d.mine ? { id: d.id, updatedAt: d.updatedAt } : { id: null, updatedAt: null };
+    commDraftOwner = d.mine ? "" : (d.ownerName || d.ownerEmail || "someone");
+    commDraftLabel = d.updatedLabel || "";
+    var strip = document.getElementById("commDraftStrip"); if (strip) strip.innerHTML = commDraftStripHtml();
+    commMarkClean();
+    showCommSubtab("compose");
+    if (d.missingAttachments) showToast(d.missingAttachments + " attachment(s) in this draft no longer exist and were removed.", "warning");
+  }).withFailureHandler(function (e) { showToast(serverError(e), "error"); }).getCommuniqueDraft(id);
+}
+// From the Drafts list — prompt before replacing unsaved work in the composer.
+function openDraftFromList(id) {
+  if (id === composerDraft.id && !commIsDirty()) { showCommSubtab("compose"); return; }
+  if (commIsDirty() && !confirm("The composer has unsaved changes. Open this draft and discard them?")) return;
+  openCommuniqueDraft(id);
+}
+function loadPayloadIntoComposer(p) {
+  p = p || {};
+  var rtype = p.recipientType || "all";
+  if (rtype === "all" && !isFullAdmin()) rtype = "groups";
+  communiqueData.recipientType = rtype;
+  communiqueData.sendMode = p.sendAt ? "later" : "now";
+  communiqueData.selected = {};
+  (p.emails || []).forEach(function (em) { communiqueData.selected[em] = true; });
+  communiqueData.attachments = (p.attachments || []).map(function (a) { return typeof a === "string" ? { id: a, name: a } : a; });
+  communiqueData.uploading = []; communiqueData.plan = null;
+  renderCommunique();
+  function g(id) { return document.getElementById(id); }
+  if (g("commSubject")) g("commSubject").value = p.subject || "";
+  if (g("commBody")) g("commBody").innerHTML = p.body || "";
+  if (g("commSignature") && p.signatureKey) g("commSignature").value = p.signatureKey;
+  if (g("commCcAdmins")) g("commCcAdmins").checked = !!p.ccAdmins;
+  if (rtype === "groups") document.querySelectorAll(".commGroup").forEach(function (cb) { if (!cb.disabled) cb.checked = (p.groups || []).indexOf(cb.value) !== -1; });
+  if (p.sendAt && g("commSendAt")) { var d = new Date(p.sendAt); if (!isNaN(d.getTime()) && d.getTime() > Date.now() + 60000) g("commSendAt").value = toLocalInput_(d); }
+  if (rtype === "individuals") renderCommMemberList();
+  renderCommAttachList();
+  renderCommuniquePreview();
+}
+
+function loadCommuniqueDrafts() {
+  var list = document.getElementById("commDraftsList"); if (!list) return;
+  if (!commDraftsList.length) list.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading drafts\u2026</p></div>';
+  google.script.run.withSuccessHandler(function (rows) {
+    commDraftsList = rows || []; updateDraftsCount(); renderCommDraftsList();
+  }).withFailureHandler(function (e) { list.innerHTML = '<p class="loading">Error: ' + esc(serverError(e)) + '</p>'; }).getCommuniqueDrafts();
+}
+function refreshDraftsCount() {
+  google.script.run.withSuccessHandler(function (rows) {
+    commDraftsList = rows || []; updateDraftsCount();
+    var pane = document.getElementById("commDraftsPane");
+    if (pane && pane.style.display !== "none") renderCommDraftsList();
+  }).withFailureHandler(function () {}).getCommuniqueDrafts();
+}
+function updateDraftsCount() {
+  var b = document.getElementById("commDraftsCount"); if (!b) return;
+  var n = commDraftsList.filter(function (d) { return d.mine; }).length;
+  if (n > 0) { b.textContent = n; b.style.display = "inline-flex"; } else b.style.display = "none";
+}
+function draftRecipients(d) {
+  if (d.recipientType === "all") return "All active members";
+  if (d.recipientType === "admins") return "Admins only";
+  if (d.recipientType === "groups") return (d.groups && d.groups.length) ? d.groups.join(", ") : "No sections chosen";
+  if (d.recipientType === "individuals") return "Chosen members";
+  return "";
+}
+function renderCommDraftsList() {
+  var list = document.getElementById("commDraftsList"); if (!list) return;
+  var rows = commDraftsList || [];
+  if (!rows.length) {
+    list.innerHTML = '<div class="empty-pane">No drafts.<div style="font-family:var(--f-sans);font-style:normal;font-size:12.5px;color:var(--ink-500);margin-top:8px">Use \u201cSave draft\u201d in the composer to keep a half-written message for later.</div></div>';
+    return;
+  }
+  var mine = rows.filter(function (d) { return d.mine; }), others = rows.filter(function (d) { return !d.mine; });
+  function row(d) {
+    var here = d.id === composerDraft.id, justSaved = d.id === commLastSavedId;
+    var meta = ['Last saved ' + esc(d.updatedLabel || "\u2014")];
+    var rc = draftRecipients(d); if (rc) meta.push(esc(rc));
+    if (d.attachmentCount) meta.push(d.attachmentCount + ' attachment' + (d.attachmentCount === 1 ? '' : 's'));
+    var blank = !d.subject || d.subject === "(no subject)";
+    return '<div class="draft-row' + (here ? ' is-current' : '') + (justSaved ? ' is-saved' : '') + '">'
+      +   '<div class="draft-main">'
+      +     '<div class="draft-subject' + (blank ? ' is-blank' : '') + '">' + esc(blank ? "No subject yet" : d.subject) + '</div>'
+      +     (d.corrupt ? '<div class="draft-corrupt">This draft couldn\u2019t be read. It can only be deleted.</div>'
+                       : (d.preview ? '<div class="draft-preview">' + esc(d.preview) + '</div>' : ''))
+      +     '<div class="draft-meta">' + meta.map(function (m) { return '<span>' + m + '</span>'; }).join('') + '</div>'
+      +   '</div>'
+      +   '<div class="draft-side">'
+      +     (!d.mine ? '<span class="draft-owner" title="' + esc(d.ownerEmail || "") + '">' + esc(d.ownerName || d.ownerEmail || "") + '</span>' : '')
+      +     (here ? '<span class="draft-here">In composer</span>' : justSaved ? '<span class="draft-just">Just saved</span>' : '')
+      +     '<div class="draft-acts">'
+      +       (d.corrupt ? '' : '<button type="button" class="btn-export" onclick="openDraftFromList(\'' + esc(d.id) + '\')">Open</button>')
+      +       '<button type="button" class="sched-cancel" onclick="deleteDraft(\'' + esc(d.id) + '\')">Delete</button>'
+      +     '</div>'
+      +   '</div>'
+      + '</div>';
+  }
+  var h = '';
+  if (mine.length) h += (others.length ? '<div class="eyebrow draft-group-h">Your drafts</div>' : '') + mine.map(row).join('');
+  if (others.length) h += '<div class="eyebrow draft-group-h">Other people\u2019s drafts \u00b7 full admins see these to tidy up and hand over</div>' + others.map(row).join('');
+  list.innerHTML = h;
+}
+function deleteDraft(id) {
+  if (roBlock()) return;
+  var d = commDraftsList.filter(function (x) { return x.id === id; })[0] || {};
+  if (!confirm("Delete this draft? This can\u2019t be undone." + (d.mine === false ? "\n\nIt belongs to " + (d.ownerName || d.ownerEmail) + "." : ""))) return;
+  google.script.run.withSuccessHandler(function () {
+    showToast("Draft deleted.", "success");
+    if (id === composerDraft.id) {
+      // The composer keeps its text; it is simply no longer a saved draft.
+      composerDraft = { id: null, updatedAt: null }; commDraftLabel = ""; commCleanSig = "";
+      var strip = document.getElementById("commDraftStrip"); if (strip) strip.innerHTML = commDraftStripHtml();
+      paintDraftState();
+    }
+    commDraftsList = commDraftsList.filter(function (x) { return x.id !== id; });
+    updateDraftsCount(); renderCommDraftsList();
+  }).withFailureHandler(function (e) { showToast(serverError(e), "error"); }).deleteCommuniqueDraft(id);
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  13.  BACKEND UPDATE · 26 OCT 2026
+//       13a One apology per session (myApology) · 13b Export filter + PDF
+//       13c Edit a meeting
+// ═════════════════════════════════════════════════════════════════
+
+// ─── 13a. ONE APOLOGY PER SESSION ─────────────────────────────────────────
+// getUpcomingSessions() entries carry myApology: null, or
+// { status, type, longTerm, startDate, endDate }. The backend refuses a second
+// apology for the same session, so where one exists the card and the apology page
+// show its status instead of a submit control.
+var upcomingCache = [];
+var apolKeepKey = null;
+function apolSessKey(s) { return s ? (s.date + "|" + (s.time || "")) : ""; }
+
+// "12–30 Nov" · "28 Nov – 3 Dec"
+function apolRangeLabel(a, b) {
+  var pa = String(a || "").split("-"), pb = String(b || "").split("-");
+  if (pa.length < 3 || pb.length < 3) return String(a || "") + " \u2013 " + String(b || "");
+  if (pa[0] === pb[0] && pa[1] === pb[1]) return parseInt(pa[2], 10) + "\u2013" + fmtDayMon(b);
+  return fmtDayMon(a) + " \u2013 " + fmtDayMon(b);
+}
+
+// One wording for the card, the picker and the apology page.
+function myApologyView(a) {
+  a = a || {};
+  var st = String(a.status || "");
+  if (a.longTerm) {
+    var pend = st === "Pending";
+    return { tone: pend ? "pending" : "ok",
+             title: "Covered by your long-term apology (" + apolRangeLabel(a.startDate, a.endDate) + ")",
+             sub: "LONG-TERM \u00b7 " + (pend ? "WAITING FOR REVIEW" : "ACCEPTED"),
+             short: "covered by long-term apology" };
+  }
+  var type = String(a.type || "").toUpperCase();
+  if (st === "Pending") return { tone: "pending", title: (/emergency/i.test(a.type || "") ? "Emergency apology" : "Apology") + " sent \u00b7 waiting for review", sub: type, short: "apology sent" };
+  if (st === "Approved" || st === "Applied" || st === "Accepted") return { tone: "ok", title: "Apology accepted", sub: type, short: "apology accepted" };
+  if (st === "Not needed") return { tone: "muted", title: "Apology closed \u00b7 you attended", sub: type, short: "apology closed" };
+  return { tone: "no", title: "Apology not accepted",
+           body: "Another one can\u2019t be sent for this session. Speak to your section admin if you think that\u2019s wrong.",
+           sub: type, short: "apology not accepted" };
+}
+
+function myApologyStatusHtml(a) {
+  var v = myApologyView(a);
+  return '<div class="na-st na-' + v.tone + '">'
+    +   '<span class="na-st-dot"></span>'
+    +   '<div style="min-width:0">'
+    +     '<div class="na-st-t">' + esc(v.title) + '</div>'
+    +     (v.body ? '<div class="na-st-b">' + esc(v.body) + '</div>' : '')
+    +     (v.sub ? '<div class="na-st-s">' + esc(v.sub) + '</div>' : '')
+    +   '</div>'
+    + '</div>';
+}
+
+// The emergency route stays shut when the session already has an apology (the
+// backend refuses it anyway). Matched on date, and time when both sides know it.
+function emergencyHasApology(o) {
+  if (!o || !o.date) return false;
+  var pools = [upcomingCache, (typeof apolSessions !== "undefined" ? apolSessions : []), myAttNextInfo ? [myAttNextInfo] : []];
+  for (var p = 0; p < pools.length; p++) {
+    var l = pools[p] || [];
+    for (var i = 0; i < l.length; i++) {
+      var s = l[i];
+      if (s && s.myApology && s.date === o.date && (!o.time || !s.time || s.time === o.time)) return true;
+    }
+  }
+  return false;
+}
+
+function syncApolSubmitBtn(onFile) {
+  var btn = document.getElementById("btnSubmitApology");
+  if (!btn || btn.textContent === "Submitting\u2026") return;
+  btn.disabled = !!onFile;
+  btn.textContent = onFile ? "Apology on file" : "Submit apology";
+}
+
+// After any submit (accepted or refused) re-read the sessions so the card and the
+// picker show the apology that now exists.
+function refreshUpcomingAfterApology() {
+  apolKeepKey = apolCustomDate ? null : apolSessKey(apolNextInfo);
+  google.script.run.withSuccessHandler(function (list) {
+    if (myAttLoaded) setMyAttNextSession(list);
+    if (document.getElementById("apolSessionSelect")) renderApolSessionOptions(list);
+  }).withFailureHandler(function () {}).getUpcomingSessions();
+}
+
+// ─── 13b. EXPORTS · "Include" filter + PDF beside every CSV ───────────────
+// statusFilter values: "all" (default) · "present" · "attended" (present or late) · "absent".
+// On the session detail it is a page filter (dropdown under the tally): the register shows
+// only the matching rows, the tally stays whole, and CSV / PDF export what is shown.
+var exportWho = { session: "all", date: "all", range: "all" };
+var EXPORT_WHO_OPTS = [["all", "Everyone"], ["present", "Present only"], ["attended", "Present or late"], ["absent", "Absent"]];
+var EXPORT_WHO_SETS = { present: ["Present"], attended: ["Present", "Late Excused", "Late Unexcused"], absent: ["Absent Excused", "Absent Unexcused"] };
+var EXPORT_WHO_EMPTY = { present: "marked Present", attended: "marked present or late", absent: "marked absent" };
+function exportWhoPicker(ctx) { return whoFieldHtml(ctx, null); }
+// Same field as the Activity log's Action / By: pill, mono label, text button + caret,
+// and the shared act-pop menu (openPickPop) — no search box for four options.
+var WHO_TONE = { all: "is-all", present: "t-green", attended: "t-gold", absent: "t-crimson" };
+function whoLabel(v) { for (var i = 0; i < EXPORT_WHO_OPTS.length; i++) if (EXPORT_WHO_OPTS[i][0] === v) return EXPORT_WHO_OPTS[i][1]; return "Everyone"; }
+function whoFieldHtml(ctx, counts) {
+  var v = exportWho[ctx] || "all";
+  return '<div class="act-field xw-field"><span class="filter-label">Include</span>'
+    +   '<button type="button" class="act-by-btn' + (v === "all" ? ' is-empty' : '') + '" onclick="toggleWhoMenu(this, \'' + ctx + '\')" aria-haspopup="listbox">'
+    +     '<span>' + esc(whoLabel(v)) + (counts ? ' \u00b7 ' + counts[v] : '') + '</span>'
+    +     '<svg class="act-caret" viewBox="0 0 8 5" aria-hidden="true"><path d="M.5.5 4 4 7.5.5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>'
+    +   '</button></div>';
+}
+function sessWhoCounts() {
+  var n = { all: viewRecords.length };
+  Object.keys(EXPORT_WHO_SETS).forEach(function (k) {
+    n[k] = viewRecords.filter(function (r) { return EXPORT_WHO_SETS[k].indexOf(r.status) !== -1; }).length;
+  });
+  return n;
+}
+function toggleWhoMenu(anchor, ctx) {
+  var counts = ctx === "session" ? sessWhoCounts() : null;
+  openPickPop(anchor, "", function () {
+    var v = exportWho[ctx] || "all";
+    return EXPORT_WHO_OPTS.map(function (o) {
+      var on = o[0] === v;
+      return '<button type="button" role="option" class="act-pop-item' + (on ? ' is-active' : '') + '" onclick="pickWho(\'' + ctx + '\', \'' + o[0] + '\')">'
+        + '<span class="act-pop-dot ' + WHO_TONE[o[0]] + '"></span>'
+        + '<span class="act-pop-txt"><div class="act-pop-name is-plain">' + esc(o[1]) + '</div></span>'
+        + (counts ? '<span class="act-pop-n">' + counts[o[0]] + '</span>' : '')
+        + (on ? '<span class="act-pop-check">\u2713</span>' : '') + '</button>';
+    }).join("");
+  }, true);
+}
+function pickWho(ctx, v) {
+  var anchor = pickPop && pickPop.anchor;
+  closePickPop();
+  if (ctx === "session") { setSessWho(v); return; }
+  exportWho[ctx] = v;
+  if (anchor) {
+    anchor.classList.toggle("is-empty", v === "all");
+    var s = anchor.querySelector("span"); if (s) s.textContent = whoLabel(v);
+  }
+}
+// Session detail: the Include field between tally and register, with counts.
+function sessWhoChipsHtml() {
+  return '<div class="sess-who">' + whoFieldHtml("session", sessWhoCounts()) + '</div>';
+}
+function setSessWho(v) { exportWho.session = v; paintSessionDetail(); }
+// Session detail (noPicker): the filter lives on the page, so the hint sits with the buttons.
+function exportControlsHtml(ctx, fn, noPicker) {
+  return '<div class="xp-wrap"><div class="xp">' + (noPicker ? '' : exportWhoPicker(ctx))
+    +   '<button class="btn-export" onclick="' + fn + '(\'csv\')">CSV</button>'
+    +   '<button class="btn-export" onclick="' + fn + '(\'pdf\')">PDF</button>'
+    + '</div>' + (noPicker ? '<span class="sess-who-hint">EXPORTS THIS VIEW</span>' : '') + '</div>';
+}
+function exportWhoSuffix(ctx) { var v = exportWho[ctx]; return (v && v !== "all") ? "-" + v : ""; }
+
+// Section admins and reps get only their own section's rows of a joint session
+// from getSessionDetail, so counts and exports cover that section. Say so.
+function sessScopeNoteHtml(d) {
+  if (isFullAdmin() || isReadOnly()) return "";
+  var gs = (d && d.groups) || [];
+  var mine = gs.filter(function (g) { return sectionAllowed(g); });
+  if (gs.length < 2 || !mine.length || mine.length === gs.length) return "";
+  return '<div class="sess-scope-note" title="Counts and exports cover your section\u2019s rows of this joint session.">'
+    +   'JOINT SESSION \u00b7 SHOWING ' + esc(mine.join(" + ").toUpperCase()) + ' ONLY'
+    + '</div>';
+}
+
+// ─── 13c. EDIT A MEETING ──────────────────────────────────────────────────
+// Edit sits beside Delete and opens the Schedule fields in place, prefilled.
+// Scoped roles (section admins, elevated reps) only get groups in their own section.
+var meetingEditId = null;
+function meetingInScope(m) {
+  if (isFullAdmin()) return true;
+  var g = (m && m.groups) || [];
+  for (var i = 0; i < g.length; i++) if (!sectionAllowed(g[i])) return false;
+  return true;
+}
+function lockMeetingGroups(root) {
+  if (isFullAdmin() || isReadOnly()) return;
+  var allowed = userAccess.allowedSections || [];
+  var boxes = (root || document).querySelectorAll(".mtgGroup, .mtgEditGroup");
+  for (var i = 0; i < boxes.length; i++) {
+    var b = boxes[i];
+    if (sectionAllowed(b.value)) continue;
+    b.checked = false; b.disabled = true;
+    var lab = b.parentNode;
+    if (lab) { lab.classList.add("is-locked"); lab.title = "You can schedule meetings for " + allowed.join(", ") + " only"; }
+  }
+}
+function meetingEditFormHtml(m) {
+  var id = jsStr(m.id), mg = m.groups || [];
+  var was = (m.dayName ? m.dayName.slice(0, 3) + " \u00b7 " : "") + fmtDayMon(m.date) + " \u00b7 " + fmtTime12(m.time) + (mg.length ? " \u00b7 " + mg.join(" / ") : "");
+  var boxes = "";
+  for (var i = 0; i < GROUPS_LIST.length; i++) {
+    var g = GROUPS_LIST[i];
+    boxes += '<label class="checkbox-label"><input type="checkbox" class="mtgEditGroup" value="' + g + '"' + (mg.indexOf(g) !== -1 ? ' checked' : '') + '>' + g + '</label>';
+  }
+  return '<div class="meeting-item meeting-editing">'
+    +   '<div class="mtg-edit-head"><div class="eyebrow">Edit meeting</div><span class="mtg-edit-was">WAS \u00b7 ' + esc(was.toUpperCase()) + '</span></div>'
+    +   '<div class="form-row">'
+    +     '<div class="form-group"><label class="form-label">Date</label><input type="date" id="mtgEditDate" value="' + esc(m.date || "") + '"></div>'
+    +     '<div class="form-group"><label class="form-label">Time</label><input type="time" id="mtgEditTime" value="' + esc(m.time || "") + '"></div>'
+    +   '</div>'
+    +   '<div class="form-group"><label class="form-label">Title</label><input type="text" id="mtgEditTitle" value="' + esc(m.title || "") + '"></div>'
+    +   '<div class="form-group"><label class="form-label">Groups</label><div class="checkbox-row">' + boxes + '</div></div>'
+    +   '<p class="mtg-edit-note">Once attendance has been recorded for this meeting, only the title and time can change.</p>'
+    +   '<div class="mtg-edit-acts">'
+    +     '<button class="btn btn-secondary" onclick="cancelMeetingEdit()">Cancel</button>'
+    +     '<button class="btn btn-primary" id="btnSaveMtgEdit" data-write onclick="submitMeetingEdit(\'' + id + '\')">Save changes</button>'
+    +   '</div>'
+    + '</div>';
+}
+function editMeeting(id) {
+  if (roBlock()) return;
+  meetingEditId = id;
+  renderMeetingsList(scheduledMeetings);
+}
+function cancelMeetingEdit() {
+  meetingEditId = null;
+  renderMeetingsList(scheduledMeetings);
+}
+// Collect the form, send only the fields that changed.
+function submitMeetingEdit(id) {
+  if (roBlock()) return;
+  var m = null;
+  for (var i = 0; i < scheduledMeetings.length; i++) if (String(scheduledMeetings[i].id) === String(id)) m = scheduledMeetings[i];
+  if (!m) { showToast("This meeting is no longer on the list - reload and try again.", "error"); return; }
+  var date  = document.getElementById("mtgEditDate").value;
+  var time  = document.getElementById("mtgEditTime").value;
+  var title = document.getElementById("mtgEditTitle").value.trim();
+  var boxes = document.querySelectorAll(".mtgEditGroup");
+  var groups = [];
+  for (var j = 0; j < boxes.length; j++) if (boxes[j].checked) groups.push(boxes[j].value);
+  if (!date)          { showToast("Pick a date.", "error"); return; }
+  if (!time)          { showToast("Pick a time.", "error"); return; }
+  if (!title)         { showToast("Enter a meeting title.", "error"); return; }
+  if (!groups.length) { showToast("Select at least one group.", "error"); return; }
+  var key = function (a) { return (a || []).slice().sort().join(","); };
+  var changes = {};
+  if (date !== m.date) changes.date = date;
+  if (time !== m.time) changes.time = time;
+  if (title !== (m.title || "")) changes.title = title;
+  if (key(groups) !== key(m.groups)) changes.groups = groups;
+  if (!Object.keys(changes).length) { showToast("Nothing has changed.", "info"); return; }
+  saveMeetingEdit(m, changes, document.getElementById("btnSaveMtgEdit"));
+}
+
+// Save button locked while saving through the shared in-flight lock (beginAction):
+// key "meetingEdit:<id>" refuses a second start, and done() re-enables the button
+// after success AND failure.
+function saveMeetingEdit(m, changes, btn) {
+  changes.original = { date: m.date, title: m.title };
+  var done = beginAction("meetingEdit:" + m.id, [btn], "Saving\u2026");
+  if (!done) return;
+  google.script.run.withSuccessHandler(function (r) {
+    done();
+    meetingEditId = null;
+    showToast("Meeting updated.", "success");
+    if (r.apologiesForOldSlot) {
+      showToast(r.apologiesForOldSlot + " member(s) had sent apologies for the old date/time - they'll need to send them again.", "warning");
+    }
+    loadMeetings();
+  }).withFailureHandler(function (e) {
+    done();
+    if (isDuplicateNotice(e)) { showToast(e.message, "info"); return; }
+    showToast(e.message, "error");
+  }).updateMeeting(m.id, changes);
 }
 </script>
