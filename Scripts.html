@@ -446,7 +446,7 @@ function renderDateDetail() {
         var sOrder = ["Present","Late Excused","Late Unexcused","Absent Excused","Absent Unexcused"];
         for (var si = 0; si < sOrder.length; si++) {
           if (gs[g][sOrder[si]]) {
-            h += '<span><span class="num" style="color:' + statusColor(sOrder[si]).replace("var(--","").replace(")","") + '">' + gs[g][sOrder[si]] + '</span> <span style="color:var(--ink-300)">' + getStatusAbbrev(sOrder[si]) + '</span></span>';
+            h += '<span><span class="num">' + gs[g][sOrder[si]] + '</span> <span style="color:var(--ink-300)">' + getStatusAbbrev(sOrder[si]) + '</span></span>';
           }
         }
         h += '</div></div>';

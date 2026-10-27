@@ -12,7 +12,7 @@ don't fork the rules.
 | 1 · Tokens + plumbing | **Done.** Tokens (light + dark), `.theme-light`, the pre-paint script with `window.ScTheme`, `theme` on `getUserRole()`, `get/setThemePreference()`, and the Appearance row on My Profile. Light mode is pixel-identical to `main` on all 12 screens tested (6 tabs at 390 px and 1440 px). |
 | 2 · Page.html sweep | **Done.** 0 colour literals left in `Page.html` (`lint.cjs`). Rule 4 is now implemented as light-token islands (see the rule). Light mode is pixel-identical to `main` on 24 renders (12 screens × phone/desktop), apart from the accepted §3a chip. |
 | 3 · Scripts.html sweep | **Done.** 0 colour literals in either file (`lint.cjs`). Section tints, the trend chart, badges and surfaces are on tokens. The two generated dark cards (By-member stat card, post-save tally) carry `class="theme-inverse"`. The welcome-email preview's header and body carry `class="theme-light"`, and the signature palette has an allow marker. Dark `--crimson-600` lightened for legibility (§6). Light mode is pixel-identical to `main` on 44 renders (3 scenarios, 22 screens, phone and desktop). |
-| 4 · QA + switch on | **Next.** Review on a real device in both themes, then set `DARK_READY = true` in `Page.html`, which also shows the Appearance row. |
+| 4 · QA + switch on | **Next.** Plan §5 step 3 onwards: deploy the merged files (light-only), Design adopts them as its baseline and makes D8 + D11, then the birthday-accent CSS (plan §2.2) with the pixel check, real-device QA, and `DARK_READY = true`. |
 
 **Handoff notes:** `docs/handoff/DESIGN-dark-mode.md` (decisions D1–D11 for Claude Design to
 respond to, components, changelog) and `docs/handoff/BACKEND-theme-endpoints.md` (the `Code.gs`
@@ -184,6 +184,8 @@ Rule: **fg tokens are for text and strokes; `*-fill` tokens are for backgrounds 
 | `--on-inverse-ok`, `--on-inverse-bad` | `#A6D7B4`, `#E8A6AB` | `.trend-tip .tip-p/.tip-au`, `.apol-cell .num.ok/.bad`, `.dash-hero-delta .tag.down` |
 | `--crimson-wash` | `#F1D6D2` | `.apology-queue-item.emergency:hover/.selected` |
 | `--switch-on` | `#2A7D52` | `.bswitch[aria-checked="true"]` |
+| `--warning-fill` | `#8E6A2A` | `.toast.warning` (white text on it, 4.9:1). The same value in both themes, like the other fills. |
+| `--present-line` | `#C7DBC4` | Green border on a `--present-bg` panel (`.ny-done`). Dark value `#2F4F36`. |
 | `--success` | `#2A7D52` | Birthday "sent" text and chip (`.bperson__sent`, `.bperson__auto`). Dark value `#4FAE7C` (6.5:1 on `--surface`). |
 | `--focus-ring` | `rgba(176,133,56,0.10–0.25)` | `.needs-attention`, `:focus` box-shadows in communiqué. Existing call sites use `rgba(var(--gold-rgb), a)` (§2c) to keep their alphas. |
 | `--chart-grid`, `--chart-label`, `--chart-line`, `--chart-dot-ring`, `--chart-value` | `#E8DEC6`, `#8C8478`, `#B08538`, `#FBF7EE`, `#14110F` | Trend SVG in `Scripts.html` (the trend renderer, ~L4662–4683) and the static one in `Page.html` ~L2036–2048. Gradient `stop-color` must also move to `style="stop-color:var(--chart-line)"`. `.trend-card` sits on `--paper`, so `--chart-dot-ring` must always equal `--paper`. |
@@ -216,7 +218,10 @@ inside `color-mix` as a darkening operand is the one permitted literal.
 
    Islands today: `.card-dark`, `.dash-hero`, `.sess-tally`, `.tally-strip`, `.apol-strip`,
    `.trend-tip`, `.podium-block`, `.changes-bar`, `.hero-rank`, the meeting `.type-badge`,
-   `.dash-busy-pill` (not its `.dash-busy-wait` variant), the failed-probation badge. Generated
+   `.dash-busy-pill` (not its `.dash-busy-wait` variant), the failed-probation badge; and since the
+   `17bab8d` sync, the archived-year banner `.yr-banner` and the ink-and-gold badges `.yr-due-tag`,
+   `.yr-past-viewing`, `.ny-pending-n`, `.act-badge.t-ink`, `.act-av.is-system`,
+   `.cds-tag:not(.is-copy)`, `.draft-here`. Generated
    with `class="theme-inverse"`: the By-member stat card (`renderMemberHistory`) and the
    post-save tally (`showPostSubmit`).
    Quick test: *"Should this be dark even in light mode?"* Yes → island. It's a selected state
@@ -335,6 +340,8 @@ Light-mode values for the new tokens: `--surface:#fff; --surface-sunk:var(--pape
 `--seg-active:#fff;` plus the light triplets in §2c.
 
 Added in stage 2. Light: `--crimson-rgb:182,32,42; --paper-rgb:251,247,238; --success:#2A7D52`.
+Added in the `17bab8d` sync. Light: `--warning-fill:#8E6A2A; --present-line:#C7DBC4`. Dark:
+`--warning-fill:#8E6A2A; --present-line:#2F4F36`.
 Dark: `--crimson-rgb:224,77,86; --paper-rgb:20,18,16; --success:#4FAE7C`.
 
 The light block is shared by `.theme-light`, `#communiquePreview .cp-sheet` and the dark-card
@@ -378,7 +385,7 @@ Dev-only tooling in `tools/theme/`. These are `.cjs` files, so `clasp push` neve
 | --------- | -------- |
 | `node tools/theme/lint.cjs` | Colour literals outside allowed regions (rule 1). Exit 1 if any. `--summary` for counts. |
 | `node tools/theme/lint.cjs --since <sha>` | Literals on lines added since `<sha>`, plus the judgment calls (rules 3–5, §3a). |
-| `node tools/theme/render.cjs [--scenario admin\|member\|member-failed]` | Light pixel-identical to `origin/main` (admin: 16 screens; member and member-failed: 3 each; phone and desktop), the `DARK_READY` gate holds, and dark screenshots for review. |
+| `node tools/theme/render.cjs [--scenario admin\|member\|member-failed\|superadmin]` | Light pixel-identical to `origin/main` (admin 29 screens, member 13, member-failed 3, superadmin 13; phone and desktop). Screens can set fixture state (role, year, `myApology`) and boot fresh; any screen still on a spinner or "Loading…" is reported, the `DARK_READY` gate holds, and dark screenshots for review. |
 
 **Allowed regions** are marked in the source rather than listed in the tool, so they move with
 the code: `theme-lint: off` … `theme-lint: on` around a block, or `theme-lint: allow` on one
@@ -403,3 +410,4 @@ newest row's commit is `$LAST` for the next sync.
 | ------ | ---------------------- | ------------- | ------------------------ |
 | 2026-10-14 | `8ea7d54` | Emergency apology expiry, sessions loading state, button states, member roster styling | Stage 1 only: tokens and plumbing, no sweep yet. Lines added in `8ea7d54` are covered by the stage 2–3 sweep. |
 | 2026-10-26 | `8ea7d54` | (no new commits) | Stages 2–3 complete: all UI on `main` up to `8ea7d54` is covered, including the crimson emergency marks and member-roster styling added in that commit. Calls: dark cards → islands (rule 4 rewrite); crimson marks → `--crimson-fill` + `--on-inverse`; email previews → light islands; dark `--crimson-600` → `#EC7078`. |
+| 2026-10-27 | `17bab8d` | Phase 5 and 6 (Design 15–26 Oct, backend 27 Oct): duplicate-submit and partial-save toasts, chorale years (year switch, archived banner, years page, New Year panel), activity log, communiqué drafts, member additional info with restricted fields, joint-session notice, meeting edit, next-session apology status, export PDFs. | `Code.js` taken from `main` wholesale. 14 literals and 31 judgment calls in Design's new lines. **Rule 4 (islands):** `.yr-banner` and the ink-and-gold badges `.yr-due-tag`, `.yr-past-viewing`, `.ny-pending-n`, `.act-badge.t-ink`, `.act-av.is-system`, `.cds-tag:not(.is-copy)`, `.draft-here`. **Rule 3 (invert):** `.toast.info`, `.btn-export.cdc-strong`; status dots keep their fg colours. Active items in the year and people popovers → `--seg-active`. New tokens `--warning-fill`, `--present-line`. Dead tally-strip `.num` colour removed (Design reply §5). Fixtures: years, New Year plan, activity log, drafts, member details (+ section-admin redaction), meeting update, `myApology` (9 states), `carried` probation sessions, `callForYear`. Screens: +13 admin, +10 member, new superadmin scenario (13). Not in this sync: D8, D11, birthday accents. |
