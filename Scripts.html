@@ -446,7 +446,7 @@ function renderDateDetail() {
         var sOrder = ["Present","Late Excused","Late Unexcused","Absent Excused","Absent Unexcused"];
         for (var si = 0; si < sOrder.length; si++) {
           if (gs[g][sOrder[si]]) {
-            h += '<span><span class="num" style="color:' + statusColor(sOrder[si]).replace("var(--","").replace(")","") + '">' + gs[g][sOrder[si]] + '</span> <span style="color:var(--ink-300)">' + getStatusAbbrev(sOrder[si]) + '</span></span>';
+            h += '<span><span class="num">' + gs[g][sOrder[si]] + '</span> <span style="color:var(--ink-300)">' + getStatusAbbrev(sOrder[si]) + '</span></span>';
           }
         }
         h += '</div></div>';
@@ -491,7 +491,7 @@ function renderDateDetail() {
           var cur = viewEditedStatuses[rec.rowIndex] || rec.status;
           var edited = viewEditedStatuses[rec.rowIndex] && viewEditedStatuses[rec.rowIndex] !== viewOriginalStatuses[rec.rowIndex];
           h += '<div class="member-row"' + (edited ? ' style="background:var(--gold-100);border-radius:8px;padding:11px 10px"' : '') + '>'
-            +    '<span class="member-name">' + esc(rec.name) + (edited ? ' <span class="prob-tag" style="background:var(--gold);color:#fff">EDITED</span>' : '') + '</span>'
+            +    '<span class="member-name">' + esc(rec.name) + (edited ? ' <span class="prob-tag" style="background:var(--gold-fill);color:var(--on-accent)">EDITED</span>' : '') + '</span>'
             +    '<div class="status-five">'
             +      fiveBtn(rec.rowIndex, "P",  "Present",          cur)
             +      fiveBtn(rec.rowIndex, "LE", "Late Excused",     cur)
@@ -571,7 +571,7 @@ function renderMemberHistory(name, result) {
 
   // Stat cards row — dark attendance + P/L/A
   h += '<div style="display:grid;grid-template-columns:' + (isDesktop ? '1.4fr 1fr 1fr 1fr' : '1fr 1fr') + ';gap:12px;margin-bottom:24px">'
-    +    '<div style="background:var(--ink);color:var(--paper);border-radius:14px;padding:16px 18px' + (isDesktop ? '' : ';grid-column:1/3') + '">'
+    +    '<div class="theme-inverse" style="background:var(--inverse);color:var(--paper);border-radius:14px;padding:16px 18px' + (isDesktop ? '' : ';grid-column:1/3') + '">'
     +      '<div style="font-family:var(--f-mono);font-size:10px;color:var(--gold-300);letter-spacing:.14em">ATTENDANCE</div>'
     +      '<div class="num" style="font-size:48px;color:var(--gold-300);line-height:0.9;margin-top:8px">' + overallRate + '%</div>'
     +      '<div style="font-size:11px;color:var(--ink-300);margin-top:8px">' + (totP + totL) + ' of ' + totAll + ' sessions attended.</div>'
@@ -731,7 +731,7 @@ function renderProbationContent() {
 function probGroupsLabel(d) { return ((d && d.groups) || []).join(" \u00b7 ").toUpperCase(); }
 
 function probStatusBadge(complete, failing, onTrack) {
-  if (complete) return '<span style="font-family:var(--f-mono);font-size:9.5px;font-weight:700;letter-spacing:.12em;padding:4px 8px;border-radius:4px;background:var(--gold);color:#fff">READY · EVAL</span>';
+  if (complete) return '<span style="font-family:var(--f-mono);font-size:9.5px;font-weight:700;letter-spacing:.12em;padding:4px 8px;border-radius:4px;background:var(--gold-fill);color:var(--on-accent)">READY · EVAL</span>';
   if (failing)  return '<span style="font-family:var(--f-mono);font-size:9.5px;font-weight:700;letter-spacing:.12em;padding:4px 8px;border-radius:4px;background:var(--crimson-100);color:var(--crimson-600)">AT RISK</span>';
   if (onTrack)  return '<span style="font-family:var(--f-mono);font-size:9.5px;font-weight:700;letter-spacing:.12em;padding:4px 8px;border-radius:4px;background:var(--present-bg);color:var(--present)">ON TRACK</span>';
   return '<span style="font-family:var(--f-mono);font-size:9.5px;font-weight:700;letter-spacing:.12em;padding:4px 8px;border-radius:4px;background:var(--gold-100);color:var(--gold-700)">BEHIND</span>';
@@ -842,7 +842,7 @@ function renderScoreboardContent() {
       var aCount = (sc["Absent Excused"] || 0) + (sc["Absent Unexcused"] || 0);
       var initial = (s.name || '·').trim().charAt(0).toUpperCase();
       var section = (s.groups && s.groups[0]) || '';
-      var tint = { Choir: '#F3E9CE', Band: '#F0E0CE', Orchestra: '#E1ECDF' }[section] || 'var(--paper-200)';
+      var tint = { Choir: 'var(--tint-choir)', Band: 'var(--tint-band)', Orchestra: 'var(--tint-orchestra)' }[section] || 'var(--paper-200)';
       var pcls = s.totalPoints > 0 ? "positive" : s.totalPoints < 0 ? "negative" : "zero";
       h += '<div class="sb-table-row">'
         +    '<span class="sb-rank" style="font-size:18px;color:' + (rank <= 3 ? 'var(--gold-700)' : 'var(--ink-400)') + '">' + romanOrNum(rank) + '</span>'
@@ -1468,7 +1468,7 @@ function renderMemberList() {
       return '<span style="font-family:var(--f-mono);font-size:9.5px;font-weight:600;letter-spacing:.08em;padding:2px 6px;border-radius:3px;background:var(--paper-200);color:var(--ink-600)">' + g.toUpperCase() + '</span>';
     }).join(' ');
     var statusTag = memberStatusBadges(m);
-    var tint = { Soprano: '#F3E9CE', Alto: '#F0E0CE', Tenor: '#ECE7DE', Bass: '#E1ECDF' }[section] || 'var(--paper-200)';
+    var tint = { Soprano: 'var(--tint-soprano)', Alto: 'var(--tint-alto)', Tenor: 'var(--tint-tenor)', Bass: 'var(--tint-bass)' }[section] || 'var(--paper-200)';
     var selClass = (selectedMemberName === m.name) ? ' selected' : '';
     var safeName = esc(m.name).replace(/'/g, "\\'");
 
@@ -1824,7 +1824,7 @@ function renderMemberDetail() {
       +      '<span style="font-size:12.5px;font-weight:600;color:var(--crimson-600)">' + behindLabel + '</span>'
       +      '<span style="font-family:var(--f-mono);font-size:10px;font-weight:700;color:var(--crimson-600);letter-spacing:.1em">' + attended + ' / ' + maxSess + '</span>'
       +    '</div>'
-      +    '<div style="height:6px;border-radius:4px;background:#fff;overflow:hidden;margin-bottom:10px">'
+      +    '<div style="height:6px;border-radius:4px;background:var(--surface);overflow:hidden;margin-bottom:10px">'
       +      '<div style="width:' + pRate + '%;height:100%;background:' + pColor + '"></div>'
       +    '</div>'
       +    '<div style="font-size:11.5px;color:var(--ink-700)">'
@@ -2285,13 +2285,13 @@ function renderAddMemberPreview() {
     +     '<span class="form-label" style="margin:0;font-size:9px">Welcome email · live preview</span>'
     +     '<span style="font-family:var(--f-mono);font-size:9px;color:var(--ink-400)">' + (sendIt ? 'WelcomeEmail.html' : 'NOT SENT') + '</span>'
     +   '</div>'
-    +   '<div style="background:var(--ink);padding:18px 20px 16px">'
+    +   '<div class="theme-light" style="background:var(--ink);padding:18px 20px 16px">'
     +     '<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:.22em;color:var(--gold-300);text-transform:uppercase">Strathmore Chorale · MMXXVI</div>'
     +     '<div style="width:26px;height:2px;background:var(--gold);margin:10px 0"></div>'
     +     '<div class="display" style="font-size:21px;color:var(--paper)">Welcome to the Chorale.</div>'
     +     '<div style="font-size:11px;color:var(--ink-300);margin-top:5px">One voice from many — we’re glad it now includes yours.</div>'
     +   '</div>'
-    +   '<div style="background:#fff;padding:16px 20px">'
+    +   '<div class="theme-light" style="background:var(--surface);padding:16px 20px">'
     +     '<div style="font-size:12px;margin-bottom:8px">Dear <b>' + (esc(name) || 'Member') + '</b>,</div>'
     +     '<div style="font-size:11.5px;color:var(--ink-700);line-height:1.55;margin-bottom:12px">You’ve been added to the chorale' + (groups.length ? ' as a member of <b>' + groups.join(', ') + '</b>' : '') + '. Everything you need lives in the attendance system below.</div>'
     +     '<div style="background:var(--gold-100);border:1px solid var(--gold-500);border-radius:10px;padding:12px 14px;margin-bottom:10px">'
@@ -2655,14 +2655,14 @@ function renderMyAttendance(data) {
   if (data.probationFailed && !data.probationAcknowledged) {
     h += '<div class="prob-card danger" style="padding:16px 18px">'
       +    '<div style="display:flex;align-items:flex-start;gap:12px">'
-      +      '<div style="width:32px;height:32px;border-radius:999px;background:var(--crimson);color:#fff;display:flex;align-items:center;justify-content:center;font-family:var(--f-display);font-size:18px;flex-shrink:0">!</div>'
+      +      '<div style="width:32px;height:32px;border-radius:999px;background:var(--crimson-fill);color:var(--on-accent);display:flex;align-items:center;justify-content:center;font-family:var(--f-display);font-size:18px;flex-shrink:0">!</div>'
       +      '<div style="flex:1">'
       +        '<div class="prob-card-title">PROBATION · DID NOT PASS</div>'
       +        '<div class="display" style="font-size:22px;margin-bottom:8px;line-height:1.15">Your account has been<br>deactivated.</div>'
       +        '<p style="font-size:13px;color:var(--ink-700);line-height:1.55;margin-bottom:0">'
       +          'Your probation period concluded below the minimum attendance requirement. You may request to restart probation below.'
       +        '</p>'
-      +        '<div style="margin-top:12px;padding:12px 14px;background:#fff;border-radius:10px">'
+      +        '<div style="margin-top:12px;padding:12px 14px;background:var(--surface);border-radius:10px">'
       +          '<div class="form-label" style="margin-bottom:8px">RESTART REASON</div>'
       +          '<input type="text" id="restartReason" placeholder="Why would you like to restart?" style="margin-bottom:10px;background:var(--paper-100)">'
       +          '<button class="btn btn-crimson" style="padding:9px 14px;font-size:12.5px" onclick="requestRestart()">Request restart</button>'
@@ -3200,6 +3200,45 @@ function loadProfile() {
 // One renderer, two modes. View = read-only record + "Edit Profile".
 // Edit = approval banner + a single form: phone saves instantly,
 // name → "Name Change" request, sections → "Transfer" request.
+// ── Appearance (light / dark) — contract: docs/THEMING.md §1 ──
+// The theme runtime (window.ScTheme) lives in the boot script at the top of Page.html.
+// Not a data write: no roBlock(), and every role — readOnly included — may change it.
+// Hidden until the dark-mode rollout is switched on (ScTheme.enabled()).
+function appearanceRowHtml() {
+  if (!window.ScTheme || !ScTheme.enabled()) return '';
+  var cur = ScTheme.get();
+  var opt = function (v, label) {
+    return '<button type="button" class="' + (cur === v ? 'active' : '') + '" aria-pressed="' + (cur === v) + '" onclick="setAppearance(\'' + v + '\')">' + label + '</button>';
+  };
+  return '<div id="appearanceRow" style="margin-top:18px;padding-top:16px;border-top:1px solid var(--paper-200);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">'
+    +   '<div>'
+    +     '<div style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-500);letter-spacing:.1em">APPEARANCE</div>'
+    +     '<div style="font-size:11px;color:var(--ink-400);margin-top:2px">Saved to your account</div>'
+    +   '</div>'
+    +   '<div class="seg-control" role="group" aria-label="Appearance">' + opt('system', 'System') + opt('light', 'Light') + opt('dark', 'Dark') + '</div>'
+    + '</div>';
+}
+
+function refreshAppearanceRow() {
+  var row = document.getElementById("appearanceRow");
+  if (row) row.outerHTML = appearanceRowHtml();
+}
+
+// Applies instantly, then saves; a failed save rolls the theme back.
+function setAppearance(pref) {
+  if (!window.ScTheme || pref === ScTheme.get()) return;
+  var prev = ScTheme.get();
+  ScTheme.use(pref);
+  refreshAppearanceRow();
+  google.script.run
+    .withFailureHandler(function (e) {
+      ScTheme.use(prev);
+      refreshAppearanceRow();
+      showToast("Couldn't save your appearance setting: " + (e && e.message ? e.message : e), "error");
+    })
+    .setThemePreference(pref);
+}
+
 function renderProfile() {
   var box = document.getElementById("profileContent");
   if (!box || !profileData) return;
@@ -3216,7 +3255,7 @@ function renderProfile() {
   var avatarBlock = isReadOnly()
     ? '<div style="flex-shrink:0">' + photo + '</div>'
     : '<div style="position:relative;flex-shrink:0">' + photo
-    +   '<label style="position:absolute;right:-2px;bottom:-2px;width:24px;height:24px;border-radius:999px;background:var(--ink);color:var(--paper);border:2px solid #fff;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer" title="Change photo">✎'
+    +   '<label style="position:absolute;right:-2px;bottom:-2px;width:24px;height:24px;border-radius:999px;background:var(--ink);color:var(--paper);border:2px solid var(--surface);display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer" title="Change photo">✎'
     +     '<input type="file" id="profilePhotoInput" accept="image/*" onchange="onProfilePhoto(this)" style="display:none">'
     +   '</label>'
     + '</div>';
@@ -3296,6 +3335,7 @@ function renderProfile() {
           ? 'Your access is view only, so this record can\u2019t be edited from here.'
           : 'Tap ✎ on your photo to change it. Phone updates instantly; faculty, course and year of study go to an admin for approval.')
       + '</div>'
+      + appearanceRowHtml()
       + '<div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--paper-200)">'
       +   '<button class="btn btn-secondary btn-block" onclick="signOut()" style="color:var(--crimson-600)">Sign out</button>'
       +   '<div style="margin-top:8px;font-size:10.5px;color:var(--ink-400);line-height:1.5;text-align:center">'
@@ -3916,6 +3956,8 @@ var adminTabs  = [{ id: "record", label: "Record" }, { id: "sessions", label: "S
 var memberTabs = [{ id: "myatt", label: "My attendance", short: "Attendance" }];
 
 google.script.run.withSuccessHandler(function (r) {
+  // Theme first: the server's saved preference overrides the pre-paint hint.
+  if (window.ScTheme) ScTheme.fromServer(r.theme);
   userRole = r.role;
   userName = r.name;
   userEmail = r.email || "";
@@ -4393,8 +4435,8 @@ function renderSessionDetail(d) {
 }
 
 function sessRoleTint(role, group) {
-  return { Soprano: '#F3E9CE', Alto: '#F0E0CE', Tenor: '#ECE7DE', Bass: '#E1ECDF' }[role]
-      || { Choir: '#F3E9CE', Band: '#F0E0CE', Orchestra: '#E1ECDF' }[group]
+  return { Soprano: 'var(--tint-soprano)', Alto: 'var(--tint-alto)', Tenor: 'var(--tint-tenor)', Bass: 'var(--tint-bass)' }[role]
+      || { Choir: 'var(--tint-choir)', Band: 'var(--tint-band)', Orchestra: 'var(--tint-orchestra)' }[group]
       || 'var(--paper-200)';
 }
 
@@ -4996,28 +5038,28 @@ function drawTrendChart(trend) {
   var line = trend.map(function (t, i) { return x(i) + "," + y(t.rate); }).join(" ");
   var area = "M " + x(0) + "," + y(trend[0].rate) + " " + trend.map(function (t, i) { return "L " + x(i) + "," + y(t.rate); }).join(" ") + " L " + x(n - 1) + "," + (padT + ih) + " L " + x(0) + "," + (padT + ih) + " Z";
   var grid = [0, 25, 50, 75, 100].map(function (g) {
-    return '<line x1="' + padL + '" y1="' + y(g) + '" x2="' + (W - padR) + '" y2="' + y(g) + '" stroke="#E8DEC6" stroke-width="1"' + (g ? ' stroke-dasharray="3 4"' : '') + '></line>'
-         + ((g % 50 === 0) ? '<text x="' + (padL - 8) + '" y="' + (y(g) + 3) + '" text-anchor="end" font-family="monospace" font-size="9" fill="#8C8478">' + g + '</text>' : '');
+    return '<line x1="' + padL + '" y1="' + y(g) + '" x2="' + (W - padR) + '" y2="' + y(g) + '" style="stroke:var(--chart-grid)" stroke-width="1"' + (g ? ' stroke-dasharray="3 4"' : '') + '></line>'
+         + ((g % 50 === 0) ? '<text x="' + (padL - 8) + '" y="' + (y(g) + 3) + '" text-anchor="end" font-family="monospace" font-size="9" style="fill:var(--chart-label)">' + g + '</text>' : '');
   }).join("");
   var dots = trend.map(function (t, i) {
     var lastp = i === n - 1;
-    return '<circle cx="' + x(i) + '" cy="' + y(t.rate) + '" r="' + (lastp ? 4.5 : 2.8) + '" fill="' + (lastp ? '#B08538' : '#FBF7EE') + '" stroke="#B08538" stroke-width="2"></circle>';
+    return '<circle cx="' + x(i) + '" cy="' + y(t.rate) + '" r="' + (lastp ? 4.5 : 2.8) + '" style="fill:' + (lastp ? 'var(--chart-line)' : 'var(--chart-dot-ring)') + ';stroke:var(--chart-line)" stroke-width="2"></circle>';
   }).join("");
   // invisible, larger hover targets carrying the point index (v2 tooltip)
   var hits = trend.map(function (t, i) {
     return '<circle cx="' + x(i) + '" cy="' + y(t.rate) + '" r="11" fill="transparent" style="cursor:pointer" data-i="' + i + '" class="trend-hit"></circle>';
   }).join("");
   var xlabels = trend.map(function (t, i) {
-    return (i % 2 === 0 || i === n - 1) ? '<text x="' + x(i) + '" y="' + (H - 8) + '" text-anchor="middle" font-family="monospace" font-size="8.5" fill="#8C8478">' + esc(trendXLabel_(t.date)) + '</text>' : '';
+    return (i % 2 === 0 || i === n - 1) ? '<text x="' + x(i) + '" y="' + (H - 8) + '" text-anchor="middle" font-family="monospace" font-size="8.5" style="fill:var(--chart-label)">' + esc(trendXLabel_(t.date)) + '</text>' : '';
   }).join("");
   var last = trend[n - 1];
   host.innerHTML = '<svg class="trend-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">'
-    + '<defs><linearGradient id="trendFillLive" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#B08538" stop-opacity="0.22"></stop><stop offset="100%" stop-color="#B08538" stop-opacity="0"></stop></linearGradient></defs>'
+    + '<defs><linearGradient id="trendFillLive" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" style="stop-color:var(--chart-line)" stop-opacity="0.22"></stop><stop offset="100%" style="stop-color:var(--chart-line)" stop-opacity="0"></stop></linearGradient></defs>'
     + grid
     + '<path d="' + area + '" fill="url(#trendFillLive)"></path>'
-    + '<polyline points="' + line + '" fill="none" stroke="#B08538" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>'
+    + '<polyline points="' + line + '" fill="none" style="stroke:var(--chart-line)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>'
     + dots + hits + xlabels
-    + '<text x="' + x(n - 1) + '" y="' + (y(last.rate) - 12) + '" text-anchor="middle" font-family="Georgia,serif" font-size="16" fill="#14110F">' + last.rate + '%</text>'
+    + '<text x="' + x(n - 1) + '" y="' + (y(last.rate) - 12) + '" text-anchor="middle" font-family="Georgia,serif" font-size="16" style="fill:var(--chart-value)">' + last.rate + '%</text>'
     + '</svg>'
     + '<div id="trendTip" class="trend-tip" style="display:none;position:absolute;pointer-events:none;z-index:5;"></div>';
 
@@ -5474,7 +5516,7 @@ function showPostSubmit(r) {
   for (var s in totals) { grandTotal += totals[s]; if (s === "Present" || s === "Late Excused" || s === "Late Unexcused") attended += totals[s]; }
   var rate = grandTotal ? Math.round((attended / grandTotal) * 100) : 0;
 
-  var body = '<div style="background:var(--ink);color:var(--paper);border-radius:12px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">'
+  var body = '<div class="theme-inverse" style="background:var(--inverse);color:var(--paper);border-radius:12px;padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">'
     +   '<div><div style="font-family:var(--f-mono);font-size:9.5px;color:var(--gold-300);letter-spacing:.14em">TALLY</div><div style="display:flex;gap:12px;margin-top:6px;font-size:12px">';
   var order = ["Present","Late Excused","Late Unexcused","Absent Excused","Absent Unexcused"];
   for (var oi = 0; oi < order.length; oi++) {
@@ -5497,7 +5539,7 @@ function showPostSubmit(r) {
       body += '<div style="padding:12px 14px;border-radius:10px;margin-bottom:8px;background:' + palBg + ';display:flex;align-items:center;justify-content:space-between">'
         +    '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + esc(e.name) + '</div>'
         +    '<div style="font-size:11.5px;color:var(--ink-600);margin-top:3px">' + e.attended + ' of 10 · ' + e.rate + '%' + (e.penalty ? ' · ' + e.penalty + ' pts' : '') + '</div></div>'
-        +    '<span style="font-family:var(--f-mono);font-size:9.5px;font-weight:700;letter-spacing:.12em;color:' + palC + ';padding:4px 8px;border-radius:4px;background:#fff">' + label + '</span>'
+        +    '<span style="font-family:var(--f-mono);font-size:9.5px;font-weight:700;letter-spacing:.12em;color:' + palC + ';padding:4px 8px;border-radius:4px;background:var(--surface)">' + label + '</span>'
         + '</div>';
     }
     body += '<div style="font-size:11.5px;color:var(--ink-500);margin-top:6px">Members and CC\u2019d admins have been notified by email.</div>';
@@ -7212,7 +7254,7 @@ function commSignatureBlock(sig){
   var title=sig.title||"";
   var phone=sig.phone||"";
   var email=sig.email||"chorale@strathmore.edu";
-  var BL="#385CAD",BLD="#0b5394",GD="#CC9F53",RD="#E43D30",LG="#F6D180";
+  var BL="#385CAD",BLD="#0b5394",GD="#CC9F53",RD="#E43D30",LG="#F6D180"; // theme-lint: allow — email brand palette, never themed (THEMING.md rule 8)
   var h='';
   h+='<div style="font-family:Georgia,serif;font-style:italic;font-size:10.5px;line-height:1.55;color:var(--ink-700);margin-bottom:12px">\u201cStrathmore Chorale is a choral and instrumental group that offers a platform for performance, using music as the main medium, within Strathmore University and the community at large.\u201d</div>';
   h+='<div style="font-size:12.5px;font-weight:700;color:'+BLD+'">'+esc(name)+'</div>';
@@ -7321,8 +7363,8 @@ function renderCommuniquePreview(){
     +     '<div style="width:24px;height:2px;background:var(--gold);margin:10px 0"></div>'
     +     '<div class="display" style="font-size:21px;line-height:1.12;color:var(--paper)">'+(esc(subject)||'<span style="color:var(--ink-400)">Your subject line</span>')+'</div>'
     +   '</div>'
-    +   '<div style="background:#fff;padding:18px 20px 6px">'+bodyRendered+'</div>'
-    +   '<div style="background:#fff;padding:8px 20px 18px">'
+    +   '<div style="background:var(--surface);padding:18px 20px 6px">'+bodyRendered+'</div>'
+    +   '<div style="background:var(--surface);padding:8px 20px 18px">'
     +     '<div style="border-top:1px solid var(--paper-200);margin-bottom:12px"></div>'
     +     commSignatureBlock(sig)
     +   '</div>'

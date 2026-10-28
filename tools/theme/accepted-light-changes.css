@@ -1,0 +1,18 @@
+/*
+ * Light-mode changes made ON PURPOSE that the comparison base may not have yet.
+ * render.cjs applies an entry to the BASE render only when the files being checked match it
+ * and the base doesn't, so the difference isn't reported as a regression. Once the base has the
+ * change too, the entry stops applying by itself and the comparison is exact again.
+ *
+ * Each entry: a comment starting "accept:" with a title naming the THEMING.md section that
+ * accepts it, and a "match:" regex that is true for files containing the change. Then the CSS
+ * that reproduces the change on the base. Add an entry only when THEMING.md accepts the change.
+ */
+
+/* accept: THEMING.md §3a · segmented-toggle active chip --paper → --seg-active (#fff)
+   match: \.seg-control button\.active\s*\{[^}]*var\(--seg-active\) */
+.view-mode-toggle button.active, .seg-control button.active { background: #fff !important; }
+
+/* accept: THEMING.md §3b D8 · the five emergency marks' text #FBF7EE → #fff (--on-inverse → --on-accent)
+   match: \.em-tag\s*\{[^}]*color:\s*var\(--on-accent\) */
+.em-tag, .em-callout-mark, .req-emergency-count, .em-door-mark, .apol-emhint-mark { color: #fff !important; }
