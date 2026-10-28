@@ -71,6 +71,9 @@ const SCREENS = {
     { id: "meeting-edit", fresh: true, go: ["switchTab('record'); document.getElementById('meetingPanel').open = true; loadMeetings()", "editMeeting(4)"] },
     { id: "toast-info", fresh: true, go: "showToast('Already submitted \u2014 this register was saved a moment ago.', 'info')" },
     { id: "toast-warning", fresh: true, go: "showToast('Saved 9 of 11 changes. 2 were skipped because the register changed meanwhile.', 'warning')" },
+    // D11: with System selected the Appearance row reads "Following your device · Dark/Light".
+    // The row only shows once dark mode is available, so this is checked in the dark render.
+    { id: "profile-system", fresh: true, go: "ScTheme.use('system'); openProfile()" },
   ],
   member: [
     { id: "myatt", go: "switchTab('myatt')" },
@@ -81,6 +84,7 @@ const SCREENS = {
     // (the Requests queue carries the other three).
     { id: "myatt-emergency-door", state: { emergency: "prominent" }, go: "switchTab('myatt')" },
     { id: "apology-emergency-hint", state: { emergency: "hidden" }, go: "switchTab('myatt'); openApology('session')" },
+    { id: "profile-system", fresh: true, go: "ScTheme.use('system'); openProfile()" },
     { id: "apology-on-file", state: { myApology: "pending" },
       go: ["switchTab('myatt'); openApology('session')", "document.getElementById('apolSessionSelect').value = '0'; onApolSessionSelect()"] },
   ]),

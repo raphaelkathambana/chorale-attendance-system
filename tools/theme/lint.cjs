@@ -37,6 +37,8 @@ const JUDGMENT_RULES = [
     ask: "Text on an inverting state (rule 3: keep), inside a dark-card island (rule 4: keep), or on a colour fill (--on-inverse / --on-accent)?" },
   { id: "fg-as-fill", re: /background(?:-color)?\s*:\s*var\(--(?:gold|crimson|present|late-exc|late-unexc|absent-exc|absent-unexc)\)/g,
     ask: "Filled control under --on-accent text? Use the *-fill token (§2a). A small dot or bar can keep the fg token." },
+  { id: "fg-as-fill-composed", re: /\b\w*(?:Bg|bg|Background|background)\w*\s*[:=]\s*[^;\n]*'var\(--(?:gold|crimson|present|late-exc|late-unexc|absent-exc|absent-unexc)\)'/g,
+    ask: "A status colour put into a background variable in JS (the plain background: rule can't see it). Filled badge under text? Use the *-fill token and --on-accent (§2a)." },
   { id: "active-chip", re: /(?:\.active|is-active|aria-pressed)[^{]*\{[^}]*background\s*:\s*var\(--(?:paper|surface)\)/g,
     ask: "Raised chip on a --paper-100 track? Use --seg-active (§3a)." },
 ];
