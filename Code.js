@@ -21,6 +21,7 @@ function isRequestType_(type) {
 var MEMBER_DETAILS_SHEET = "Member Details";
 var PROBATION_HISTORY_SHEET = "Probation History";
 var CONFIG_SHEET     = "Config";
+var DRAFTS_SHEET = "Communique Drafts";
 var SIGNATURES_SHEET = "Signatures";
 var PHOTO_FOLDER_ID  = "1-HhDK1DNADta_zoqSlkcRJLZqXOl4WNlixQinheteKcc0Sf-whvREBR81ABgAIuzgHHAvBgk";
 var PROFILE_PHOTO_FOLDER_ID = "1QyfgOnHAA71NX1WJCpTbXonJJDJVzU5O";
@@ -9309,6 +9310,9 @@ function duplicateApologyMessage_(existing) {
     case "Approved":
     case "Applied":    return "Your apology for this session has already been accepted.";
     case "Not needed": return "You already sent an apology for this session; it was closed because you attended.";
+    // Wording from Design (28 Oct) to match its "Apology withdrawn" card.
+    case "Revoked":    return "Your apology for this session was withdrawn, so another one can't be sent. " +
+                              "Speak to your section admin if you think that's wrong.";
     default:           return "Your apology for this session was not accepted, so another one can't be sent. " +
                               "Speak to your section admin if you think that's wrong.";
   }
