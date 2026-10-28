@@ -3213,7 +3213,7 @@ function appearanceRowHtml() {
   return '<div id="appearanceRow" style="margin-top:18px;padding-top:16px;border-top:1px solid var(--paper-200);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">'
     +   '<div>'
     +     '<div style="font-family:var(--f-mono);font-size:9.5px;color:var(--ink-500);letter-spacing:.1em">APPEARANCE</div>'
-    +     '<div style="font-size:11px;color:var(--ink-400);margin-top:2px">Saved to your account</div>'
+    +     '<div style="font-size:11px;color:var(--ink-400);margin-top:2px">' + (cur === 'system' ? 'Following your device \u00b7 ' + (ScTheme.resolved() === 'dark' ? 'Dark' : 'Light') : 'Saved to your account') + '</div>'
     +   '</div>'
     +   '<div class="seg-control" role="group" aria-label="Appearance">' + opt('system', 'System') + opt('light', 'Light') + opt('dark', 'Dark') + '</div>'
     + '</div>';
@@ -3223,6 +3223,14 @@ function refreshAppearanceRow() {
   var row = document.getElementById("appearanceRow");
   if (row) row.outerHTML = appearanceRowHtml();
 }
+// "Following your device · Dark/Light" tracks the OS setting live. Registered after the theme
+// boot's own listener, so ScTheme.resolved() is already updated when this runs.
+(function () {
+  if (!window.matchMedia) return;
+  var mq = window.matchMedia("(prefers-color-scheme: dark)");
+  var on = function () { if (window.ScTheme && ScTheme.get() === "system") refreshAppearanceRow(); };
+  if (mq.addEventListener) mq.addEventListener("change", on); else if (mq.addListener) mq.addListener(on);
+})();
 
 // Applies instantly, then saves; a failed save rolls the theme back.
 function setAppearance(pref) {
@@ -8989,8 +8997,12 @@ function myApologyView(a) {
   }
   var type = String(a.type || "").toUpperCase();
   if (st === "Pending") return { tone: "pending", title: (/emergency/i.test(a.type || "") ? "Emergency apology" : "Apology") + " sent \u00b7 waiting for review", sub: type, short: "apology sent" };
-  if (st === "Approved" || st === "Applied" || st === "Accepted") return { tone: "ok", title: "Apology accepted", sub: type, short: "apology accepted" };
+  if (st === "Applied") return { tone: "ok", title: "Apology accepted \u00b7 marked excused", sub: type, short: "apology accepted" };
+  if (st === "Approved" || st === "Accepted") return { tone: "ok", title: "Apology accepted", sub: type, short: "apology accepted" };
   if (st === "Not needed") return { tone: "muted", title: "Apology closed \u00b7 you attended", sub: type, short: "apology closed" };
+  if (st === "Revoked") return { tone: "no", title: "Apology withdrawn",
+           body: "An admin withdrew it after accepting it, so it no longer excuses this session. Another one can\u2019t be sent. Speak to your section admin if you think that\u2019s wrong.",
+           sub: type, short: "apology withdrawn" };
   return { tone: "no", title: "Apology not accepted",
            body: "Another one can\u2019t be sent for this session. Speak to your section admin if you think that\u2019s wrong.",
            sub: type, short: "apology not accepted" };

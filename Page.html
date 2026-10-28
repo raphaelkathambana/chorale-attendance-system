@@ -1342,24 +1342,24 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .apology-queue-list .apology-queue-item.emergency { border-left: 3px solid var(--crimson); background: var(--crimson-100); }
 .apology-queue-list .apology-queue-item.emergency:hover { background: var(--crimson-wash); }
 .apology-queue-list .apology-queue-item.emergency.selected { background: var(--crimson-wash); border-left-color: var(--crimson); }
-.em-tag { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: 0.12em; padding: 3px 6px; border-radius: 3px; background: var(--crimson-fill); color: var(--on-inverse); }
+.em-tag { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: 0.12em; padding: 3px 6px; border-radius: 3px; background: var(--crimson-fill); color: var(--on-accent); }
 .em-callout { display: flex; gap: 12px; align-items: flex-start; margin-top: 16px; padding: 14px 16px; border-radius: 12px; background: var(--crimson-100); border: 1px solid var(--crimson-500); }
-.em-callout-mark { width: 26px; height: 26px; border-radius: 999px; background: var(--crimson-fill); color: var(--on-inverse); display: flex; align-items: center; justify-content: center; font-family: var(--f-mono); font-size: 13px; font-weight: 700; flex-shrink: 0; }
+.em-callout-mark { width: 26px; height: 26px; border-radius: 999px; background: var(--crimson-fill); color: var(--on-accent); display: flex; align-items: center; justify-content: center; font-family: var(--f-mono); font-size: 13px; font-weight: 700; flex-shrink: 0; }
 .em-callout-body { font-size: 12.5px; color: var(--ink-700); line-height: 1.55; }
-.req-emergency-count { font-family: var(--f-mono); font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--crimson-fill); color: var(--on-inverse); }
+.req-emergency-count { font-family: var(--f-mono); font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--crimson-fill); color: var(--on-accent); }
 
 /* Emergency door \u2014 the entry strip under the next-session card. Keyed to its own
    session, so it can show while the card has already rolled to the next one. */
 .em-door { display: flex; gap: 11px; align-items: flex-start; padding: 14px 16px; border: 1px solid var(--crimson-500); border-radius: 14px; background: var(--crimson-100); cursor: pointer; }
 .em-door:hover { border-color: var(--crimson); }
-.em-door-mark { width: 24px; height: 24px; border-radius: 999px; background: var(--crimson-fill); color: var(--on-inverse); display: flex; align-items: center; justify-content: center; font-family: var(--f-mono); font-size: 12px; font-weight: 700; flex-shrink: 0; }
+.em-door-mark { width: 24px; height: 24px; border-radius: 999px; background: var(--crimson-fill); color: var(--on-accent); display: flex; align-items: center; justify-content: center; font-family: var(--f-mono); font-size: 12px; font-weight: 700; flex-shrink: 0; }
 .em-door > div { min-width: 0; }
 .em-door .em-door-win { font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.08em; line-height: 1.5; color: var(--ink-500); margin-top: 5px; overflow-wrap: break-word; }
 
 /* Emergency entry on the apology page (after the deadline only) */
 .apol-emhint { display: flex; align-items: center; gap: 10px; width: 100%; margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--crimson-500); border-radius: 12px; background: var(--crimson-100); cursor: pointer; font-family: var(--f-sans); font-size: 12.5px; color: var(--ink-700); text-align: left; line-height: 1.45; }
 .apol-emhint:hover { border-color: var(--crimson); }
-.apol-emhint-mark { width: 22px; height: 22px; border-radius: 999px; background: var(--crimson-fill); color: var(--on-inverse); display: flex; align-items: center; justify-content: center; font-family: var(--f-mono); font-size: 11px; font-weight: 700; flex-shrink: 0; }
+.apol-emhint-mark { width: 22px; height: 22px; border-radius: 999px; background: var(--crimson-fill); color: var(--on-accent); display: flex; align-items: center; justify-content: center; font-family: var(--f-mono); font-size: 11px; font-weight: 700; flex-shrink: 0; }
 .apol-emhint > span:nth-child(2) { flex: 1; min-width: 0; }
 .apol-emhint-go { font-weight: 600; color: var(--crimson); white-space: nowrap; }
 body.view-only #apolEmHint { display: none !important; }
