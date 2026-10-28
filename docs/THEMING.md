@@ -113,11 +113,11 @@ their meaning and contrast.
 | `--surface` | Card / sheet / input background that sits on the page | `#fff`, `#FFF`, `white`, `--card` |
 | `--surface-sunk` | Recessed well inside a surface | ad-hoc `--paper-100` wells (optional) |
 | `--inverse` | **Dark card** background: dark in light mode, *raised* (lighter than the page) in dark mode, see rule 4 and §4a | `background: var(--ink)` on cards |
-| `--inverse-raised` | A tile or row inside a dark card | `rgba(243,233,206,0.0x)` washes |
-| `--on-inverse` | Main text on a dark card | `color: var(--paper)` on cards |
-| `--on-inverse-muted` | Secondary text / labels on a dark card | `--ink-300`/`--ink-400` on cards |
-| `--on-inverse-line` | Dividers & borders on a dark card | `rgba(243,233,206,0.15–0.22)` |
-| `--on-inverse-accent` | Gold on a dark card | `--gold-300` / `--gold-500` on cards |
+| `--inverse-raised` | A tile or row inside a dark card | `rgba(243,233,206,0.0x)` washes. **Retiring** (§3b): unused since dark cards became islands; removed in the D8 sync. |
+| `--on-inverse` | Main text on a dark card | `color: var(--paper)` on cards. **Retiring** (§3b): its last uses, the five emergency marks, move to `--on-accent` in D8; removed in the D8 sync. |
+| `--on-inverse-muted` | Secondary text / labels on a dark card | `--ink-300`/`--ink-400` on cards. **Retiring** (§3b): unused since dark cards became islands; removed in the D8 sync. |
+| `--on-inverse-line` | Dividers & borders on a dark card | `rgba(243,233,206,0.15–0.22)`. **Retiring** (§3b): unused since dark cards became islands; removed in the D8 sync. |
+| `--on-inverse-accent` | Gold on a dark card | `--gold-300` / `--gold-500` on cards. **Retiring** (§3b): unused since dark cards became islands; removed in the D8 sync. |
 | `--on-accent` | Text/icons on a filled gold, crimson or green control (white in both themes) | `color: #fff` |
 | `--shadow-1`, `--shadow-2` | Small / large elevation | `rgba(20,17,15,…)` box-shadows |
 | `--scrim` | Backdrop behind dialogs & sheets | `rgba(43,38,32,…)` overlays |
@@ -230,8 +230,10 @@ inside `color-mix` as a darkening operand is the one permitted literal.
    cards use half a dozen shades for their content. Mapping each to an `--on-inverse-*` token
    whose light value matches the shade exactly would need a token per shade. Islands keep light
    mode pixel-identical with no new tokens, and Design writes dark cards the way it always has.
-   The `--on-inverse-*` tokens still exist for **light text on a colour fill outside a card**,
-   e.g. the crimson emergency marks (`--crimson-fill` + `--on-inverse`).
+   Text on a colour fill, inside a card or not, is `--on-accent` on a `*-fill` token (§2a).
+   Since D8 that includes the five crimson emergency marks. Of the `--on-inverse-*` family, only
+   `--on-inverse-ok`, `--on-inverse-bad` and `--on-inverse-rgb` stay. They're shades for dark-card
+   content that have no plain-token equivalent. The rest are retiring (§3b).
 5. **Surfaces are `--surface`, never white.** Text on a filled gold/crimson/green button is
    `--on-accent`, never `#fff`, and the fill is a `*-fill` token (§2a), never a fg token.
 6. **Status colours always travel as a pair.** `--absent-unexc` text sits on
@@ -269,6 +271,24 @@ either: dark `--surface` (`#1A1714`) is also darker than the dark track (`#211D1
 Light-mode note: `.view-mode-toggle` and `.seg-control` change from `--paper` to `#fff`. That's
 barely visible, and it's the one accepted light-mode change in rollout step 1. Rule 3 (ink/paper inversion) still applies to `.btn-primary`,
 `.chip.active`, `.nav-item.active` and checkboxes.
+
+## 3b. Accepted light-mode changes, and retiring tokens
+
+Light mode must stay pixel-identical, with two accepted exceptions. Each one has an entry in
+`tools/theme/accepted-light-changes.css`, so the render check doesn't report it:
+
+| Change | Accepted by | Light-mode effect |
+| -------- | ------------- | ------------------- |
+| Segmented-toggle active chip → `--seg-active` | §3a (stage 2) | `.view-mode-toggle` and `.seg-control` chip `#FBF7EE` → `#fff` |
+| **D8:** the five emergency marks (`.em-tag`, `.em-callout-mark`, `.req-emergency-count`, `.em-door-mark`, `.apol-emhint-mark`) → `--crimson-fill` + `--on-accent` | Design, 28 Oct (`DESIGN-reply-post-merge.md` §1) | their text `#FBF7EE` → `#fff`; nothing else |
+
+**Retiring tokens.** Once D8 lands, nothing reads `--on-inverse`. `--on-inverse-muted`,
+`--on-inverse-line`, `--on-inverse-accent` and `--inverse-raised` have never been read: the
+light-token islands made them unnecessary. All five are removed from both token blocks in the
+sync that brings Design's D8 files in, after the lint confirms no uses. They're not removed
+earlier because Design's baseline is the current `Page.html`. Editing it on the dark-mode side
+before Design's drop lands would be undone by that drop (plan §3, G3). **Don't use them in new
+code.**
 
 ## 4. Before handing back a UI change
 
@@ -391,9 +411,11 @@ Dev-only tooling in `tools/theme/`. These are `.cjs` files, so `clasp push` neve
 the code: `theme-lint: off` … `theme-lint: on` around a block, or `theme-lint: allow` on one
 line. Use them only for the token blocks and rule 8 exceptions.
 
-`tools/theme/accepted-light-changes.css` lists light-mode changes this work makes on purpose
-(e.g. §3a). The render check applies it to the `main` render before comparing. Empty it once
-dark mode is merged into `main`.
+`tools/theme/accepted-light-changes.css` lists the accepted light-mode changes (§3b). Each
+entry has a `match:` regex. The render check applies an entry to the base only when the files
+being checked match it and the base doesn't, then reports each entry as `APPLIED` or `not used`.
+So an entry does nothing until its change exists, and retires by itself once the base has it.
+No clean-up step is needed.
 
 Lint baseline (`lint.cjs --summary`): `main` @ `8ea7d54` with the stage 1 token blocks unmarked
 had Page.html 216 hex + 37 rgb and Scripts.html 39 hex. After stage 2: **Page.html 0**,

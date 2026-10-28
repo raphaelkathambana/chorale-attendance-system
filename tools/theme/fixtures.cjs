@@ -257,7 +257,8 @@ const DETAILS_FULL = { admissionNumber: "140370", courseFaculty: "SCES", courseN
 const REDACTED_FOR_SECTION_ADMINS = ["passportNumber", "nationalIdNumber", "nokName", "nokPhone", "nokRelationship", "nokResidence"];
 
 // scenario: "admin" | "member" | "member-failed" | "superadmin".
-// state (set per screen by render.cjs, read lazily): { role: "sectionAdmin", year: "before"|"available"|"pending", myApology: <MY_APOLOGY key> }
+// state (set per screen by render.cjs, read lazily): { role: "sectionAdmin", year: "before"|"available"|"pending",
+//   myApology: <MY_APOLOGY key>, emergency: "prominent"|"hidden" }
 function fixtures(scenario, state) {
   state = state || {};
   const isMember = scenario === "member" || scenario === "member-failed";
@@ -298,12 +299,16 @@ function fixtures(scenario, state) {
     updateMeeting: (id, ch) => Object.assign({ success: true, id, date: "2026-10-17", time: "10:00", groups: ["Band", "Choir"], title: "Concert planning", apologiesForOldSlot: 0 }, ch || {}),
     getUpcomingSessions: () => [
       { withinGrace: false, graceEndsAt: "20:00", date: "2026-10-14", dayName: "Wednesday", time: "18:00", type: "Practice", kind: "Practice", title: "Practice",
-        groups: ["Choir"], deadline: "17:30", deadlinePassed: false, sessionPassed: false, sessionKey: "2026-10-14|18:00|Choir",
+        groups: ["Choir"], deadline: "17:30", deadlinePassed: !!state.emergency, sessionPassed: false, sessionKey: "2026-10-14|18:00|Choir",
         myApology: state.myApology ? MY_APOLOGY[state.myApology] : null },
       { withinGrace: false, graceEndsAt: "12:00", date: "2026-10-17", dayName: "Saturday", time: "10:00", type: "Meeting", kind: "Meeting", title: "Concert planning",
         groups: ["Band", "Choir"], deadline: "09:30", deadlinePassed: false, sessionPassed: false, sessionKey: "2026-10-17|10:00|Band,Choir", myApology: null },
     ],
-    getEmergencyApologyOption: () => ({ eligible: false, reason: "The apology deadline has not passed yet." }),
+    // state.emergency = "prominent" (door under the next-session card) | "hidden" (hint on the apology page only)
+    getEmergencyApologyOption: () => state.emergency
+      ? { eligible: true, reason: "", phase: state.emergency, date: "2026-10-14", time: "18:00", groups: ["Choir"], sessionKey: "Choir",
+          opensAt: "2026-10-14 17:30", promptUntil: "2026-10-14 20:00", closesAt: "2026-10-14 23:59", status: "Not yet recorded" }
+      : { eligible: false, reason: "The apology deadline has not passed yet." },
     getSessionsList: sessionsList,
     getSessionDetail: sessionDetail,
     getGroupDashboard: groupDashboard,

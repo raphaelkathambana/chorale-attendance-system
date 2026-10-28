@@ -77,6 +77,10 @@ const SCREENS = {
     { id: "apology", go: "openApology('session')" },
     { id: "profile", go: "openProfile()" },
   ].concat(MY_APOLOGY_SCREENS, [
+    // The emergency door and the apology-page hint carry two of D8's five crimson marks
+    // (the Requests queue carries the other three).
+    { id: "myatt-emergency-door", state: { emergency: "prominent" }, go: "switchTab('myatt')" },
+    { id: "apology-emergency-hint", state: { emergency: "hidden" }, go: "switchTab('myatt'); openApology('session')" },
     { id: "apology-on-file", state: { myApology: "pending" },
       go: ["switchTab('myatt'); openApology('session')", "document.getElementById('apolSessionSelect').value = '0'; onApolSessionSelect()"] },
   ]),
@@ -230,6 +234,21 @@ async function renderAll(browser, html, label, mode, screens, out, extraCss) {
   return { shots, log };
 }
 
+// accepted-light-changes.css: one entry per intended light-mode change, each opened by a comment
+//   /* accept: <title naming the THEMING.md section>
+//      match: <regex that matches the head's Page.html/Scripts.html once the change is in> */
+// followed by the CSS that reproduces the change on the base.
+function parseAccepted(text) {
+  const out = [], re = /\/\*\s*accept:([\s\S]*?)\*\/([\s\S]*?)(?=\/\*\s*accept:|$)/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const head = m[1], mm = /\bmatch:\s*(.+)/.exec(head);
+    if (!mm) throw new Error("accepted-light-changes.css: entry without a match: line → " + head.trim().split("\n")[0]);
+    out.push({ title: head.split(/\bmatch:/)[0].replace(/\s+/g, " ").trim(), match: new RegExp(mm[1].trim()), css: m[2].trim() });
+  }
+  return out;
+}
+
 // Pixel comparison inside the browser (canvas), so no image library is needed.
 async function compare(browser, a, b, diffPath) {
   const p = await (await browser.newContext()).newPage();
@@ -282,7 +301,7 @@ async function main() {
   // Flags that make Chromium's rasterisation repeatable, so identical CSS gives identical pixels.
   const browser = await chromium.launch({ args: ["--disable-gpu", "--disable-partial-raster", "--disable-skia-runtime-opts",
     "--disable-lcd-text", "--font-render-hinting=none", "--force-color-profile=srgb", "--disable-threaded-animation"] });
-  const acceptedCss = fs.readFileSync(path.join(__dirname, "accepted-light-changes.css"), "utf8");
+  const accepted = parseAccepted(fs.readFileSync(path.join(__dirname, "accepted-light-changes.css"), "utf8"));
   const head = { name: "head", scenario: o.scenario }, base = { name: "base", scenario: o.scenario };
 
   const headHtml = buildPage(readWorking);
@@ -290,16 +309,20 @@ async function main() {
   results.light = await renderAll(browser, headHtml, head, "light", screens, o.out);
   results.gated = await renderAll(browser, headHtml, head, "gated", screens, o.out);
   results.dark = await renderAll(browser, headHtml, head, "dark", screens, o.out);
-  // The accepted changes only apply while the base predates dark mode. Once dark mode is merged,
-  // the base already has them, so the comparison is exact.
+  // An accepted change is applied to the base only when the files being checked have it and the
+  // base doesn't yet. Once the base catches up the entry retires itself and the comparison is exact.
+  let acceptedNote = "";
   if (!o.noBase) {
     const baseHtml = buildPage(readAtRef(o.base));
-    results.base = await renderAll(browser, baseHtml, base, "light", screens, o.out, /DARK_READY/.test(baseHtml) ? "" : acceptedCss);
+    const use = accepted.filter(a => a.match.test(headHtml) && !a.match.test(baseHtml));
+    acceptedNote = accepted.map(a => `  accepted · ${use.includes(a) ? "APPLIED " : "not used"} · ${a.title}`).join("\n");
+    results.base = await renderAll(browser, baseHtml, base, "light", screens, o.out, use.map(a => a.css).join("\n"));
   }
 
   let failures = 0;
   const rows = [];
-  console.log(`theme-render → ${o.out}\nscenario ${o.scenario}, clock ${FIXED_NOW}, ${screens.length} screens × ${VIEWPORTS.length} viewports\n`);
+  console.log(`theme-render → ${o.out}\nscenario ${o.scenario}, clock ${FIXED_NOW}, ${screens.length} screens × ${VIEWPORTS.length} viewports`);
+  console.log((acceptedNote ? acceptedNote + "\n" : "") + "");
   for (const key of Object.keys(results.light.shots)) {
     const row = { key, light: results.light.shots[key], dark: results.dark.shots[key], base: results.base && results.base.shots[key] };
     const notes = [];
