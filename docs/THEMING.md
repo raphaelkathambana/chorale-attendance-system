@@ -12,7 +12,7 @@ don't fork the rules.
 | 1 · Tokens + plumbing | **Done.** Tokens (light + dark), `.theme-light`, the pre-paint script with `window.ScTheme`, `theme` on `getUserRole()`, `get/setThemePreference()`, and the Appearance row on My Profile. Light mode is pixel-identical to `main` on all 12 screens tested (6 tabs at 390 px and 1440 px). |
 | 2 · Page.html sweep | **Done.** 0 colour literals left in `Page.html` (`lint.cjs`). Rule 4 is now implemented as light-token islands (see the rule). Light mode is pixel-identical to `main` on 24 renders (12 screens × phone/desktop), apart from the accepted §3a chip. |
 | 3 · Scripts.html sweep | **Done.** 0 colour literals in either file (`lint.cjs`). Section tints, the trend chart, badges and surfaces are on tokens. The two generated dark cards (By-member stat card, post-save tally) carry `class="theme-inverse"`. The welcome-email preview's header and body carry `class="theme-light"`, and the signature palette has an allow marker. Dark `--crimson-600` lightened for legibility (§6). Light mode is pixel-identical to `main` on 44 renders (3 scenarios, 22 screens, phone and desktop). |
-| 4 · QA + switch on | **Next.** Plan §5 step 3 onwards: deploy the merged files (light-only), Design adopts them as its baseline and makes D8 + D11, then the birthday-accent CSS (plan §2.2) with the pixel check, real-device QA, and `DARK_READY = true`. |
+| 4 · QA + switch on | **In progress.** Done: PR #1 merged and deployed light-only; Design adopted the baseline; D8 and D11 landed (`e9fd14c`) and the retired tokens were removed. Next: the birthday-accent CSS (plan §2.2) with the pixel check, Design's call on the two composed emergency pills (§8, `e9fd14c` row), real-device QA, then `DARK_READY = true`. |
 
 **Handoff notes:** `docs/handoff/DESIGN-dark-mode.md` (decisions D1–D11 for Claude Design to
 respond to, components, changelog) and `docs/handoff/BACKEND-theme-endpoints.md` (the `Code.gs`
@@ -113,16 +113,15 @@ their meaning and contrast.
 | `--surface` | Card / sheet / input background that sits on the page | `#fff`, `#FFF`, `white`, `--card` |
 | `--surface-sunk` | Recessed well inside a surface | ad-hoc `--paper-100` wells (optional) |
 | `--inverse` | **Dark card** background: dark in light mode, *raised* (lighter than the page) in dark mode, see rule 4 and §4a | `background: var(--ink)` on cards |
-| `--inverse-raised` | A tile or row inside a dark card | `rgba(243,233,206,0.0x)` washes. **Retiring** (§3b): unused since dark cards became islands; removed in the D8 sync. |
-| `--on-inverse` | Main text on a dark card | `color: var(--paper)` on cards. **Retiring** (§3b): its last uses, the five emergency marks, move to `--on-accent` in D8; removed in the D8 sync. |
-| `--on-inverse-muted` | Secondary text / labels on a dark card | `--ink-300`/`--ink-400` on cards. **Retiring** (§3b): unused since dark cards became islands; removed in the D8 sync. |
-| `--on-inverse-line` | Dividers & borders on a dark card | `rgba(243,233,206,0.15–0.22)`. **Retiring** (§3b): unused since dark cards became islands; removed in the D8 sync. |
-| `--on-inverse-accent` | Gold on a dark card | `--gold-300` / `--gold-500` on cards. **Retiring** (§3b): unused since dark cards became islands; removed in the D8 sync. |
 | `--on-accent` | Text/icons on a filled gold, crimson or green control (white in both themes) | `color: #fff` |
 | `--shadow-1`, `--shadow-2` | Small / large elevation | `rgba(20,17,15,…)` box-shadows |
 | `--scrim` | Backdrop behind dialogs & sheets | `rgba(43,38,32,…)` overlays |
 
 `--card` stays as an alias of `--surface` so old code keeps working; new code uses `--surface`.
+
+Removed in the `e9fd14c` sync (§3b): `--on-inverse`, `--on-inverse-muted`, `--on-inverse-line`,
+`--on-inverse-accent`, `--inverse-raised`. Dark-card content uses plain shade tokens inside the
+island (rule 4), and text on a fill uses `--on-accent`.
 
 ## 2c. Alpha washes — RGB-triplet tokens
 
@@ -150,8 +149,8 @@ pixels stay unchanged.
 This keeps light mode pixel-identical (every alpha is unchanged) without a token per alpha.
 Shadows on a dark page read weaker. If one needs more weight in dark mode, raise that call site's
 alpha under `:root[data-theme="dark"]`. Don't add a new shadow token.
-The named tokens (`--shadow-1`, `--shadow-2`, `--scrim`, `--focus-ring`, `--inverse-raised`,
-`--on-inverse-line`) stay as shorthands for **new** code, defined in terms of the triplets.
+The named tokens (`--shadow-1`, `--shadow-2`, `--scrim`, `--focus-ring`) stay as shorthands for
+**new** code, defined in terms of the triplets.
 `rgba(var(--…-rgb), a)` is the only `rgba(` form the lint allows.
 
 ## 2a. Filled controls — fill tokens
@@ -233,7 +232,7 @@ inside `color-mix` as a darkening operand is the one permitted literal.
    Text on a colour fill, inside a card or not, is `--on-accent` on a `*-fill` token (§2a).
    Since D8 that includes the five crimson emergency marks. Of the `--on-inverse-*` family, only
    `--on-inverse-ok`, `--on-inverse-bad` and `--on-inverse-rgb` stay. They're shades for dark-card
-   content that have no plain-token equivalent. The rest are retiring (§3b).
+   content that have no plain-token equivalent. The rest were removed (§3b).
 5. **Surfaces are `--surface`, never white.** Text on a filled gold/crimson/green button is
    `--on-accent`, never `#fff`, and the fill is a `*-fill` token (§2a), never a fg token.
 6. **Status colours always travel as a pair.** `--absent-unexc` text sits on
@@ -272,7 +271,7 @@ Light-mode note: `.view-mode-toggle` and `.seg-control` change from `--paper` to
 barely visible, and it's the one accepted light-mode change in rollout step 1. Rule 3 (ink/paper inversion) still applies to `.btn-primary`,
 `.chip.active`, `.nav-item.active` and checkboxes.
 
-## 3b. Accepted light-mode changes, and retiring tokens
+## 3b. Accepted light-mode changes, and retired tokens
 
 Light mode must stay pixel-identical, with two accepted exceptions. Each one has an entry in
 `tools/theme/accepted-light-changes.css`, so the render check doesn't report it:
@@ -282,13 +281,13 @@ Light mode must stay pixel-identical, with two accepted exceptions. Each one has
 | Segmented-toggle active chip → `--seg-active` | §3a (stage 2) | `.view-mode-toggle` and `.seg-control` chip `#FBF7EE` → `#fff` |
 | **D8:** the five emergency marks (`.em-tag`, `.em-callout-mark`, `.req-emergency-count`, `.em-door-mark`, `.apol-emhint-mark`) → `--crimson-fill` + `--on-accent` | Design, 28 Oct (`DESIGN-reply-post-merge.md` §1) | their text `#FBF7EE` → `#fff`; nothing else |
 
-**Retiring tokens.** Once D8 lands, nothing reads `--on-inverse`. `--on-inverse-muted`,
-`--on-inverse-line`, `--on-inverse-accent` and `--inverse-raised` have never been read: the
-light-token islands made them unnecessary. All five are removed from both token blocks in the
-sync that brings Design's D8 files in, after the lint confirms no uses. They're not removed
-earlier because Design's baseline is the current `Page.html`. Editing it on the dark-mode side
-before Design's drop lands would be undone by that drop (plan §3, G3). **Don't use them in new
-code.**
+**Retired tokens.** `--on-inverse`, `--on-inverse-muted`, `--on-inverse-line`,
+`--on-inverse-accent` and `--inverse-raised` were removed from both token blocks in the `e9fd14c`
+sync. D8 took away the last reads of `--on-inverse`, and the other four were never read, because
+the light-token islands made them unnecessary. They were kept until Design's D8 drop landed:
+Design's baseline was the earlier `Page.html`, and removing them there first would have been
+undone by that drop (plan §3, G3). Still in use from that family: `--inverse`,
+`--on-inverse-ok`, `--on-inverse-bad` and `--on-inverse-rgb`.
 
 ## 4. Before handing back a UI change
 
@@ -338,8 +337,7 @@ Light values are today's `:root`. Dark values:
 --gold-fill:#A07A32;--crimson-fill:#B6202A;
 --present-fill:#467654;--present-fill-hover:#3E6A4A;--late-exc-fill:#A07A32;--late-unexc-fill:#B36B2B;--absent-exc-fill:#6E6458;--absent-unexc-fill:#B6202A;
 --on-accent:#FFFFFF;
---inverse:#26211C;--inverse-raised:rgba(237,232,221,0.06);
---on-inverse:#EDE8DD;--on-inverse-muted:#A39A8C;--on-inverse-line:rgba(237,232,221,0.12);--on-inverse-accent:#D9BC72;
+--inverse:#26211C;
 --on-inverse-ok:#A6D7B4;--on-inverse-bad:#E8A6AB;
 --tint-soprano:#302818;--tint-alto:#302218;--tint-tenor:#2A2820;--tint-bass:#1E2A20;
 --tint-choir:#302818;--tint-band:#302218;--tint-orchestra:#1E2A20;
@@ -352,8 +350,7 @@ Light values are today's `:root`. Dark values:
 Light-mode values for the new tokens: `--surface:#fff; --surface-sunk:var(--paper-100);`
 `--gold-fill:#B08538; --crimson-fill:#B6202A; --present-fill:#4A7C59; --present-fill-hover:#3E6A4A;`
 `--late-exc-fill:#B08538; --late-unexc-fill:#C57730; --absent-exc-fill:#7A6F62; --absent-unexc-fill:#B6202A;`
-`--on-accent:#fff; --inverse:#14110F; --inverse-raised:rgba(243,233,206,0.08);`
-`--on-inverse:#FBF7EE; --on-inverse-muted:#B5AC9D; --on-inverse-line:rgba(243,233,206,0.18); --on-inverse-accent:#E2C988;`
+`--on-accent:#fff; --inverse:#14110F;`
 `--on-inverse-ok:#A6D7B4; --on-inverse-bad:#E8A6AB;` tints/medals/wash/switch/chart = current literals;
 `--focus-ring:rgba(176,133,56,0.18); --shadow-1:0 1px 2px rgba(20,17,15,0.06); --shadow-2:0 16px 40px rgba(20,17,15,0.32); --scrim:rgba(20,17,15,0.45);`
 
@@ -380,7 +377,7 @@ Contrast (measured, WCAG 2.x):
 | white on `--present-fill` / `--absent-exc-fill` / `--crimson-fill` | 4.86 / 4.91 / 6.5 | 5.28 / 5.79 / 6.50 |
 | `--absent-unexc` on `--absent-unexc-bg` | — | 5.23 (was 4.28 with `#E04D56`) |
 | other status fg on bg | — | 5.3–6.7 |
-| `--on-inverse-muted` on `--inverse` | — | 5.74 |
+| Dark-card text (island, light values) on `--inverse`: `--paper` / `--paper-200` / `--ink-300` / `--gold-300` | 17.59 / 14.05 / 8.37 / 11.59 | 14.92 / 11.92 / 7.10 / 9.83 |
 | `--crimson-600` text on `--crimson-100` / `--paper` / `--crimson-wash` | 6.58 (on `-100`) | 5.71 / 6.37 / 5.24. Was 3.26 / 3.63 / 2.99 with `#CF2D37`; changed in stage 3. Like `--gold-700`, the text shade must be the *lighter* one in dark mode. |
 
 ## 7. Rollout
@@ -433,3 +430,4 @@ newest row's commit is `$LAST` for the next sync.
 | 2026-10-14 | `8ea7d54` | Emergency apology expiry, sessions loading state, button states, member roster styling | Stage 1 only: tokens and plumbing, no sweep yet. Lines added in `8ea7d54` are covered by the stage 2–3 sweep. |
 | 2026-10-26 | `8ea7d54` | (no new commits) | Stages 2–3 complete: all UI on `main` up to `8ea7d54` is covered, including the crimson emergency marks and member-roster styling added in that commit. Calls: dark cards → islands (rule 4 rewrite); crimson marks → `--crimson-fill` + `--on-inverse`; email previews → light islands; dark `--crimson-600` → `#EC7078`. |
 | 2026-10-27 | `17bab8d` | Phase 5 and 6 (Design 15–26 Oct, backend 27 Oct): duplicate-submit and partial-save toasts, chorale years (year switch, archived banner, years page, New Year panel), activity log, communiqué drafts, member additional info with restricted fields, joint-session notice, meeting edit, next-session apology status, export PDFs. | `Code.js` taken from `main` wholesale. 14 literals and 31 judgment calls in Design's new lines. **Rule 4 (islands):** `.yr-banner` and the ink-and-gold badges `.yr-due-tag`, `.yr-past-viewing`, `.ny-pending-n`, `.act-badge.t-ink`, `.act-av.is-system`, `.cds-tag:not(.is-copy)`, `.draft-here`. **Rule 3 (invert):** `.toast.info`, `.btn-export.cdc-strong`; status dots keep their fg colours. Active items in the year and people popovers → `--seg-active`. New tokens `--warning-fill`, `--present-line`. Dead tally-strip `.num` colour removed (Design reply §5). Fixtures: years, New Year plan, activity log, drafts, member details (+ section-admin redaction), meeting update, `myApology` (9 states), `carried` probation sessions, `callForYear`. Screens: +13 admin, +10 member, new superadmin scenario (13). Not in this sync: D8, D11, birthday accents. |
+| 2026-10-28 | `e9fd14c` | Post-merge. `888ed0d` (backend): withdrawn-apology refusal text, no new return fields. `e9fd14c` (Design): D8 (five emergency marks → `--crimson-fill` + `--on-accent`), D11 (Appearance sub-label when System is selected, live on OS change), `myApologyView()` wording for Applied ("Apology accepted · marked excused") and Revoked ("Apology withdrawn"). | Lint 0 and no judgment calls in the drop. **Drop check vs `888ed0d`:** light differs only on the Applied and Revoked cards (text); D8 applied as accepted (§3b); no Appearance difference in light (the row is hidden while the gate is off). **Sync:** removed `--on-inverse`, `--on-inverse-muted`, `--on-inverse-line`, `--on-inverse-accent`, `--inverse-raised`; light identical to `main` on all 124 renders; both accepted entries now retired by themselves. Fixtures: eligible emergency option (door + hint screens), `profile-system` screen for D11. Lint gains `fg-as-fill-composed`. **Flagged for Design:** the emergency pill in the queue list (`Scripts.html` ~L1085) and the detail badge (~L1196) build `--crimson` + `--paper` in JS variables, so in dark they read dark-on-light-crimson (4.77:1). Extending D8 to them (`--crimson-fill` + `--on-accent`) would change their light text #FBF7EE → #fff, so it's left to Design. |
