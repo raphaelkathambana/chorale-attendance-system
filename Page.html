@@ -1071,7 +1071,7 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .bbtn:hover { transform: translateY(-1px); }
 .bbtn:active { transform: translateY(0); }
 .bbtn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
-.bbtn--accent { background: var(--accent); color: var(--on-accent); border-color: color-mix(in srgb, var(--accent) 76%, #000); } /* theme-lint: allow — #000 as a color-mix darkener */
+.bbtn--accent { background: color-mix(in srgb, var(--accent) 85%, #000); color: var(--on-accent); border-color: color-mix(in srgb, var(--accent) 72%, #000); } /* theme-lint: allow — #000 as a color-mix darkener. 85% keeps white text ≥4.5:1 on every server accent (D13). */
 .bbtn--accent:hover { filter: brightness(1.06); }
 
 .bperson__edit { display: none; margin-top: 16px; }
