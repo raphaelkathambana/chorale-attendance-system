@@ -12,7 +12,7 @@ don't fork the rules.
 | 1 · Tokens + plumbing | **Done.** Tokens (light + dark), `.theme-light`, the pre-paint script with `window.ScTheme`, `theme` on `getUserRole()`, `get/setThemePreference()`, and the Appearance row on My Profile. Light mode is pixel-identical to `main` on all 12 screens tested (6 tabs at 390 px and 1440 px). |
 | 2 · Page.html sweep | **Done.** 0 colour literals left in `Page.html` (`lint.cjs`). Rule 4 is now implemented as light-token islands (see the rule). Light mode is pixel-identical to `main` on 24 renders (12 screens × phone/desktop), apart from the accepted §3a chip. |
 | 3 · Scripts.html sweep | **Done.** 0 colour literals in either file (`lint.cjs`). Section tints, the trend chart, badges and surfaces are on tokens. The two generated dark cards (By-member stat card, post-save tally) carry `class="theme-inverse"`. The welcome-email preview's header and body carry `class="theme-light"`, and the signature palette has an allow marker. Dark `--crimson-600` lightened for legibility (§6). Light mode is pixel-identical to `main` on 44 renders (3 scenarios, 22 screens, phone and desktop). |
-| 4 · QA + switch on | **In progress.** Done: PR #1 merged and deployed light-only; Design adopted the baseline; D8 and D11 landed (`e9fd14c`) and the retired tokens were removed. Next: the birthday-accent CSS (plan §2.2) with the pixel check, Design's call on the two composed emergency pills (§8, `e9fd14c` row), real-device QA, then `DARK_READY = true`. |
+| 4 · QA + switch on | **In progress.** Done: PR #1 merged and deployed light-only; Design adopted the baseline; D8 and D11 landed (`e9fd14c`), the retired tokens were removed, and the birthday-accent CSS (plan §2.2) is in with its pixel check. Next: Design's D12 (the two composed emergency pills, accepted ahead in §3b), real-device QA, then `DARK_READY = true`. |
 
 **Handoff notes:** `docs/handoff/DESIGN-dark-mode.md` (decisions D1–D11 for Claude Design to
 respond to, components, changelog) and `docs/handoff/BACKEND-theme-endpoints.md` (the `Code.gs`
@@ -273,13 +273,15 @@ barely visible, and it's the one accepted light-mode change in rollout step 1. R
 
 ## 3b. Accepted light-mode changes, and retired tokens
 
-Light mode must stay pixel-identical, with two accepted exceptions. Each one has an entry in
-`tools/theme/accepted-light-changes.css`, so the render check doesn't report it:
+Light mode must stay pixel-identical, with the accepted exceptions below. Each one has an entry in
+`tools/theme/accepted-light-changes.css`, so the render check doesn't report it. An entry can be
+added before the change lands (D12): it only applies once the files being checked contain the change.
 
 | Change | Accepted by | Light-mode effect |
 | -------- | ------------- | ------------------- |
 | Segmented-toggle active chip → `--seg-active` | §3a (stage 2) | `.view-mode-toggle` and `.seg-control` chip `#FBF7EE` → `#fff` |
 | **D8:** the five emergency marks (`.em-tag`, `.em-callout-mark`, `.req-emergency-count`, `.em-door-mark`, `.apol-emhint-mark`) → `--crimson-fill` + `--on-accent` | Design, 28 Oct (`DESIGN-reply-post-merge.md` §1) | their text `#FBF7EE` → `#fff`; nothing else |
+| **D12** (expected in Design's next drop): D8 extended to the two emergency badges built in JS, the Requests queue pill (`pillBg`/`pillFg`, `Scripts.html` ~L1085) and the apology detail badge (`badgeBg`/`badgeFg`, ~L1196) → `--crimson-fill` + `--on-accent` | The user, 29 Oct, for Design | their text `#FBF7EE` → `#fff`; nothing else (`--crimson-fill` equals `--crimson` in light). Two entries, one per badge, so each retires on its own |
 
 **Retired tokens.** `--on-inverse`, `--on-inverse-muted`, `--on-inverse-line`,
 `--on-inverse-accent` and `--inverse-raised` were removed from both token blocks in the `e9fd14c`
@@ -391,8 +393,13 @@ Contrast (measured, WCAG 2.x):
    `background:var(--ink)` (6) / `color:var(--paper)` (11) checked against rule 4.
 4. **QA** — unhide Appearance. Check every role's port preview in both themes. Also check the
    birthday colourways: their `--bday-accent` / `--accent` values are fixed hexes mixed with
-   `--paper` via `color-mix`, so the mixes go dark automatically. The white text on
-   `.bbtn--accent` still needs checking against each of the 7 accents.
+   `--paper` via `color-mix`, so the mixes go dark automatically. Text, initials, rings and focus
+   borders use `--bday-accent-ink` / `--accent-ink`: the accent itself in light, and in dark
+   `color-mix(in srgb, accent 60%, var(--ink))` (plan §2.2), which measures 5.01–7.97:1 on the
+   surfaces and washes it sits on. Fills keep the raw accent. Checked: white text on
+   `.bbtn--accent` is 6.2–7.0:1 on `#185FA5`, `#0F6E56`, `#534AB7` and `#993556`, but 3.87 on
+   `#D85A30`, 3.72 on `#BA7517` and 3.39 on `#1D9E75`, the same in both themes. That's an existing
+   light-mode issue, left to Design.
 
 ## 7a. Tools
 
