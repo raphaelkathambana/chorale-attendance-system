@@ -103,9 +103,6 @@
   --shadow-1: 0 1px 2px rgba(var(--shadow-rgb), 0.06); --shadow-2: 0 16px 40px rgba(var(--shadow-rgb), 0.32);
   --scrim: rgba(var(--scrim-rgb), 0.45); --focus-ring: rgba(var(--gold-rgb), 0.18);
   /* Inside dark cards (they are light-token islands, so these hold in both themes) */
-  --inverse-raised: rgba(var(--on-inverse-rgb), 0.08);
-  --on-inverse: #FBF7EE; --on-inverse-muted: #B5AC9D; --on-inverse-accent: #E2C988;
-  --on-inverse-line: rgba(var(--on-inverse-rgb), 0.18);
   --on-inverse-ok: #A6D7B4; --on-inverse-bad: #E8A6AB;
   /* Section tints (avatars, chips) */
   --tint-soprano: #F3E9CE; --tint-alto: #F0E0CE; --tint-tenor: #ECE7DE; --tint-bass: #E1ECDF;
@@ -153,9 +150,7 @@
   --on-inverse-rgb: 237,232,221; --present-rgb: 109,181,123; --crimson-rgb: 224,77,86; --paper-rgb: 20,18,16;
   --shadow-1: 0 1px 2px rgba(var(--shadow-rgb), 0.4); --shadow-2: 0 16px 40px rgba(var(--shadow-rgb), 0.55);
   --scrim: rgba(var(--scrim-rgb), 0.6); --focus-ring: rgba(var(--gold-rgb), 0.30);
-  --inverse: #26211C; --inverse-raised: rgba(var(--on-inverse-rgb), 0.06);
-  --on-inverse: #EDE8DD; --on-inverse-muted: #A39A8C; --on-inverse-accent: #D9BC72;
-  --on-inverse-line: rgba(var(--on-inverse-rgb), 0.12);
+  --inverse: #26211C;
   --on-inverse-ok: #A6D7B4; --on-inverse-bad: #E8A6AB;
   --tint-soprano: #302818; --tint-alto: #302218; --tint-tenor: #2A2820; --tint-bass: #1E2A20;
   --tint-choir: #302818; --tint-band: #302218; --tint-orchestra: #1E2A20;
@@ -992,6 +987,7 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 
 .bday-banner {
   --bday-accent: var(--gold);
+  --bday-accent-ink: var(--bday-accent); /* text, icons, rings: the accent itself in light, lifted in dark (below) */
   display: flex; align-items: center; gap: 12px;
   padding: 8px 18px 8px 9px;
   border-radius: 999px;
@@ -1005,18 +1001,24 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .bday-banner__avatar {
   width: 38px; height: 38px; border-radius: 999px; flex-shrink: 0;
   object-fit: cover; background: var(--paper-100);
-  box-shadow: 0 0 0 2px var(--paper), 0 0 0 3.5px var(--bday-accent);
+  box-shadow: 0 0 0 2px var(--paper), 0 0 0 3.5px var(--bday-accent-ink);
 }
 .bday-banner__avatar--initial {
   display: inline-flex; align-items: center; justify-content: center;
   font-family: var(--f-display); font-style: italic; font-size: 18px; line-height: 1;
-  color: var(--bday-accent);
+  color: var(--bday-accent-ink);
   background: color-mix(in srgb, var(--bday-accent) 16%, var(--paper));
 }
 .bday-banner__text {
   font-family: var(--f-sans); font-size: 14px; font-weight: 600;
   color: var(--ink-700); line-height: 1.3; min-width: 0;
 }
+
+/* Dark mode: the seven server-sent accents (birthday templates in Code.gs) are too dark as text on
+   dark surfaces, so text, icons, rings and focus borders mix 60% accent with --ink (≥5.01:1 measured).
+   Fills and washes keep the raw accent. Spec: Design, DESIGN-reply-dark-mode.md §4 / plan §2.2. */
+:root[data-theme="dark"] .bday-banner { --bday-accent-ink: color-mix(in srgb, var(--bday-accent) 60%, var(--ink)); }
+:root[data-theme="dark"] .bperson { --accent-ink: color-mix(in srgb, var(--accent) 60%, var(--ink)); }
 
 /* Viewer's own birthday — a touch more festive, still calm */
 .bday-banner--self {
@@ -1027,7 +1029,7 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 
 @media (max-width: 560px) {
   .bday-banner { padding: 7px 14px 7px 8px; gap: 10px; }
-  .bday-banner__avatar { width: 34px; height: 34px; box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--bday-accent); }
+  .bday-banner__avatar { width: 34px; height: 34px; box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--bday-accent-ink); }
   .bday-banner__text { font-size: 13px; }
 }
 
@@ -1051,14 +1053,14 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .bday-cards { display: grid; grid-template-columns: 1fr; gap: 14px; }
 @media (min-width: 760px) { .bday-cards { grid-template-columns: 1fr 1fr; } }
 
-.bperson { --accent: var(--gold); background: var(--surface); border: 1px solid var(--paper-200); border-radius: 16px; padding: 18px 18px 16px 22px; position: relative; overflow: hidden; }
+.bperson { --accent: var(--gold); --accent-ink: var(--accent); background: var(--surface); border: 1px solid var(--paper-200); border-radius: 16px; padding: 18px 18px 16px 22px; position: relative; overflow: hidden; }
 .bperson::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--accent); }
 .bperson__top { display: flex; align-items: center; gap: 14px; }
-.bperson__avatar { width: 54px; height: 54px; border-radius: 999px; flex-shrink: 0; object-fit: cover; background: var(--paper-100); box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); display: inline-flex; align-items: center; justify-content: center; }
-.bperson__avatar--initial { font-family: var(--f-display); font-style: italic; font-size: 25px; line-height: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.bperson__avatar { width: 54px; height: 54px; border-radius: 999px; flex-shrink: 0; object-fit: cover; background: var(--paper-100); box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent-ink); display: inline-flex; align-items: center; justify-content: center; }
+.bperson__avatar--initial { font-family: var(--f-display); font-style: italic; font-size: 25px; line-height: 1; color: var(--accent-ink); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
 .bperson__id { min-width: 0; flex: 1; }
 .bperson__name { font-family: var(--f-sans); font-weight: 700; font-size: 16px; color: var(--ink); line-height: 1.2; }
-.bperson__age { font-family: var(--f-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin-top: 5px; }
+.bperson__age { font-family: var(--f-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent-ink); margin-top: 5px; }
 .bperson__sent { align-self: flex-start; flex-shrink: 0; font-family: var(--f-mono); font-size: 9px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--success); background: color-mix(in srgb, var(--success) 11%, var(--surface)); border: 1px solid color-mix(in srgb, var(--success) 28%, var(--surface)); padding: 5px 9px; border-radius: 999px; white-space: nowrap; }
 
 .bperson__auto { margin-top: 14px; display: inline-flex; align-items: center; gap: 7px; font-family: var(--f-sans); font-weight: 600; font-size: 12.5px; color: var(--success); }
@@ -1077,7 +1079,7 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .bperson.editing .bperson__actions { display: none; }
 .bperson__edit .form-label { display: block; font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-500); margin-bottom: 7px; }
 .bperson__msg { width: 100%; box-sizing: border-box; min-height: 132px; padding: 12px 14px; border: 1px solid var(--paper-200); border-radius: 10px; background: var(--paper); font-family: var(--f-sans); font-size: 13.5px; line-height: 1.6; color: var(--ink); resize: vertical; }
-.bperson__msg:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.bperson__msg:focus { outline: none; border-color: var(--accent-ink); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
 .bperson__edit-actions { display: flex; gap: 8px; margin-top: 10px; }
 
 /* Auto-send setting toggle */
@@ -1096,7 +1098,7 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .bperson__group .form-label { display: block; font-family: var(--f-mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-500); margin-bottom: 7px; }
 .bperson__group-row { display: flex; gap: 8px; align-items: stretch; }
 .bperson__group-ta { flex: 1; box-sizing: border-box; min-height: 64px; padding: 10px 12px; border: 1px solid var(--paper-200); border-radius: 10px; background: var(--paper); font-family: var(--f-sans); font-size: 13px; line-height: 1.5; color: var(--ink); resize: vertical; }
-.bperson__group-ta:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.bperson__group-ta:focus { outline: none; border-color: var(--accent-ink); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
 .bperson__group .bbtn { align-self: flex-start; }
 
 /* Member dropdown (By Member search) */

@@ -16,3 +16,11 @@
 /* accept: THEMING.md §3b D8 · the five emergency marks' text #FBF7EE → #fff (--on-inverse → --on-accent)
    match: \.em-tag\s*\{[^}]*color:\s*var\(--on-accent\) */
 .em-tag, .em-callout-mark, .req-emergency-count, .em-door-mark, .apol-emhint-mark { color: #fff !important; }
+
+/* accept: THEMING.md §3b D12 · Requests queue emergency pill text #FBF7EE → #fff (pillFg --paper → --on-accent)
+   match: pillFg\s*=\s*[^;]*'var\(--on-accent\)' */
+.apology-queue-item [style*="background:var(--crimson);color:var(--paper)"] { color: #fff !important; }
+
+/* accept: THEMING.md §3b D12 · apology detail emergency badge text #FBF7EE → #fff (badgeFg --paper → --on-accent)
+   match: badgeFg\s*=\s*[^;]*'var\(--on-accent\)' */
+#apologyDetailPane [style*="background:var(--crimson);color:var(--paper)"] { color: #fff !important; }
