@@ -24,3 +24,7 @@
 /* accept: THEMING.md §3b D12 · apology detail emergency badge text #FBF7EE → #fff (badgeFg --paper → --on-accent)
    match: badgeFg\s*=\s*[^;]*'var\(--on-accent\)' */
 #apologyDetailPane [style*="background:var(--crimson);color:var(--paper)"] { color: #fff !important; }
+
+/* accept: THEMING.md §3b D13 · birthday accent buttons (.bbtn--accent) fill accent → 85% accent + black, border mix 76% → 72%
+   match: \.bbtn--accent\s*\{[^}]*background:\s*color-mix\(in srgb,\s*var\(--accent\)\s*85%,\s*#000\)[^}]*border-color:\s*color-mix\(in srgb,\s*var\(--accent\)\s*72%,\s*#000\) */
+.bbtn--accent { background: color-mix(in srgb, var(--accent) 85%, #000) !important; border-color: color-mix(in srgb, var(--accent) 72%, #000) !important; }
