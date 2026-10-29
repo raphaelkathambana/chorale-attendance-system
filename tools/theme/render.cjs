@@ -34,7 +34,7 @@ function loadPlaywright() {
 const VIEWPORTS = [{ id: "mobile", width: 390, height: 844 }, { id: "desktop", width: 1440, height: 960 }];
 // Each screen is reached the way a user would: the app's own navigation functions.
 //   go     a JS string, or a list of steps with a settle between each (e.g. load a list, then open an item)
-//   state  fixture state for this screen (fixtures.cjs: role, year, myApology). A screen with state, or
+//   state  fixture state for this screen (fixtures.cjs: role, year, myApology, emergency, birthdays). A screen with state, or
 //          with fresh: true, boots the app fresh, and so does the screen after it, so nothing leaks.
 const MY_APOLOGY_SCREENS = Object.keys(MY_APOLOGY).map(k => ({ id: "myatt-apology-" + k, state: { myApology: k }, go: "switchTab('myatt')" }));
 const SCREENS = {
@@ -74,6 +74,12 @@ const SCREENS = {
     // D11: with System selected the Appearance row reads "Following your device · Dark/Light".
     // The row only shows once dark mode is available, so this is checked in the dark render.
     { id: "profile-system", fresh: true, go: "ScTheme.use('system'); openProfile()" },
+    // Birthday accents (plan §2.2): seven server-sent colours as text, rings and fills. Month shows all seven;
+    // the edit screen focuses the card message, whose border is the accent ink.
+    { id: "birthdays", go: "switchTab('birthdays')" },
+    { id: "birthdays-month", fresh: true, go: ["switchTab('birthdays')", "setBirthdayRange('month')"] },
+    { id: "birthdays-edit", fresh: true, go: ["switchTab('birthdays')", "openBdayEdit('bp-amani_wanjiru_example_org')"] },
+    { id: "birthday-banner", state: { birthdays: "banner" }, go: "switchTab('record')" },
   ],
   member: [
     { id: "myatt", go: "switchTab('myatt')" },
@@ -87,6 +93,7 @@ const SCREENS = {
     { id: "profile-system", fresh: true, go: "ScTheme.use('system'); openProfile()" },
     { id: "apology-on-file", state: { myApology: "pending" },
       go: ["switchTab('myatt'); openApology('session')", "document.getElementById('apolSessionSelect').value = '0'; onApolSessionSelect()"] },
+    { id: "birthday-banner", state: { birthdays: "banner" }, go: "switchTab('myatt')" },
   ]),
   "member-failed": [ // a member whose probation failed: the crimson restart card
     { id: "myatt", go: "switchTab('myatt')" },

@@ -251,6 +251,38 @@ const DRAFTS = [
     createdLabel: "Fri 9 Oct · 15:30", updatedLabel: "Fri 9 Oct · 15:41", updatedAt: Date.parse("2026-10-09T15:41:00+03:00") },
 ];
 
+// Birthdays. One person per accent the server sends (bdPick_ templates in Code.js), so every accent
+// renders as text, ring and fill in both themes. One has a photo (ring around an image); the rest
+// show their initial. Ages, drafts and daysAway are fixed; dates derive from the frozen clock.
+const BDAY_AVATAR = "data:image/svg+xml," + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="#8a7a66"/>' +
+  '<circle cx="40" cy="31" r="15" fill="#e9dcc8"/><ellipse cx="40" cy="74" rx="27" ry="21" fill="#e9dcc8"/></svg>');
+const BIRTHDAYS = [
+  { name: SELF.name, accent: "#185FA5", age: 21, daysAway: 0, cardSent: true },
+  { name: "Amani Wanjiru", accent: "#0F6E56", age: 20, daysAway: 0, avatar: BDAY_AVATAR },
+  { name: "Cynthia Achieng", accent: "#534AB7", age: 22, daysAway: 0 },
+  { name: "Dennis Ouma", accent: "#D85A30", age: 19, daysAway: 1 },
+  { name: "Faith Kerubo", accent: "#993556", age: 23, daysAway: 1 },
+  { name: "Hellen Mutua", accent: "#BA7517", age: 20, daysAway: 5 },
+  { name: "Joy Wambui", accent: "#1D9E75", age: 21, daysAway: 12 },
+].map(b => {
+  const first = b.name.split(" ")[0];
+  return { name: b.name, first, age: b.age, email: b.name === SELF.name ? SELF.email : email(b.name), avatar: b.avatar || "", accent: b.accent,
+    daysAway: b.daysAway, cardSent: !!b.cardSent, headline: "Happy birthday, " + first + "!",
+    groupDraft: "Happy birthday " + first + "! \u{1F382} Wishing you a wonderful year from all of us at the Chorale.",
+    messageDraft: "Dear " + first + ",\n\nHappy birthday from the whole Chorale. Thank you for every rehearsal and every note.\n\nWith love,\nThe Committee" };
+});
+function birthdayDashboard(rangeMode) {
+  const range = rangeMode === "week" || rangeMode === "month" ? rangeMode : "today";
+  const within = BIRTHDAYS.filter(b => b.daysAway <= (range === "month" ? 31 : range === "week" ? 7 : 1));
+  return { range, autoSend: false, all: within, today: within.filter(b => b.daysAway === 0), tomorrow: within.filter(b => b.daysAway === 1),
+    upcoming: range === "today" ? [] : within.filter(b => b.daysAway > 1) };
+}
+// The banner: today's birthdays only. The viewer's own comes first and is marked isSelf.
+const BIRTHDAY_BANNER = BIRTHDAYS.filter(b => b.daysAway === 0).map(b => ({ name: b.name, first: b.first, isSelf: b.email === SELF.email,
+  accent: b.accent, avatar: b.avatar, message: b.email === SELF.email ? "Happy birthday, " + b.first + "! The whole Chorale is celebrating you today."
+    : "It’s " + b.first + "’s birthday today — wish them well at practice." }));
+
 const DETAILS_FULL = { admissionNumber: "140370", courseFaculty: "SCES", courseName: "BBIT", nationality: "Kenyan", choirPart: "Bass", instruments: "",
   nokName: "Mary Otieno", nokPhone: "+254 722 000111", nokRelationship: "Mother", nokResidence: "Kisumu", residence: "Madaraka", dateOfBirth: "2004-03-18",
   phoneNumber: "+254 711 222333", passportNumber: "AK1234567", nationalIdNumber: "34567890", gender: "M", yearOfStudy: "3", memberStatus: "On Hiatus" };
@@ -258,7 +290,7 @@ const REDACTED_FOR_SECTION_ADMINS = ["passportNumber", "nationalIdNumber", "nokN
 
 // scenario: "admin" | "member" | "member-failed" | "superadmin".
 // state (set per screen by render.cjs, read lazily): { role: "sectionAdmin", year: "before"|"available"|"pending",
-//   myApology: <MY_APOLOGY key>, emergency: "prominent"|"hidden" }
+//   myApology: <MY_APOLOGY key>, emergency: "prominent"|"hidden", birthdays: "banner" }
 function fixtures(scenario, state) {
   state = state || {};
   const isMember = scenario === "member" || scenario === "member-failed";
@@ -332,7 +364,9 @@ function fixtures(scenario, state) {
       : { name: SELF.name, email: SELF.email, phone: "+254 700 000000", admNo: "140001", groups: SELF.groups, roles: SELF.roles, profilePhoto: "",
           details: { gender: "F", courseFaculty: "SCES", courseName: "BBIT", yearOfStudy: "2", nationality: "Kenyan" } },
     getConfigLists: () => ({ choirParts: ["Soprano", "Alto", "Tenor", "Bass"], bandRoles: ["Guitar", "Drums", "Keys"], orchestraRoles: ["Violin", "Cello"], faculties: ["SBS", "SCES", "SHSS"] }),
-    getTodaysBirthdaysForBanner: () => [],
+    // Off by default: the banner sits above every tab, so it only shows on the screens that ask for it.
+    getTodaysBirthdaysForBanner: () => (state.birthdays === "banner" ? BIRTHDAY_BANNER : []),
+    getBirthdayDashboard: birthdayDashboard,
     getScheduledEmails: () => [{ id: "c1", sendAt: "2026-10-16T06:00:00.000Z", status: "Scheduled", scheduledBy: SELF.email, subject: "Concert dress code", result: "", canCancel: true },
       { id: "c2", sendAt: "2026-10-09T06:00:00.000Z", status: "Sent", scheduledBy: SELF.email, subject: "Welcome back", result: "Sent to 104", canCancel: false }],
     getSignatureOptions: () => [{ key: "committee", label: "The Strathmore Chorale Committee", name: "The Strathmore Chorale Committee", title: "", email: "chorale@example.org", phone: "" }],
