@@ -10,7 +10,7 @@
    access is wrapped. DARK_READY is the rollout gate (THEMING.md §7): while false the
    app always renders light, unless localStorage "sc-theme-preview" is "1". */
 (function () {
-  var DARK_READY = false;
+  var DARK_READY = true;
   var KEY = "sc-theme", PREVIEW_KEY = "sc-theme-preview";
   var root = document.documentElement;
   var mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
