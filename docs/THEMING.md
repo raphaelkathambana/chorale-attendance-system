@@ -3,7 +3,8 @@
 **Audience:** anyone editing `Page.html` or `Scripts.html` (Claude Design), and anyone adding the
 preference endpoints to `Code.gs`. Read this before changing any colour.
 
-**Status:** in progress on branch `claude/awesome-sagan-63z5lj`. This file is the contract; the
+**Status:** live. Dark mode is on in production (`DARK_READY = true` since `e30f73c`). New UI on
+`main` is brought up to dark mode with the `dark-mode-sync` skill (§8). This file is the contract; the
 token block in `Page.html` `:root` is the implementation. If the two disagree, fix one of them —
 don't fork the rules.
 
@@ -12,17 +13,18 @@ don't fork the rules.
 | 1 · Tokens + plumbing | **Done.** Tokens (light + dark), `.theme-light`, the pre-paint script with `window.ScTheme`, `theme` on `getUserRole()`, `get/setThemePreference()`, and the Appearance row on My Profile. Light mode is pixel-identical to `main` on all 12 screens tested (6 tabs at 390 px and 1440 px). |
 | 2 · Page.html sweep | **Done.** 0 colour literals left in `Page.html` (`lint.cjs`). Rule 4 is now implemented as light-token islands (see the rule). Light mode is pixel-identical to `main` on 24 renders (12 screens × phone/desktop), apart from the accepted §3a chip. |
 | 3 · Scripts.html sweep | **Done.** 0 colour literals in either file (`lint.cjs`). Section tints, the trend chart, badges and surfaces are on tokens. The two generated dark cards (By-member stat card, post-save tally) carry `class="theme-inverse"`. The welcome-email preview's header and body carry `class="theme-light"`, and the signature palette has an allow marker. Dark `--crimson-600` lightened for legibility (§6). Light mode is pixel-identical to `main` on 44 renders (3 scenarios, 22 screens, phone and desktop). |
-| 4 · QA + switch on | **In progress.** Done: PR #1 merged and deployed light-only; Design adopted the baseline; D8 and D11 landed (`e9fd14c`), the retired tokens were removed, the birthday-accent CSS (plan §2.2) is in with its pixel check (PR #2), and D12 and D13 landed (`33bf48d`). Next: real-device QA, then `DARK_READY = true`. |
+| 4 · QA + switch on | **Done.** PR #1 merged and deployed light-only; Design adopted the baseline; D8 and D11 landed (`e9fd14c`), the retired tokens were removed, the birthday-accent CSS (plan §2.2) went in with its pixel check (PR #2), and D12 and D13 landed (`33bf48d`). Tested on desktop and phone, then switched on: `DARK_READY = true` in `e30f73c` (3 Nov), deployed. |
 
 **Handoff notes:** `docs/handoff/DESIGN-dark-mode.md` (decisions D1–D11 for Claude Design to
 respond to, components, changelog) and `docs/handoff/BACKEND-theme-endpoints.md` (the `Code.gs`
 contract).
 
-**The rollout gate.** `DARK_READY` in the boot script at the top of `Page.html` is `false`, so
-everyone gets light, whatever their device or saved preference, and the Appearance row is hidden.
-Step 4 flips it to `true`. To preview dark mode before then, run this in the browser console
-(app frame selected), then reload:
-`localStorage.setItem("sc-theme-preview", "1")`. Remove the key to go back.
+**The rollout gate.** `DARK_READY` in the boot script at the top of `Page.html` is `true` (step 4,
+`e30f73c`): the Appearance row is shown and each user's saved preference, or their device setting
+under System, picks the theme. Setting it back to `false` is the kill switch: everyone gets light
+and the row is hidden. While it's `false`, dark mode can still be previewed by running
+`localStorage.setItem("sc-theme-preview", "1")` in the browser console (app frame selected) and
+reloading; remove the key to go back.
 
 ## Review changes (summary)
 
@@ -410,7 +412,7 @@ Dev-only tooling in `tools/theme/`. These are `.cjs` files, so `clasp push` neve
 | --------- | -------- |
 | `node tools/theme/lint.cjs` | Colour literals outside allowed regions (rule 1). Exit 1 if any. `--summary` for counts. |
 | `node tools/theme/lint.cjs --since <sha>` | Literals on lines added since `<sha>`, plus the judgment calls (rules 3–5, §3a). |
-| `node tools/theme/render.cjs [--scenario admin\|member\|member-failed\|superadmin]` | Light pixel-identical to `origin/main` (admin 29 screens, member 13, member-failed 3, superadmin 13; phone and desktop). Screens can set fixture state (role, year, `myApology`) and boot fresh; any screen still on a spinner or "Loading…" is reported, the `DARK_READY` gate holds, and dark screenshots for review. |
+| `node tools/theme/render.cjs [--scenario admin\|member\|member-failed\|superadmin]` | Light pixel-identical to `origin/main` (admin 29 screens, member 13, member-failed 3, superadmin 13; phone and desktop). Screens can set fixture state (role, year, `myApology`) and boot fresh; any screen still on a spinner or "Loading…" is reported, the `DARK_READY` gate holds (checked only while it's `false`), and dark screenshots for review. |
 
 **Allowed regions** are marked in the source rather than listed in the tool, so they move with
 the code: `theme-lint: off` … `theme-lint: on` around a block, or `theme-lint: allow` on one
@@ -441,3 +443,4 @@ newest row's commit is `$LAST` for the next sync.
 | 2026-10-28 | `e9fd14c` | Post-merge. `888ed0d` (backend): withdrawn-apology refusal text, no new return fields. `e9fd14c` (Design): D8 (five emergency marks → `--crimson-fill` + `--on-accent`), D11 (Appearance sub-label when System is selected, live on OS change), `myApologyView()` wording for Applied ("Apology accepted · marked excused") and Revoked ("Apology withdrawn"). | Lint 0 and no judgment calls in the drop. **Drop check vs `888ed0d`:** light differs only on the Applied and Revoked cards (text); D8 applied as accepted (§3b); no Appearance difference in light (the row is hidden while the gate is off). **Sync:** removed `--on-inverse`, `--on-inverse-muted`, `--on-inverse-line`, `--on-inverse-accent`, `--inverse-raised`; light identical to `main` on all 124 renders; both accepted entries now retired by themselves. Fixtures: eligible emergency option (door + hint screens), `profile-system` screen for D11. Lint gains `fg-as-fill-composed`. **Flagged for Design:** the emergency pill in the queue list (`Scripts.html` ~L1085) and the detail badge (~L1196) build `--crimson` + `--paper` in JS variables, so in dark they read dark-on-light-crimson (4.77:1). Extending D8 to them (`--crimson-fill` + `--on-accent`) would change their light text #FBF7EE → #fff, so it's left to Design. |
 | 2026-10-29 | `e9fd14c` | (no new commits) Baseline update before Design's next drop. | **Birthday accents** (plan §2.2, Design reply §4): `--bday-accent-ink` on `.bday-banner` and `--accent-ink` on `.bperson` carry text, initials, rings and focus borders; in dark they mix 60% accent with `--ink`. Fills, the card stripe and washes keep the raw accent. Light identical to `main` on all 134 renders (four scenarios, including the 10 new birthday renders); leaking the dark mix into light fails the check on the banner and on every card screen, so the screens cover the rules. Fixtures: one birthday per server accent (today, tomorrow, upcoming; one photo; one card sent), and the banner behind `state.birthdays` so it doesn't shift every other screen. Screens: admin `birthdays`, `birthdays-month`, `birthdays-edit`, `birthday-banner`; member `birthday-banner`. **D12 accepted ahead** (§3b): two entries. Proven against a simulated D12 on admin Requests: with both, light identical; with neither, desktop differs by Δ17 (`#FBF7EE` → `#fff`) on both badges; with one, only the other badge differs. **Flagged for Design:** white on `.bbtn--accent` is under 4.5:1 for three accents (§7 step 4). |
 | 2026-10-29 | `33bf48d` | Post-merge. PR #2 merged (`bc3a5a6`). Design's drop `33bf48d` (`DESIGN-reply-D12-D13.md`): D12 (Requests queue pill and apology detail badge → `--crimson-fill` + `--on-accent`) and D13 (`.bbtn--accent` fill 85% accent + black, border mix 76% → 72%). `Code.js` unchanged. | Lint 0, no judgment calls. No colour work needed: Design used the tokens. **Drop check vs `bc3a5a6`:** light identical on all 134 renders with the D12 and D13 entries applied (§3b); without the D13 entry, only the six birthday card renders differ (Δ32, the 15% darkening), so nothing else changed. Design's `Scripts.html` is byte-identical to the D12 simulation proven in the previous row. Design's contrast for white on the new fill checked: 4.52–8.67:1 on all seven accents. All five accepted entries now match `main` too, so they no longer apply. No new tokens, fixtures or screens. |
+| 2026-11-03 | `e30f73c` | `e30f73c`: `DARK_READY = true`, the only change to `Page.html`. Tested on desktop and phone, deployed. Also on `main`, not synced in this row: `d53681c` and `74174f5`, backend only (`Code.js`). | **Stage 4 done; dark mode is live.** No colour work: lint 0. With the gate open, `render.cjs` skips the gated check by itself and the light comparison still runs (checked). **Left for the next sync** (Design's 3 Nov drop: a Templates screen in the communiqué area and a waiting state on the Chorale year page's Start button), which diffs `Code.js` from `e30f73c`: new `getCommuniqueTemplates`, `getCommuniqueTemplate`, `saveCommuniqueTemplate` and `deleteCommuniqueTemplate` need fixtures once the Templates screen calls them; `getCommuniqueDraft` gains `kind` (`"draft"`/`"template"`, plus `name` and `canEdit` for a template); `saveCommuniqueDraft` now shares its save path with templates; `startNewYear`'s second-Start refusal text changed; `diagnosePastYears` is an editor diagnostic, not UI. From now on, a Design drop is deployed only after its sync is merged (skill step 6). |
