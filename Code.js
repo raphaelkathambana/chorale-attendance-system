@@ -6039,7 +6039,16 @@ function uploadCommuniqueAttachment(fileName, mimeType, base64Data) {
 //  Who sees what: everyone who can send sees and edits their OWN drafts; full
 //  admins can also open and delete anyone's (handover, clean-up). A draft is
 //  removed automatically once it is sent or scheduled.
+//
+//  TEMPLATES live in the same sheet; their IDs start "tpl_" (drafts: "drf_"), so
+//  no columns changed. A template is a reusable communique (e.g. the yearly
+//  transition email): everyone who can send sees and uses all templates; its
+//  owner and full admins can edit or delete it. Opening one loads a COPY into the
+//  composer, and sending never removes it. Like drafts, templates are not
+//  archived at rollover and their attachments are kept by the retention sweep.
 // =======================================================
+var TEMPLATE_ID_PREFIX_ = "tpl_";
+function isTemplateId_(id) { return String(id || "").indexOf(TEMPLATE_ID_PREFIX_) === 0; }
 var DRAFT_CHUNK_CHARS_ = 45000;
 var DRAFT_MAX_CHUNKS_ = 8;
 var DRAFT_PAYLOAD_COL_ = 7;
@@ -6107,31 +6116,49 @@ function canManageDraft_(access, d) {
  *                       silently overwriting newer work.
  * Returns { success, id, updatedAt (ms), savedLabel }.
  */
-function saveCommuniqueDraft(draft) {
+function saveCommuniqueDraft(draft) { return saveDraftOrTemplate_(draft, false); }
+
+/**
+ * Creates or updates a TEMPLATE. Same payload as saveCommuniqueDraft, plus optional
+ *   templateName      - the name shown in the templates list (defaults to the subject)
+ *   id                - the template being edited (omit to create a new one)
+ *   expectedUpdatedAt - as for drafts: refuses to overwrite a newer save
+ * The owner and full admins can edit a template; anyone else saves a new one.
+ * Returns { success, id, updatedAt (ms), savedLabel }.
+ */
+function saveCommuniqueTemplate(template) { return saveDraftOrTemplate_(template, true); }
+
+function saveDraftOrTemplate_(draft, asTemplate) {
   var access = requireWriteLevel_(ROLE_LEVELS.elevated);
   draft = draft || {};
   var ss = getSpreadsheet_();
   var me = String(access.email || "").toLowerCase();
   if (!me) throw new Error("Could not detect your email.");
+  var noun = asTemplate ? "template" : "draft";
 
   var payload = {};
   Object.keys(draft).forEach(function (k) {
-    if (k === "id" || k === "draftId" || k === "expectedUpdatedAt") return;
+    if (k === "id" || k === "draftId" || k === "templateId" || k === "expectedUpdatedAt" || k === "asTemplate") return;
     payload[k] = draft[k];
   });
+  if (asTemplate) {
+    payload.templateName = String(payload.templateName || "").trim().slice(0, 120);
+    delete payload.sendAt;   // a template is reused - a stored send time would always be stale
+  } else delete payload.templateName;
   var hasText = (payload.subject && String(payload.subject).trim()) ||
                 (payload.body && String(payload.body).replace(/<[^>]*>/g, "").trim());
   if (!hasText && !(payload.attachments || []).length) {
     throw new Error("Nothing to save yet - add a subject, some text or an attachment.");
   }
+  if (asTemplate && !payload.templateName) payload.templateName = String(payload.subject || "").trim() || "Untitled template";
   var json = JSON.stringify(payload);
   var chunks = [];
   for (var p = 0; p < json.length; p += DRAFT_CHUNK_CHARS_) chunks.push("~" + json.slice(p, p + DRAFT_CHUNK_CHARS_));
   if (chunks.length > DRAFT_MAX_CHUNKS_) {
-    throw new Error("This draft is too large to save (" + Math.round(json.length / 1000) + "k characters). " +
+    throw new Error("This " + noun + " is too large to save (" + Math.round(json.length / 1000) + "k characters). " +
                     "Pasted images or heavy formatting are the usual cause - remove them and try again.");
   }
-  var subject = String(payload.subject || "").trim();
+  var subject = String((asTemplate ? payload.templateName : payload.subject) || "").trim();
   if (/^[=+\-@]/.test(subject)) subject = " " + subject; // display column only; never a formula
   var now = new Date();
 
@@ -6141,15 +6168,23 @@ function saveCommuniqueDraft(draft) {
     var sheet = ensureDraftsSheet_(ss);
     var needCols = DRAFT_PAYLOAD_COL_ - 1 + chunks.length;
     if (sheet.getMaxColumns() < needCols) sheet.insertColumnsAfter(sheet.getMaxColumns(), needCols - sheet.getMaxColumns());
-    var id = String(draft.id || draft.draftId || "").trim();
+    var id = String(draft.id || (asTemplate ? draft.templateId : draft.draftId) || "").trim();
+    var created = !id;
 
     if (id) {
+      // Kinds never cross: saving a draft can't overwrite a template, or the reverse.
+      if (isTemplateId_(id) !== asTemplate) {
+        throw new Error(asTemplate ? "That's a draft, not a template. Use \"Save as template\" to make a template from it."
+                                   : "That's a template - it can't be saved as a draft. Save a new draft to keep this version.");
+      }
       var d = findDraft_(ss, id);
-      if (!d) throw new Error("This draft no longer exists - it may have been sent, scheduled or deleted. Save it as a new draft to keep it.");
-      if (d.ownerEmail !== me) throw new Error("This is " + (d.ownerName || d.ownerEmail) + "'s draft. Save it as a new draft to keep your own copy.");
+      if (!d) throw new Error("This " + noun + " no longer exists - it may have been " + (asTemplate ? "deleted" : "sent, scheduled or deleted") +
+                              ". Save it as a new " + noun + " to keep it.");
+      var mayEdit = asTemplate ? canManageDraft_(access, d) : d.ownerEmail === me;
+      if (!mayEdit) throw new Error("This is " + (d.ownerName || d.ownerEmail) + "'s " + noun + ". Save it as a new " + noun + " to keep your own copy.");
       if (draft.expectedUpdatedAt && Number(draft.expectedUpdatedAt) !== draftStamp_(d.updatedAt)) {
-        throw new Error("This draft was saved somewhere else (another tab or device) at " + draftLabel_(d.updatedAt) +
-                        ". Reopen it to get the latest version, or save yours as a new draft.");
+        throw new Error("This " + noun + " was saved somewhere else (another tab, device or admin) at " + draftLabel_(d.updatedAt) +
+                        ". Reopen it to get the latest version, or save yours as a new " + noun + ".");
       }
       var width = Math.max(sheet.getLastColumn(), needCols);
       if (width >= DRAFT_PAYLOAD_COL_) sheet.getRange(d.row, DRAFT_PAYLOAD_COL_, 1, width - DRAFT_PAYLOAD_COL_ + 1).clearContent();
@@ -6157,7 +6192,7 @@ function saveCommuniqueDraft(draft) {
       sheet.getRange(d.row, 6).setValue(now);
       sheet.getRange(d.row, DRAFT_PAYLOAD_COL_, 1, chunks.length).setValues([chunks]);
     } else {
-      id = "drf_" + now.getTime() + "_" + Math.floor(Math.random() * 1e4);
+      id = (asTemplate ? TEMPLATE_ID_PREFIX_ : "drf_") + now.getTime() + "_" + Math.floor(Math.random() * 1e4);
       var row = sheet.getLastRow() + 1;
       sheet.getRange(row, 1, 1, 6).setValues([[id, me, access.name || me, subject, now, now]]);
       sheet.getRange(row, DRAFT_PAYLOAD_COL_, 1, chunks.length).setValues([chunks]);
@@ -6166,6 +6201,7 @@ function saveCommuniqueDraft(draft) {
   } finally {
     if (locked) { try { lock.releaseLock(); } catch (e) {} }
   }
+  if (asTemplate) logActivity_(created ? "Created template" : "Edited template", payload.templateName, "");
   return { success: true, id: id, updatedAt: now.getTime(), savedLabel: draftLabel_(now) };
 }
 
@@ -6178,7 +6214,7 @@ function getCommuniqueDrafts() {
   var access = requireWriteLevel_(ROLE_LEVELS.elevated);
   var me = String(access.email || "").toLowerCase();
   return readDraftRows_(getSpreadsheet_())
-    .filter(function (d) { return d.ownerEmail === me || access.level >= ROLE_LEVELS.admin; })
+    .filter(function (d) { return !isTemplateId_(d.id) && (d.ownerEmail === me || access.level >= ROLE_LEVELS.admin); })
     .sort(function (a, b) { return draftStamp_(b.updatedAt) - draftStamp_(a.updatedAt); })
     .map(function (d) {
       var p = d.payload || {};
@@ -6194,6 +6230,48 @@ function getCommuniqueDrafts() {
 }
 
 /**
+ * Templates list, A-Z by name. Everyone who can send sees every template.
+ * Each: { id, name, subject, preview, ownerEmail, ownerName, mine, canEdit,
+ *         recipientType, groups, attachmentCount, updatedLabel, updatedAt (ms) }
+ */
+function getCommuniqueTemplates() {
+  var access = requireWriteLevel_(ROLE_LEVELS.elevated);
+  var me = String(access.email || "").toLowerCase();
+  return readDraftRows_(getSpreadsheet_())
+    .filter(function (d) { return isTemplateId_(d.id); })
+    .map(function (d) {
+      var p = d.payload || {};
+      var text = String(p.body || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+      return { id: d.id, name: String(p.templateName || p.subject || d.subject || "").trim() || "Untitled template",
+               subject: String(p.subject || "").trim(),
+               preview: text.length > 140 ? text.slice(0, 137) + "..." : text,
+               ownerEmail: d.ownerEmail, ownerName: d.ownerName, mine: d.ownerEmail === me,
+               canEdit: canManageDraft_(access, d), corrupt: !!p._corrupt,
+               recipientType: p.recipientType || "", groups: p.groups || [],
+               attachmentCount: (p.attachments || []).length,
+               updatedLabel: draftLabel_(d.updatedAt), updatedAt: draftStamp_(d.updatedAt) };
+    })
+    .sort(function (a, b) { return a.name.toLowerCase().localeCompare(b.name.toLowerCase()); });
+}
+
+/**
+ * One template, ready to load into the composer AS A NEW MESSAGE: send it, or
+ * save it as a new draft, without passing the template's id. Pass the id (with
+ * updatedAt as expectedUpdatedAt) only to saveCommuniqueTemplate, to edit it.
+ * Same shape as getCommuniqueDraft, plus kind: "template", name and canEdit.
+ */
+function getCommuniqueTemplate(id) {
+  if (!isTemplateId_(id)) throw new Error("Template not found.");
+  return getCommuniqueDraft(id);
+}
+
+/** Deletes a template (its owner, or a full admin). */
+function deleteCommuniqueTemplate(id) {
+  if (!isTemplateId_(id)) throw new Error("Template not found.");
+  return deleteCommuniqueDraft(id);
+}
+
+/**
  * One draft, ready to load into the composer.
  * Returns { id, ownerEmail, ownerName, mine, updatedAt (ms), updatedLabel, payload, missingAttachments }.
  * Attachments whose files are gone (trashed/retention) are dropped from payload
@@ -6201,11 +6279,12 @@ function getCommuniqueDrafts() {
  */
 function getCommuniqueDraft(id) {
   var access = requireWriteLevel_(ROLE_LEVELS.elevated);
+  var isTpl = isTemplateId_(id);
   var d = findDraft_(getSpreadsheet_(), id);
-  if (!d) throw new Error("Draft not found - it may have been sent, scheduled or deleted.");
-  if (!canManageDraft_(access, d)) throw new Error("You can only open your own drafts.");
+  if (!d) throw new Error(isTpl ? "Template not found - it may have been deleted." : "Draft not found - it may have been sent, scheduled or deleted.");
+  if (!isTpl && !canManageDraft_(access, d)) throw new Error("You can only open your own drafts.");   // templates: everyone who can send
   var payload = d.payload || {};
-  if (payload._corrupt) throw new Error("This draft couldn't be read. It can only be deleted.");
+  if (payload._corrupt) throw new Error("This " + (isTpl ? "template" : "draft") + " couldn't be read. It can only be deleted.");
   var before = (payload.attachments || []).length;
   var live = readAttachmentMeta_(payload.attachments);
   var byId = {};
@@ -6220,10 +6299,12 @@ function getCommuniqueDraft(id) {
     out.sizeBytes = m.sizeBytes; out.sizeMB = Math.round(m.sizeMB * 100) / 100; out.url = m.url;
     return out;
   });
-  return { id: d.id, ownerEmail: d.ownerEmail, ownerName: d.ownerName,
+  var out = { id: d.id, kind: isTpl ? "template" : "draft", ownerEmail: d.ownerEmail, ownerName: d.ownerName,
            mine: d.ownerEmail === String(access.email || "").toLowerCase(),
            updatedAt: draftStamp_(d.updatedAt), updatedLabel: draftLabel_(d.updatedAt),
            payload: payload, missingAttachments: before - payload.attachments.length };
+  if (isTpl) { out.name = payload.templateName || payload.subject || "Untitled template"; out.canEdit = canManageDraft_(access, d); }
+  return out;
 }
 
 /** Deletes a draft (owner, or a full admin). Its attachments are left for the retention sweep. */
@@ -6232,9 +6313,12 @@ function deleteCommuniqueDraft(id) {
   var ss = getSpreadsheet_();
   var d = findDraft_(ss, id);
   if (!d) return { success: true, alreadyGone: true };
-  if (!canManageDraft_(access, d)) throw new Error("You can only delete your own drafts.");
+  var isTpl = isTemplateId_(d.id);
+  if (!canManageDraft_(access, d)) throw new Error("You can only delete your own " + (isTpl ? "templates" : "drafts") + ".");
   ss.getSheetByName(DRAFTS_SHEET).deleteRow(d.row);
-  if (d.ownerEmail !== String(access.email || "").toLowerCase()) {
+  if (isTpl) {
+    logActivity_("Deleted template", (d.payload && d.payload.templateName) || d.subject || "(untitled)", d.ownerName || d.ownerEmail);
+  } else if (d.ownerEmail !== String(access.email || "").toLowerCase()) {
     logActivity_("Deleted someone's draft", d.ownerName || d.ownerEmail, d.subject || "(no subject)");
   }
   return { success: true };
@@ -6242,7 +6326,7 @@ function deleteCommuniqueDraft(id) {
 
 /** After a successful send/schedule, the draft it came from is spent. Never throws. */
 function removeDraftAfterSend_(ss, draftId, access) {
-  if (!draftId) return;
+  if (!draftId || isTemplateId_(draftId)) return;   // templates are reusable - never spent
   try {
     var d = findDraft_(ss, draftId);
     if (d && canManageDraft_(access, d)) ss.getSheetByName(DRAFTS_SHEET).deleteRow(d.row);
@@ -10648,7 +10732,15 @@ function startNewYear(confirmLabel, startDate) {
   var ss = getLiveSpreadsheet_();
   var lock = LockService.getScriptLock();
   try { lock.waitLock(30000); }
-  catch (e) { throw new Error("Someone is saving right now. Try again in a minute."); }
+  catch (e) {
+    // The usual reason on rollover day: Start was pressed again while the first run
+    // (a few minutes long) is still going. Say so instead of "someone is saving".
+    var running = false;
+    try { running = readYears_(ss).some(function (y) { return y.status === "In progress"; }); } catch (e2) {}
+    throw new Error(running
+      ? "The new year is already being started - this takes a few minutes. Reload the page in a few minutes to see it."
+      : "Someone is saving right now. Try again in a minute.");
+  }
   try {
     var first = planNewYear_(ss, { startDate: startDate || "" });
     if (!first.canStart) throw new Error(first.blockReason);
