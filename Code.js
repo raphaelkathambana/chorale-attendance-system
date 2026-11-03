@@ -58,7 +58,7 @@ var CONSECUTIVE_ABSENCE_PENALTY = -2;
  
 // Offense penalty per offense
 var OFFENSE_PENALTY = -3;
-var AU_REMOVAL_ENABLED = false;
+var AU_REMOVAL_ENABLED = true;
 
 // Consecutive absence penalty
 // Apologies must be submitted at least this many minutes before the session starts.
@@ -79,9 +79,8 @@ var PAST_YEARS_FOR_SECTION_ADMINS = true;
 // whose Run button can't pass a date. Leave "" for the normal 1 November start.
 var EDITOR_ROLLOVER_START_DATE = "";
 
+// ======================= END OF CONFIG =======================
 
-function getSpreadsheet_() { return SpreadsheetApp.openById(SPREADSHEET_ID); }
- 
 function doGet() {
   return HtmlService.createTemplateFromFile("Page").evaluate()
     .setTitle("Chorale Attendance")
@@ -6784,9 +6783,10 @@ function sendCommuniqueAs_(ss, payload, access) {
   var recipients = resolveCommuniqueRecipients_(ss, payload, access); // [{email,name}], scoped
   if (!recipients.length) throw new Error("No recipients matched your selection.");
 
+  // CC goes to full admins only - never section admins, elevated reps or the Super Admin.
   var ccAdmins = "";
   if (payload.ccAdmins) {
-    var admins = getAdminEmails_(ss);
+    var admins = fullAdminEmails_(ss);
     if (admins.length > 0) ccAdmins = admins.join(",");
   }
 
@@ -6995,7 +6995,8 @@ function sendBulkBcc_(recipients, subject, htmlBody, opts) {
   opts = opts || {};
   var batchSize = opts.batchSize || 50;   // well under the per-message cap
   var fromName = opts.fromName || EMAIL_FROM_NAME;
-  var toHeader = opts.toHeader || (EMAIL_FROM_NAME + " <" + (getAdminEmails_(getSpreadsheet_())[0] || EMAIL_CC) + ">");
+  // The visible "To" address also receives every bulk send, so it is a full admin too.
+  var toHeader = opts.toHeader || (EMAIL_FROM_NAME + " <" + (fullAdminEmails_(getSpreadsheet_())[0] || EMAIL_CC) + ">");
 
   // Dedupe
   var seen = {}, unique = [];
@@ -8679,18 +8680,21 @@ function reinstateMemberActive_(ss, memberName) {
       startIdx = h.indexOf("probation start"), endIdx = h.indexOf("probation end"),
       penIdx = h.indexOf("probation penalty"), ackIdx = h.indexOf("probation acknowledged"),
       passIdx = h.indexOf("probation passed"), failIdx = h.indexOf("probation failed");
+  var found = false;
   for (var i = 1; i < data.length; i++) {
     if (data[i][nameIdx].toString().trim() !== memberName) continue;
     var row = i + 1;
-    if (probIdx !== -1)  sheet.getRange(row, probIdx + 1).setValue("No");
-    if (startIdx !== -1) sheet.getRange(row, startIdx + 1).setValue("");
-    if (endIdx !== -1)   sheet.getRange(row, endIdx + 1).setValue("");
-    if (penIdx !== -1)   sheet.getRange(row, penIdx + 1).setValue("");
-    if (ackIdx !== -1)   sheet.getRange(row, ackIdx + 1).setValue("");
-    if (passIdx !== -1)  sheet.getRange(row, passIdx + 1).setValue("");
-    if (failIdx !== -1)  sheet.getRange(row, failIdx + 1).setValue("");
+    found = true;
+    // Probation is cleared to BLANK ("never on probation", see readAllMembers_), not
+    // "No": the column only ever holds Yes / Passed / Failed / blank, so a dropdown on
+    // it rejects "No" - which made this route throw while the probation route
+    // (writing "Yes") worked. safeSetValue_ also gets past any stale dropdown.
+    [probIdx, startIdx, endIdx, penIdx, ackIdx, passIdx, failIdx].forEach(function (idx) {
+      if (idx !== -1) safeSetValue_(sheet, row, idx + 1, "");
+    });
     break;
   }
+  if (!found) throw new Error("Member not found: " + memberName);
   setMembershipState_(ss, memberName, "Active", "Active", "");
   return true;
 }
@@ -10131,6 +10135,20 @@ function liveSpreadsheetId_() { return SPREADSHEET_ID_OVERRIDE_ || SPREADSHEET_I
 
 function getLiveSpreadsheet_() { return SpreadsheetApp.openById(liveSpreadsheetId_()); }
 
+/**
+ * The spreadsheet every read and write goes to. While a past-year report runs
+ * (callForYear), that's the year's archive; otherwise the live file (or the copy,
+ * during a rehearsal). Deliberately defined far below the config block: if an old
+ * one-line getSpreadsheet_() survives up there, this later definition still wins.
+ */
+function getSpreadsheet_() {
+  if (YEAR_VIEW_) {
+    if (!YEAR_VIEW_.ss) YEAR_VIEW_.ss = SpreadsheetApp.openById(YEAR_VIEW_.archiveId);
+    return YEAR_VIEW_.ss;
+  }
+  return SpreadsheetApp.openById(liveSpreadsheetId_());
+}
+
 function pad2_(n) { return (n < 10 ? "0" : "") + n; }
 
 /** Calendar year in which the chorale year containing dateStr began. */
@@ -10679,6 +10697,67 @@ function rehearseNewYearOnCopy() {
   return result;
 }
 
+/**
+ * EDITOR - zero-arg diagnostic for past-year views. Logs the Years sheet exactly as
+ * stored and as the code reads it, flags two rows reading as the same year (past-year
+ * views pick the last one), and counts rows in each archive, including one read
+ * through the past-year switch itself. Writes nothing; logs no member data.
+ */
+function diagnosePastYears() {
+  requireMaintainer_(true);
+  var tz = Session.getScriptTimeZone(), live = getLiveSpreadsheet_(), out = [];
+  out.push("Script time zone: " + tz + " | spreadsheet time zone: " + live.getSpreadsheetTimeZone());
+  var sh = live.getSheetByName(YEARS_SHEET);
+  if (!sh) { Logger.log("No Years sheet."); return "No Years sheet."; }
+  sh.getDataRange().getValues().forEach(function (r, i) {
+    out.push("Years row " + (i + 1) + ": " + r.map(function (v) {
+      return v instanceof Date ? "[date " + Utilities.formatDate(v, tz, "yyyy-MM-dd HH:mm") + "]" : JSON.stringify(String(v));
+    }).join(" | "));
+  });
+  var years = readYears_(live), seen = {};
+  years.forEach(function (y) {
+    out.push("Read as: " + y.label + " | starts " + y.startsOn + " | ends " + y.endsOn + " | " + y.status +
+             " | archive " + (y.archiveId || "-"));
+    seen[y.label] = (seen[y.label] || 0) + 1;
+  });
+  Object.keys(seen).forEach(function (l) {
+    if (seen[l] > 1) out.push("PROBLEM: " + seen[l] + " rows read as " + l + " - past-year views pick the last one.");
+  });
+  // Live records dated on the current year's first day (they'd belong to the old year under a later start).
+  var cur = years.filter(function (y) { return y.status === "Current"; }).pop();
+  if (cur) {
+    [ATTENDANCE_SHEET, APOLOGIES_SHEET, MEETINGS_SHEET].forEach(function (n) {
+      var s = live.getSheetByName(n);
+      var c = (s && s.getLastRow() > 1) ? s.getRange(2, 1, s.getLastRow() - 1, 1).getValues().filter(function (r) {
+        return r[0] && formatSheetDate_(r[0]) === cur.startsOn; }).length : 0;
+      out.push("Live " + n + " rows dated " + cur.startsOn + ": " + c);
+    });
+  }
+  years.filter(function (y) { return y.status === "Archived" && y.archiveId; }).forEach(function (y) {
+    try {
+      var a = SpreadsheetApp.openById(y.archiveId);
+      out.push("Archive for " + y.label + ": \"" + a.getName() + "\"");
+      [ATTENDANCE_SHEET, OFFENSES_SHEET, REWARDS_SHEET, APOLOGIES_SHEET, MEETINGS_SHEET, ACTIVITY_SHEET].forEach(function (n) {
+        var s = a.getSheetByName(n);
+        var extra = "";
+        if (s && n === APOLOGIES_SHEET && s.getLastRow() > 1) {
+          var pend = s.getRange(2, 9, s.getLastRow() - 1, 1).getValues().filter(function (r) { return String(r[0]).trim() === "Pending"; }).length;
+          extra = " (" + pend + " still Pending)";
+        }
+        out.push("  " + n + ": " + (s ? Math.max(0, s.getLastRow() - 1) + " rows" + extra : "missing"));
+      });
+      YEAR_VIEW_ = { label: y.label, archiveId: y.archiveId, startsOn: y.startsOn, endsOn: y.endsOn, ss: null };
+      try {
+        out.push("  Through the past-year switch: " + readAllAttendance_(getSpreadsheet_()).length +
+                 " attendance records, read from " + (getSpreadsheet_().getId() === y.archiveId ? "the archive" : "NOT the archive"));
+      } finally { YEAR_VIEW_ = null; }
+    } catch (e) { out.push("Archive for " + y.label + " could not be opened: " + e.message); }
+  });
+  var msg = out.join("\n");
+  Logger.log(msg);
+  return msg;
+}
+
 /** Zero-arg editor wrapper: previews with EDITOR_ROLLOVER_START_DATE (blank = 1 November). */
 function previewNewYearFromEditor() {
   return previewNewYear(EDITOR_ROLLOVER_START_DATE || "");
@@ -10908,6 +10987,12 @@ function callForYear(yearLabel, fnName, args) {
   if (target.status !== "Archived" || !target.archiveId) throw new Error(yearLabel + " has no archive yet.");
   YEAR_VIEW_ = { label: target.label, archiveId: target.archiveId, startsOn: target.startsOn, endsOn: target.endsOn, ss: null };
   try {
+    // Never show live data under a past year's label: if reads don't reach the
+    // archive (e.g. an older getSpreadsheet_() overriding this file's), say so.
+    if (getSpreadsheet_().getId() !== target.archiveId) {
+      throw new Error("Past years can't open the " + target.label + " archive - another getSpreadsheet_() " +
+                      "in the script is overriding the year-aware one. Remove the old copy (check the config block).");
+    }
     return fns[fnName].apply(null, args || []);
   } finally {
     YEAR_VIEW_ = null;
