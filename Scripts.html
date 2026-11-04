@@ -7091,6 +7091,7 @@ function loadCommunique(){
     commMarkClean();
     refreshScheduledCount();
     refreshDraftsCount();
+    loadCommuniqueTemplates();   // §12e: names for the Save-as-template duplicate check
   }).withFailureHandler(function(e){c.innerHTML='<p class="loading">Error: '+esc(e.message)+'</p>';}).getCommuniqueRecipientOptions();
 }
 
@@ -7196,6 +7197,7 @@ function renderCommunique(){
   // Send / Schedule, with Save draft beside it
   h+='<div class="comm-actions">'
    +   '<button type="button" class="btn btn-secondary" id="btnSaveDraft" onclick="saveCommuniqueDraftNow()">Save draft</button>'
+   +   '<button type="button" class="btn btn-secondary" id="btnSaveTemplate" onclick="openTemplateNameDialog(&#39;new&#39;)">Save as template</button>'
    +   '<button class="btn-primary" id="btnSendComm" onclick="submitCommunique()">'+(mode==="later"?"Schedule message":"Send message")+'</button>'
    + '</div>'
    + '<div class="comm-draft-state" id="commDraftState"></div>';
@@ -7477,7 +7479,7 @@ function sendCommuniqueNow(){
   google.script.run.withSuccessHandler(function(r){
     done();
     showToast(commSentToast(r),"success");
-    composerDraft={id:null,updatedAt:null};commDraftOwner="";
+    composerDraft={id:null,updatedAt:null};commDraftOwner="";composerTemplate=null;
     resetCommuniqueForm();
     refreshDraftsCount();
   }).withFailureHandler(function(e){done();if (isDuplicateNotice(e)) { showToast(serverError(e), "info"); return; }showToast(serverError(e),"error");
@@ -7498,7 +7500,7 @@ function scheduleCommuniqueSend(){
   google.script.run.withSuccessHandler(function(r){
     done();
     showToast("Scheduled for "+fmtSchedWhen(r.sendAt)+" \u2014 "+r.recipientCount+" recipient"+(r.recipientCount===1?"":"s")+".","success");
-    composerDraft={id:null,updatedAt:null};commDraftOwner="";
+    composerDraft={id:null,updatedAt:null};commDraftOwner="";composerTemplate=null;
     resetCommuniqueForm();
     refreshDraftsCount();
     showCommSubtab("scheduled");
@@ -7508,9 +7510,9 @@ function scheduleCommuniqueSend(){
 
 // ── Compose / Scheduled sub-tabs ─────────────────────────────────────────────
 function showCommSubtab(which){
-  // Compose · Drafts · Scheduled
-  var panes={compose:"commComposePane",drafts:"commDraftsPane",scheduled:"commScheduledPane"};
-  var tabs={compose:"commSubtabCompose",drafts:"commSubtabDrafts",scheduled:"commSubtabScheduled"};
+  // Compose · Drafts · Templates · Scheduled
+  var panes={compose:"commComposePane",drafts:"commDraftsPane",templates:"commTemplatesPane",scheduled:"commScheduledPane"};
+  var tabs={compose:"commSubtabCompose",drafts:"commSubtabDrafts",templates:"commSubtabTemplates",scheduled:"commSubtabScheduled"};
   if(!panes[which])which="compose";
   for(var k in panes){
     var p=document.getElementById(panes[k]);if(p)p.style.display=(k===which)?"block":"none";
@@ -7518,6 +7520,7 @@ function showCommSubtab(which){
   }
   if(which==="scheduled")loadScheduledEmails();
   if(which==="drafts")loadCommuniqueDrafts();
+  if(which==="templates")openTemplatesList();
 }
 
 // Lightweight: just refresh the count pill on the Scheduled sub-tab.
@@ -8210,10 +8213,10 @@ function renderYearGate(tab) {
 // Opened from the year chip. Past years for everyone who can view them; the
 // rollover panel for full admins (canRollover) and, preview-only, the Super Admin.
 var yearPageReturnTab = null;
-var nyState = { date: "", plan: null, loading: false, error: "", typed: "", running: false, startError: "", result: null };
+var nyState = { date: "", plan: null, loading: false, error: "", typed: "", running: false, startError: "", notice: "", result: null };
 
 function openYearPage() {
-  nyState.result = null; nyState.startError = ""; nyState.typed = "";
+  nyState.result = null; nyState.startError = ""; nyState.notice = ""; nyState.typed = "";
   switchTab("year");
 }
 function closeYearPage() {
@@ -8252,7 +8255,7 @@ function nyTyped(v) {
   var b = document.getElementById("btnStartYear");
   if (b) b.disabled = !nyCanStart();
 }
-function nyCanStart() { return !!yearInfo && nyState.typed === yearInfo.nextLabel && !nyState.running && !!nyState.plan && !nyState.loading; }
+function nyCanStart() { return !!yearInfo && nyState.typed === yearInfo.nextLabel && !nyState.running && !nyState.notice && !!nyState.plan && !nyState.loading; }
 
 function renderYearPage() {
   var c = document.getElementById("yearPage"); if (!c) return;
@@ -8373,7 +8376,7 @@ function nyApologyCard(a) {
         + '</div><span class="ny-apol-st">PENDING</span></div>';
   if (!isReadOnly()) {
     h += '<div class="ny-apol-acts">' + (isApol
-      ? '<button type="button" class="btn-export ny-rej" onclick="nyReject(' + a.rowIndex + ')">Reject</button><button type="button" class="btn-export ny-app" onclick="nyApprove(' + a.rowIndex + ')">Approve</button>'
+      ? '<button type="button" class="btn-export ny-rej" onclick="nyReject(' + a.rowIndex + ')"' + (nyState.running ? ' disabled' : '') + '>Reject</button><button type="button" class="btn-export ny-app" onclick="nyApprove(' + a.rowIndex + ')"' + (nyState.running ? ' disabled' : '') + '>Approve</button>'
       : '<button type="button" class="btn-export" onclick="switchTab(\'requests\')">Decide in Requests \u2192</button>') + '</div>';
   }
   return h + '</div>';
@@ -8402,26 +8405,33 @@ function nyConfirmHtml(ro) {
   var pend = ((s.plan && s.plan.pendingApologiesArchived) || []).length;
   var h = '<label class="ny-confirm-l" for="nyConfirm">Type <b>' + esc(y.nextLabel) + '</b> to confirm</label>'
     + '<input type="text" id="nyConfirm" class="form-input ny-confirm" autocomplete="off" spellcheck="false" placeholder="' + esc(y.nextLabel) + '" value="' + esc(s.typed) + '" oninput="nyTyped(this.value)"' + (s.running ? ' disabled' : '') + '>'
-    + '<p class="ny-hint">It takes a minute or two. Make sure nobody is recording attendance while it runs.</p>'
-    + '<div class="ny-go"><button type="button" class="btn btn-crimson" id="btnStartYear" onclick="startNewYearNow()"' + (nyCanStart() ? '' : ' disabled') + '>'
+    + '<p class="ny-hint">It takes a few minutes. Make sure nobody is recording attendance while it runs.</p>'
+    + '<div class="ny-go"><button type="button" class="btn btn-crimson" id="btnStartYear" onclick="startNewYearNow()"' + (nyCanStart() ? '' : ' disabled') + (s.running ? ' aria-busy="true"' : '') + '>'
     +   (s.running ? 'Starting ' + esc(y.nextLabel) + '\u2026' : 'Start ' + esc(y.nextLabel)) + '</button>'
-    +   (pend ? '<span class="ny-go-pend">' + pend + ' pending \u00b7 archived unresolved if left</span>' : '') + '</div>';
-  if (s.running) h += '<div class="ny-running"><div class="spinner"></div><span>Archiving ' + esc(y.currentLabel) + ' and resetting the live sheets. Keep this page open.</span></div>';
+    +   (pend && !s.running ? '<span class="ny-go-pend">' + pend + ' pending \u00b7 archived unresolved if left</span>' : '') + '</div>';
+  // Running: Start stays disabled until the call returns (about 3 minutes).
+  if (s.running) h += '<div class="ny-running" role="status" aria-live="polite"><div class="spinner"></div><span><b>Starting ' + esc(y.nextLabel) + '</b>, this takes a few minutes. Keep this page open.</span></div>';
+  // A second press (another tab, or after a reload) is answered as a notice, not an error.
+  if (s.notice) h += '<div class="ny-info" role="status"><span class="ny-info-mark">i</span><span>' + esc(s.notice) + '</span></div>';
   if (s.startError) h += '<div class="ny-error">' + esc(s.startError) + '</div>';
   return h;
 }
 function startNewYearNow() {
   if (roBlock()) return;
   if (!nyCanStart() || !yearInfo) { showToast("Type " + (yearInfo ? yearInfo.nextLabel : "the new year") + " exactly to confirm.", "error"); return; }
-  nyState.running = true; nyState.startError = ""; renderYearPage();
+  nyState.running = true; nyState.startError = ""; nyState.notice = ""; renderYearPage();
   google.script.run.withSuccessHandler(function (r) {
     nyState.running = false; nyState.result = r || { success: true }; nyState.plan = null; nyState.typed = "";
     resetYearCaches();
     renderYearPage();
     reloadRoleAndYear();
   }).withFailureHandler(function (e) {
-    // Shown as-is: the backend says whether anything changed.
-    nyState.running = false; nyState.startError = serverError(e); renderYearPage();
+    // Shown as-is: the backend says whether anything changed. "Already being started"
+    // (and a duplicate-submit notice) is information, not a failure.
+    nyState.running = false;
+    if (/already being started/i.test(serverError(e)) || isDuplicateNotice(e)) nyState.notice = serverError(e);
+    else nyState.startError = serverError(e);
+    renderYearPage();
   }).startNewYear(nyState.typed, nyStartArg());
 }
 function nyResultHtml(r) {
@@ -8782,6 +8792,7 @@ function saveCommuniqueDraftNow(asNew) {
     // Saved: clear the composer and land on Drafts, with the saved one marked.
     showToast("Draft saved \u00b7 " + (r.savedLabel || ""), "success");
     composerDraft = { id: null, updatedAt: null }; commDraftOwner = ""; commDraftLabel = "";
+    composerTemplate = null;
     commLastSavedId = r.id;
     resetCommuniqueForm();
     showCommSubtab("drafts");
@@ -8801,15 +8812,18 @@ function showDraftSavedState(label) {
   refreshDraftsCount();
 }
 function paintDraftState() {
-  var st = document.getElementById("commDraftState"); if (!st) return;
   var dirty = commIsDirty(), txt = "", cls = "";
-  if (composerDraft.id && !dirty) { txt = "Draft saved \u00b7 " + commDraftLabel; cls = "is-saved"; }
+  paintCommTemplateStrip(dirty);   // §12e
+  var st = document.getElementById("commDraftState"); if (!st) return;
+  if (composerTemplate && composerTemplate.editing) { txt = dirty ? "Unsaved changes \u00b7 not in the template yet" : "Template saved"; cls = dirty ? "is-dirty" : "is-saved"; }
+  else if (composerDraft.id && !dirty) { txt = "Draft saved \u00b7 " + commDraftLabel; cls = "is-saved"; }
   else if (composerDraft.id && dirty) { txt = "Unsaved changes \u00b7 draft last saved " + commDraftLabel; cls = "is-dirty"; }
   else if (dirty) { txt = commDraftOwner ? "Not saved \u2014 saving creates your own copy" : "Not saved as a draft yet"; cls = "is-dirty"; }
   st.textContent = txt;
   st.className = "comm-draft-state" + (cls ? " " + cls : "");
 }
 function commDraftStripHtml() {
+  if (composerTemplate) return commTemplateStripHtml();   // §12e
   if (commDraftOwner) {
     return '<div class="comm-draft-strip"><span class="cds-tag is-copy">COPY</span>'
          + '<span>Opened from <b>' + esc(commDraftOwner) + '</b>\u2019s draft \u2014 saving creates your own copy; theirs stays as it is.</span>'
@@ -8837,6 +8851,7 @@ function reopenLatestDraft() {
 function newCommuniqueMessage() {
   if (commIsDirty() && !confirm("Start a new message? Your unsaved changes will be discarded.")) return;
   composerDraft = { id: null, updatedAt: null }; commDraftOwner = ""; commDraftLabel = "";
+  composerTemplate = null;
   resetCommuniqueForm();
 }
 
@@ -8847,6 +8862,7 @@ function openCommuniqueDraft(id) {
     composerDraft = d.mine ? { id: d.id, updatedAt: d.updatedAt } : { id: null, updatedAt: null };
     commDraftOwner = d.mine ? "" : (d.ownerName || d.ownerEmail || "someone");
     commDraftLabel = d.updatedLabel || "";
+    composerTemplate = null;
     var strip = document.getElementById("commDraftStrip"); if (strip) strip.innerHTML = commDraftStripHtml();
     commMarkClean();
     showCommSubtab("compose");
@@ -8959,6 +8975,214 @@ function deleteDraft(id) {
     commDraftsList = commDraftsList.filter(function (x) { return x.id !== id; });
     updateDraftsCount(); renderCommDraftsList();
   }).withFailureHandler(function (e) { showToast(serverError(e), "error"); }).deleteCommuniqueDraft(id);
+}
+
+// ─── 12e. COMMUNIQUÉ TEMPLATES (backend 3 Nov 2026) ──────────────────────
+// The LOGIC block is the backend's, pasted verbatim with one change: the failure
+// handler in saveCommuniqueTemplateNow() asks commTemplateRefused(e) first, so a
+// refused update gets the "Save as new template" panel the way drafts do.
+// ─── TEMPLATES (backend 3 Nov) ───────────────────────────────────────────
+// "Use" loads a COPY: composerDraft stays empty, so Save draft makes a new draft
+// and sending never touches the template. "Edit" (owner or full admin) loads it
+// for updating in place with saveCommuniqueTemplateNow(null, false).
+var commTemplates = [];
+var composerTemplate = null;   // { id, name, updatedAt, editing } - what the composer was loaded from
+
+function loadCommuniqueTemplates(cb) {
+  google.script.run.withSuccessHandler(function (rows) { commTemplates = rows || []; if (cb) cb(); })
+    .withFailureHandler(function (e) { showToast(serverError(e), "error"); }).getCommuniqueTemplates();
+}
+
+function openCommuniqueTemplate(id, editing) {
+  if (commIsDirty() && !confirm("The composer has unsaved changes. Discard them?")) return;
+  google.script.run.withSuccessHandler(function (t) {
+    loadPayloadIntoComposer(t.payload);
+    composerDraft = { id: null, updatedAt: null }; commDraftOwner = ""; commDraftLabel = "";
+    composerTemplate = { id: t.id, name: t.name, updatedAt: t.updatedAt, editing: !!(editing && t.canEdit) };
+    commMarkClean();
+    showCommSubtab("compose");
+    if (t.missingAttachments) showToast(t.missingAttachments + " attachment(s) in this template no longer exist and were removed.", "warning");
+  }).withFailureHandler(function (e) { showToast(serverError(e), "error"); }).getCommuniqueTemplate(id);
+}
+
+// asNew = true: "Save as template" (creates one). Otherwise updates composerTemplate in place.
+function saveCommuniqueTemplateNow(name, asNew) {
+  if (roBlock()) return;
+  var p = buildCommuniquePayloadForSend();
+  p.templateName = name || (composerTemplate && composerTemplate.name) || p.subject;
+  if (!asNew && composerTemplate && composerTemplate.editing) { p.id = composerTemplate.id; p.expectedUpdatedAt = composerTemplate.updatedAt; }
+  google.script.run.withSuccessHandler(function (r) {
+    showToast("Template saved · " + (r.savedLabel || ""), "success");
+    composerTemplate = { id: r.id, name: p.templateName, updatedAt: r.updatedAt, editing: true };
+    commMarkClean();
+    loadCommuniqueTemplates(function () { if (typeof renderCommTemplates === "function") renderCommTemplates(); });
+  }).withFailureHandler(function (e) { if (!commTemplateRefused(e)) showToast(serverError(e), "error"); }).saveCommuniqueTemplate(p);
+}
+
+function deleteCommuniqueTemplateNow(id, name) {
+  if (roBlock()) return;
+  if (!confirm('Delete the template "' + name + '"? This can\'t be undone.')) return;
+  google.script.run.withSuccessHandler(function () {
+    showToast("Template deleted.", "success");
+    if (composerTemplate && composerTemplate.id === id) composerTemplate = null;
+    loadCommuniqueTemplates(function () { if (typeof renderCommTemplates === "function") renderCommTemplates(); });
+  }).withFailureHandler(function (e) { showToast(serverError(e), "error"); }).deleteCommuniqueTemplate(id);
+}
+
+// ── 12e render: Templates list, composer strip, name dialog, refused update ──
+var commTplBusy = null;      // { id, at } while a template save is in flight; cleared when composerTemplate moves on
+var commTplNotice = null;    // { msg, key, stale } refused update, shown under the strip
+var commTplStripSig = "";
+
+// Strip for a composer loaded from a template. commDraftStripHtml() hands over to this.
+function commTemplateStripHtml() {
+  var t = composerTemplate; if (!t) return "";
+  var nm = '\u2018<b>' + esc(t.name || "Untitled template") + '</b>\u2019', h;
+  if (!t.editing) {
+    h = '<div class="comm-draft-strip is-tpl"><span class="tpl-tag">TEMPLATE</span>'
+      + '<span>From ' + nm + '. Sending or saving a draft leaves the template unchanged.</span>'
+      + '<button type="button" class="cds-new" onclick="newCommuniqueMessage()">New message</button></div>';
+  } else {
+    var busy = !!commTplBusy, dirty = !!commIsDirty();
+    h = '<div class="comm-draft-strip is-tpl is-tpl-edit"><span class="tpl-tag">TEMPLATE</span>'
+      + '<span>Editing template ' + nm + '</span>'
+      + '<button type="button" class="cds-new" onclick="newCommuniqueMessage()">New message</button>'
+      + '<div class="cds-acts">'
+      +   '<button type="button" class="btn-export" data-write onclick="openTemplateNameDialog(\'copy\')"' + (busy ? ' disabled' : '') + '>Save as new template</button>'
+      +   '<button type="button" class="btn-export cdc-strong" id="btnUpdateTemplate" data-write onclick="commUpdateTemplate()"' + (busy || !dirty ? ' disabled' : '')
+      +     (!busy && !dirty ? ' title="No changes to update yet"' : '') + (busy ? ' aria-busy="true"' : '') + '>' + (busy ? 'Updating\u2026' : 'Update template') + '</button>'
+      + '</div></div>';
+  }
+  if (commTplNotice) {
+    h += '<div class="comm-draft-conflict comm-tpl-notice" role="alert"><div class="cdc-msg">' + esc(commTplNotice.msg) + '</div><div class="cdc-actions">'
+       + '<button type="button" class="btn-export" onclick="dismissTemplateNotice()">Dismiss</button>'
+       + (commTplNotice.stale ? '<button type="button" class="btn-export" onclick="reopenLatestTemplate()">Reopen latest</button>' : '')
+       + '<button type="button" class="btn-export cdc-strong" onclick="openTemplateNameDialog(\'copy\')">Save as new template</button></div></div>';
+  }
+  return h;
+}
+// Called from paintDraftState(): repaints the strip only when the template state changes.
+function paintCommTemplateStrip(dirty) {
+  var t = composerTemplate;
+  if (commTplBusy && (!t || t.id !== commTplBusy.id || t.updatedAt !== commTplBusy.at)) commTplBusy = null;
+  if (commTplNotice && (!t || commTplNotice.key !== t.id + "|" + t.updatedAt)) commTplNotice = null;
+  var sb = document.getElementById("btnSaveTemplate"); if (sb) sb.disabled = !!commTplBusy;
+  var sig = t ? [t.id, t.name, t.updatedAt, t.editing, !!dirty, !!commTplBusy, commTplNotice ? commTplNotice.msg : ""].join("|") : "";
+  if (sig === commTplStripSig) return;
+  commTplStripSig = sig;
+  var strip = document.getElementById("commDraftStrip"); if (strip) strip.innerHTML = commDraftStripHtml();
+}
+function commUpdateTemplate() {
+  if (roBlock() || commTplBusy || !composerTemplate || !composerTemplate.editing) return;
+  commTplNotice = null;
+  commTplBusy = { id: composerTemplate.id, at: composerTemplate.updatedAt };
+  paintDraftState();
+  saveCommuniqueTemplateNow(null, false);
+}
+// The one addition to the LOGIC block's failure handler. A refused update (saved
+// somewhere else, deleted, someone else's) gets the panel with Save as new template,
+// as drafts do; anything else falls through to the toast.
+function commTemplateRefused(e) {
+  commTplBusy = null;
+  var msg = serverError(e), t = composerTemplate;
+  var refused = !!t && /saved somewhere else|no longer exists|keep your own copy/i.test(msg);
+  if (refused) commTplNotice = { msg: msg, key: t.id + "|" + t.updatedAt, stale: /saved somewhere else/i.test(msg) };
+  paintDraftState();
+  return refused;
+}
+function dismissTemplateNotice() { commTplNotice = null; paintDraftState(); }
+function reopenLatestTemplate() { if (composerTemplate) openCommuniqueTemplate(composerTemplate.id, true); }
+
+// Name dialog for "Save as template" (prefilled with the subject) and
+// "Save as new template" (prefilled with the template's name).
+function openTemplateNameDialog(mode) {
+  if (roBlock() || commTplBusy) return;
+  closeTemplateNameDialog();
+  var subj = document.getElementById("commSubject");
+  var pre = (mode === "copy" && composerTemplate) ? (composerTemplate.name || "") : (subj ? subj.value.trim() : "");
+  var o = document.createElement("div");
+  o.className = "overlay"; o.id = "tplNameOverlay";
+  o.innerHTML = '<div class="dialog tpl-dialog" role="dialog" aria-modal="true" aria-labelledby="tplDlgTitle">'
+    + '<h3 id="tplDlgTitle">' + (mode === "copy" ? "Save as new template" : "Save as template") + '</h3>'
+    + '<p>A template stays after you send it. Everyone who can send a communiqu\u00e9 can use it; only you and full admins can change it.</p>'
+    + '<div class="form-group"><label class="form-label" for="tplNameInput">Template name</label>'
+    +   '<input type="text" id="tplNameInput" class="form-input" maxlength="120" autocomplete="off" spellcheck="false" oninput="tplNameChanged()">'
+    +   '<div class="tpl-dlg-dup" id="tplNameDup"></div></div>'
+    + '<div class="tpl-dlg-note">Saves the subject, message, attachments, signature and recipients. A scheduled send time isn\u2019t kept.</div>'
+    + '<div class="dialog-actions"><button type="button" class="btn btn-secondary" onclick="closeTemplateNameDialog()">Cancel</button>'
+    +   '<button type="button" class="btn btn-primary" id="tplNameSave" onclick="submitTemplateName()">Save template</button></div></div>';
+  o.addEventListener("mousedown", function (ev) { if (ev.target === o) closeTemplateNameDialog(); });
+  o.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape") closeTemplateNameDialog();
+    else if (ev.key === "Enter" && ev.target && ev.target.id === "tplNameInput") { ev.preventDefault(); submitTemplateName(); }
+  });
+  document.body.appendChild(o);
+  var inp = document.getElementById("tplNameInput");
+  inp.value = pre; inp.focus(); inp.select();
+  tplNameChanged();
+}
+function closeTemplateNameDialog() { var o = document.getElementById("tplNameOverlay"); if (o) o.remove(); }
+function tplNameChanged() {
+  var inp = document.getElementById("tplNameInput"); if (!inp) return;
+  var v = inp.value.trim(), lv = v.toLowerCase();
+  var dup = !!v && (commTemplates || []).some(function (t) { return String(t.name || "").trim().toLowerCase() === lv; });
+  document.getElementById("tplNameDup").textContent = dup ? "A template called \u2018" + v + "\u2019 already exists. Saving makes a second one." : "";
+  document.getElementById("tplNameSave").disabled = !v;
+}
+function submitTemplateName() {
+  var inp = document.getElementById("tplNameInput"); if (!inp) return;
+  var name = inp.value.trim(); if (!name) { inp.focus(); return; }
+  closeTemplateNameDialog();
+  commTplNotice = null;
+  commTplBusy = { id: composerTemplate ? composerTemplate.id : null, at: composerTemplate ? composerTemplate.updatedAt : null };
+  paintDraftState();
+  saveCommuniqueTemplateNow(name, true);
+}
+
+// Templates sub-tab
+function openTemplatesList() {
+  var list = document.getElementById("commTemplatesList");
+  if (list && !commTemplates.length) list.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading templates\u2026</p></div>';
+  else renderCommTemplates();
+  loadCommuniqueTemplates(renderCommTemplates);
+}
+function renderCommTemplates() {
+  paintDraftState();   // keeps the composer strip in step after a delete
+  var list = document.getElementById("commTemplatesList"); if (!list) return;
+  var rows = commTemplates || [];
+  if (!rows.length) {
+    list.innerHTML = '<div class="empty-pane">No templates yet.<div style="font-family:var(--f-sans);font-style:normal;font-size:12.5px;color:var(--ink-500);margin-top:8px">Write a message you\u2019ll send again, like the new chorale year email, and choose \u201cSave as template\u201d.</div></div>';
+    return;
+  }
+  list.innerHTML = '<p class="tpl-intro">Messages to send again, A\u2013Z. <b>Use</b> loads a copy into the composer; the template stays as it is.</p>'
+                 + rows.map(commTemplateRowHtml).join("");
+}
+function commTemplateRowHtml(t) {
+  var cur = !!composerTemplate && composerTemplate.id === t.id, id = esc(t.id);
+  var meta = ["By " + esc(t.mine ? "you" : (t.ownerName || t.ownerEmail || "\u2014"))];
+  var rc = draftRecipients(t); if (rc) meta.push(esc(rc));
+  if (t.attachmentCount) meta.push(t.attachmentCount + " attachment" + (t.attachmentCount === 1 ? "" : "s"));
+  meta.push("Updated " + esc(t.updatedLabel || "\u2014"));
+  return '<div class="tpl-row' + (cur ? ' is-current' : '') + '">'
+    + '<div class="tpl-main">'
+    +   '<div class="tpl-name">' + esc(t.name || "Untitled template") + '</div>'
+    +   '<div class="tpl-subject"><span class="k">Subject</span>' + (t.subject ? esc(t.subject) : '<span style="color:var(--ink-400);font-weight:500;font-style:italic">No subject</span>') + '</div>'
+    +   (t.corrupt ? '<div class="draft-corrupt">This template couldn\u2019t be read. It can only be deleted.</div>'
+                   : (t.preview ? '<div class="draft-preview">' + esc(t.preview) + '</div>' : ''))
+    +   '<div class="draft-meta">' + meta.map(function (m) { return '<span>' + m + '</span>'; }).join('') + '</div>'
+    + '</div>'
+    + '<div class="tpl-side">'
+    +   (cur ? '<span class="draft-here">' + (composerTemplate.editing ? 'Editing' : 'In composer') + '</span>' : '')
+    +   '<div class="tpl-acts">'
+    +     (t.canEdit ? '<button type="button" class="sched-cancel" data-write onclick="commTemplateDelete(\'' + id + '\')">Delete</button>' : '')
+    +     (t.canEdit && !t.corrupt ? '<button type="button" class="btn-export" data-write onclick="openCommuniqueTemplate(\'' + id + '\', true)">Edit</button>' : '')
+    +     (!t.corrupt ? '<button type="button" class="btn-export cdc-strong" onclick="openCommuniqueTemplate(\'' + id + '\', false)">Use</button>' : '')
+    +   '</div>'
+    + '</div></div>';
+}
+function commTemplateDelete(id) {
+  var t = (commTemplates || []).filter(function (x) { return x.id === id; })[0]; if (!t) return;
+  deleteCommuniqueTemplateNow(id, t.name || "Untitled template");
 }
 
 // ═════════════════════════════════════════════════════════════════
