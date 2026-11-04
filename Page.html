@@ -1072,7 +1072,7 @@ body:has(#changesBar) #tab-view, body:has(#changesBar) #tab-sessions { padding-b
 .bbtn:active { transform: translateY(0); }
 .bbtn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 .bbtn--accent { background: color-mix(in srgb, var(--accent) 85%, #000); color: var(--on-accent); border-color: color-mix(in srgb, var(--accent) 72%, #000); } /* theme-lint: allow — #000 as a color-mix darkener. 85% keeps white text ≥4.5:1 on every server accent (D13). */
-.bbtn--accent:hover { filter: brightness(1.06); }
+.bbtn--accent:hover { filter: brightness(0.94); }
 
 .bperson__edit { display: none; margin-top: 16px; }
 .bperson.editing .bperson__edit { display: block; }
@@ -2153,6 +2153,59 @@ body.year-archived #dashRangeSeg [data-range="month"] { display: none !important
 .mtg-edit-note { font-size: 11.5px; color: var(--ink-500); line-height: 1.5; margin: 2px 0 12px; }
 .mtg-edit-acts { display: flex; justify-content: flex-end; gap: 8px; }
 .checkbox-label.is-locked { opacity: .4; cursor: default; }
+
+/* ═════════════════════════════════════════════════════════════════
+   BACKEND UPDATE · 3 NOV 2026
+   ═════════════════════════════════════════════════════════════════ */
+/* Communiqué templates: Compose · Drafts · Templates · Scheduled */
+#tab-communique .comm-subtabs { max-width: 600px; }
+@media (max-width: 520px) { #tab-communique .comm-subtab { padding: 9px 4px; gap: 5px; font-size: 12.5px; } }
+.tpl-tag { font-family: var(--f-mono); font-size: 8.5px; font-weight: 700; letter-spacing: .14em; padding: 2px 6px; border-radius: 3px; color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink-400); }
+.comm-draft-strip b { font-weight: 600; color: var(--ink); }
+.comm-draft-strip.is-tpl-edit { background: var(--surface); border-color: var(--ink-300); }
+.cds-acts { flex-basis: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.cds-acts .btn-export:disabled { opacity: .45; }
+.comm-tpl-notice { margin: -8px 0 16px; }
+#communiqueContent .comm-actions { flex-wrap: wrap; }
+#communiqueContent .comm-actions #btnSendComm { flex: 1 1 200px; }
+#communiqueContent #btnSaveTemplate { padding: 12px 18px; font-size: 13.5px; white-space: nowrap; }
+#communiqueContent #btnSaveTemplate:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 560px) {
+  #communiqueContent .comm-actions #btnSendComm { flex-basis: 100%; }
+  #communiqueContent #btnSaveDraft, #communiqueContent #btnSaveTemplate { flex: 1 1 0; padding-left: 10px; padding-right: 10px; }
+}
+#commTemplatesList { max-width: 780px; }
+.tpl-intro { font-size: 12.5px; line-height: 1.5; color: var(--ink-600); margin: 0 2px 14px; max-width: 560px; text-wrap: pretty; }
+.tpl-intro b { color: var(--ink); font-weight: 600; }
+.tpl-row { display: flex; align-items: flex-start; gap: 16px; padding: 16px 18px; background: var(--surface); border: 1px solid var(--paper-200); border-radius: 12px; margin-bottom: 10px; }
+.tpl-row.is-current { border-color: var(--ink); }
+.tpl-main { flex: 1; min-width: 0; }
+.tpl-name { font-family: var(--f-display); font-style: italic; font-size: 22px; line-height: 1.1; color: var(--ink); overflow-wrap: anywhere; }
+.tpl-subject { font-size: 13px; font-weight: 600; color: var(--ink-700); line-height: 1.35; margin-top: 7px; overflow-wrap: anywhere; }
+.tpl-subject .k { font-family: var(--f-mono); font-size: 9px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-400); margin-right: 7px; }
+.tpl-row .draft-meta > span { white-space: nowrap; }
+.tpl-side { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 9px; }
+.tpl-acts { display: flex; gap: 6px; }
+@media (max-width: 600px) {
+  .tpl-row { flex-direction: column; gap: 12px; padding: 14px 15px; }
+  .tpl-side { width: 100%; flex-direction: row; align-items: center; justify-content: flex-end; }
+  .tpl-side .draft-here { margin-right: auto; }
+  .tpl-name { font-size: 20px; }
+}
+.tpl-dialog { max-width: 440px; }
+.tpl-dialog .form-group { margin-bottom: 8px; }
+.tpl-dlg-dup { font-size: 11.5px; line-height: 1.45; color: var(--gold-700); margin-top: 6px; }
+.tpl-dlg-dup:empty { display: none; }
+.tpl-dlg-note { font-size: 11.5px; line-height: 1.5; color: var(--ink-500); margin: 0 0 18px; text-wrap: pretty; }
+.tpl-dialog .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+.tpl-dialog .dialog-actions .btn { white-space: nowrap; }
+.ny-running { margin-top: 12px; padding: 12px 14px; border-radius: 10px; background: var(--paper-100); border: 1px solid var(--paper-200); font-size: 13px; line-height: 1.5; color: var(--ink-700); }
+.ny-running b { color: var(--ink); font-weight: 700; }
+/* Chorale year: Start while the rollover runs (about 3 minutes) */
+#btnStartYear { white-space: nowrap; }
+.ny-go #btnStartYear[aria-busy="true"] { opacity: .7; cursor: progress; }
+.ny-info { margin-top: 12px; display: flex; align-items: flex-start; gap: 10px; padding: 11px 14px; border-radius: 10px; background: var(--paper-100); border: 1px solid var(--paper-300); font-size: 12.5px; line-height: 1.5; color: var(--ink-700); }
+.ny-info-mark { width: 20px; height: 20px; flex-shrink: 0; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; font-family: var(--f-display); font-style: italic; font-size: 14px; line-height: 1; color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink-400); margin-top: 1px; }
 </style>
 </head>
 <body>
@@ -3021,6 +3074,7 @@ body.year-archived #dashRangeSeg [data-range="month"] { display: none !important
         <div class="comm-subtabs">
           <button type="button" class="comm-subtab is-active" id="commSubtabCompose" onclick="showCommSubtab('compose')">Compose</button>
           <button type="button" class="comm-subtab" id="commSubtabDrafts" onclick="showCommSubtab('drafts')">Drafts <span class="comm-subtab-count" id="commDraftsCount" style="display:none">0</span></button>
+          <button type="button" class="comm-subtab" id="commSubtabTemplates" onclick="showCommSubtab('templates')">Templates</button>
           <button type="button" class="comm-subtab" id="commSubtabScheduled" onclick="showCommSubtab('scheduled')">Scheduled <span class="comm-subtab-count" id="commScheduledCount" style="display:none">0</span></button>
         </div>
         <div id="commComposePane">
@@ -3035,6 +3089,9 @@ body.year-archived #dashRangeSeg [data-range="month"] { display: none !important
         </div>
         <div id="commDraftsPane" style="display:none">
           <div id="commDraftsList"><div class="empty-pane">No drafts.</div></div>
+        </div>
+        <div id="commTemplatesPane" style="display:none">
+          <div id="commTemplatesList"><div class="empty-pane">No templates yet.</div></div>
         </div>
         <div id="commScheduledPane" style="display:none">
           <div id="commScheduledList"><div class="empty-pane">Nothing scheduled yet.</div></div>
