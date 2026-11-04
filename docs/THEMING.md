@@ -285,6 +285,7 @@ added before the change lands (D12): it only applies once the files being checke
 | **D8:** the five emergency marks (`.em-tag`, `.em-callout-mark`, `.req-emergency-count`, `.em-door-mark`, `.apol-emhint-mark`) → `--crimson-fill` + `--on-accent` | Design, 28 Oct (`DESIGN-reply-post-merge.md` §1) | their text `#FBF7EE` → `#fff`; nothing else |
 | **D12** (landed in `33bf48d`): D8 extended to the two emergency badges built in JS, the Requests queue pill (`pillBg`/`pillFg`, `Scripts.html` ~L1085) and the apology detail badge (`badgeBg`/`badgeFg`, ~L1196) → `--crimson-fill` + `--on-accent` | The user, 29 Oct, for Design | their text `#FBF7EE` → `#fff`; nothing else (`--crimson-fill` equals `--crimson` in light). Two entries, one per badge, so each retires on its own |
 | **D13** (landed in `33bf48d`): the birthday accent buttons (`.bbtn--accent`: "Send card", "Copy") → fill `color-mix(in srgb, var(--accent) 85%, #000)`, border mix 76% → 72% | Design, 29 Oct (`DESIGN-reply-D12-D13.md`), on the §7 step 4 finding | fill and border darken on all seven accents; text, stripe, washes and email unchanged. White text goes from 3.39–7.00:1 to 4.52–8.67:1, the same in both themes |
+| **D14** (landed in `4b7f9a4`): `.bbtn--accent:hover` darkens, `filter: brightness(1.06)` → `brightness(0.94)` | The user, 4 Nov, for Design's 3 Nov drop | the birthday "Send card" and "Copy" buttons on hover only; nothing changes at rest. Checked with a hover screen (`birthdays-hover`) |
 
 **Retired tokens.** `--on-inverse`, `--on-inverse-muted`, `--on-inverse-line`,
 `--on-inverse-accent` and `--inverse-raised` were removed from both token blocks in the `e9fd14c`
@@ -412,7 +413,7 @@ Dev-only tooling in `tools/theme/`. These are `.cjs` files, so `clasp push` neve
 | --------- | -------- |
 | `node tools/theme/lint.cjs` | Colour literals outside allowed regions (rule 1). Exit 1 if any. `--summary` for counts. |
 | `node tools/theme/lint.cjs --since <sha>` | Literals on lines added since `<sha>`, plus the judgment calls (rules 3–5, §3a). |
-| `node tools/theme/render.cjs [--scenario admin\|member\|member-failed\|superadmin]` | Light pixel-identical to `origin/main` (admin 29 screens, member 13, member-failed 3, superadmin 13; phone and desktop). Screens can set fixture state (role, year, `myApology`) and boot fresh; any screen still on a spinner or "Loading…" is reported, the `DARK_READY` gate holds (checked only while it's `false`), and dark screenshots for review. |
+| `node tools/theme/render.cjs [--scenario admin\|member\|member-failed\|superadmin]` | Light pixel-identical to `origin/main` (admin 44 screens, member 17, member-failed 3, superadmin 13; phone and desktop). Screens can set fixture state (role, year, `myApology`, `emergency`, `birthdays`, `yearStart`, `tplSave`) and boot fresh, hover a selector (`hover`), or show a call still in flight (a fixture returns `HOLD`; the screen is marked `waiting`); any screen still on a spinner or "Loading…" is reported, the `DARK_READY` gate holds (checked only while it's `false`), and dark screenshots for review. |
 
 **Allowed regions** are marked in the source rather than listed in the tool, so they move with
 the code: `theme-lint: off` … `theme-lint: on` around a block, or `theme-lint: allow` on one
