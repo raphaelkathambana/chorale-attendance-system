@@ -283,6 +283,37 @@ const BIRTHDAY_BANNER = BIRTHDAYS.filter(b => b.daysAway === 0).map(b => ({ name
   accent: b.accent, avatar: b.avatar, message: b.email === SELF.email ? "Happy birthday, " + b.first + "! The whole Chorale is celebrating you today."
     : "It’s " + b.first + "’s birthday today — wish them well at practice." }));
 
+// Communiqué templates (backend 3 Nov). Ids start "tpl_" like the backend's; the list comes back A–Z by
+// name. One is the viewer's, two are someone else's, so a section admin sees rows with and without Edit.
+const TEMPLATES = [
+  { id: "tpl_1", name: "Concert dress code", subject: "Concert dress code for Saturday", owner: SELF, recipientType: "all", groups: [],
+    body: "<p>Dear {first name},</p><p>For Saturday's concert please wear the full black uniform with the gold scarf. Call time is 4 PM at the main hall.</p>",
+    attachments: [{ id: "f1", name: "Uniform guide.pdf", mimeType: "application/pdf", sizeBytes: 182000, sizeMB: 0.17, url: "https://drive.google.com/file/d/f1" }],
+    updatedAt: Date.parse("2026-10-12T10:20:00+03:00"), updatedLabel: "Mon 12 Oct · 10:20" },
+  { id: "tpl_2", name: "New chorale year welcome", subject: "Welcome to the {year} chorale year", owner: { name: "Esther Njeri", email: email("Esther Njeri") },
+    recipientType: "all", groups: [], attachments: [],
+    body: "<p>Dear {first name},</p><p>Welcome back! Rehearsals start on Wednesday at 6 PM. Please update your details on the app before then.</p>",
+    updatedAt: Date.parse("2026-10-09T15:41:00+03:00"), updatedLabel: "Fri 9 Oct · 15:41" },
+  { id: "tpl_3", name: "Sectional reminder", subject: "", owner: { name: "Esther Njeri", email: email("Esther Njeri") }, recipientType: "groups", groups: ["Orchestra"],
+    body: "<p>Reminder: the Thursday sectional is in the music room.</p>", attachments: [],
+    updatedAt: Date.parse("2026-10-02T09:05:00+03:00"), updatedLabel: "Fri 2 Oct · 09:05" },
+];
+// canEdit: the owner or a full admin (canManageDraft_ in Code.js).
+const tplCanEdit = (t, fullAdmin) => fullAdmin || t.owner.email === SELF.email;
+const templateRow = (t, fullAdmin) => {
+  const text = t.body.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  return { id: t.id, name: t.name, subject: t.subject, preview: text.length > 140 ? text.slice(0, 137) + "..." : text,
+    ownerEmail: t.owner.email, ownerName: t.owner.name, mine: t.owner.email === SELF.email, canEdit: tplCanEdit(t, fullAdmin), corrupt: false,
+    recipientType: t.recipientType, groups: t.groups, attachmentCount: t.attachments.length, updatedLabel: t.updatedLabel, updatedAt: t.updatedAt };
+};
+const templateFull = (t, fullAdmin) => ({ id: t.id, kind: "template", ownerEmail: t.owner.email, ownerName: t.owner.name, mine: t.owner.email === SELF.email,
+  updatedAt: t.updatedAt, updatedLabel: t.updatedLabel, missingAttachments: 0, name: t.name, canEdit: tplCanEdit(t, fullAdmin),
+  payload: { subject: t.subject, body: t.body, recipientType: t.recipientType, groups: t.groups, members: [], attachments: t.attachments, templateName: t.name } });
+
+// Returned by a fixture to leave the call in flight: render.cjs never answers it, so the screen shows its
+// waiting state (e.g. Start on the Chorale year page while the rollover runs).
+const HOLD = { __hold: true };
+
 const DETAILS_FULL = { admissionNumber: "140370", courseFaculty: "SCES", courseName: "BBIT", nationality: "Kenyan", choirPart: "Bass", instruments: "",
   nokName: "Mary Otieno", nokPhone: "+254 722 000111", nokRelationship: "Mother", nokResidence: "Kisumu", residence: "Madaraka", dateOfBirth: "2004-03-18",
   phoneNumber: "+254 711 222333", passportNumber: "AK1234567", nationalIdNumber: "34567890", gender: "M", yearOfStudy: "3", memberStatus: "On Hiatus" };
@@ -290,7 +321,8 @@ const REDACTED_FOR_SECTION_ADMINS = ["passportNumber", "nationalIdNumber", "nokN
 
 // scenario: "admin" | "member" | "member-failed" | "superadmin".
 // state (set per screen by render.cjs, read lazily): { role: "sectionAdmin", year: "before"|"available"|"pending",
-//   myApology: <MY_APOLOGY key>, emergency: "prominent"|"hidden", birthdays: "banner" }
+//   myApology: <MY_APOLOGY key>, emergency: "prominent"|"hidden", birthdays: "banner",
+//   yearStart: "running"|"already" (Start in flight / pressed again), tplSave: "stale" (update refused) }
 function fixtures(scenario, state) {
   state = state || {};
   const isMember = scenario === "member" || scenario === "member-failed";
@@ -375,17 +407,30 @@ function fixtures(scenario, state) {
     // Communiqué drafts
     getCommuniqueDrafts: () => DRAFTS,
     getCommuniqueDraft: id => { const d = DRAFTS.find(x => x.id === id) || DRAFTS[0];
-      return { id: d.id, ownerEmail: d.ownerEmail, ownerName: d.ownerName, mine: d.mine, updatedAt: d.updatedAt, updatedLabel: d.updatedLabel,
+      return { id: d.id, kind: "draft", ownerEmail: d.ownerEmail, ownerName: d.ownerName, mine: d.mine, updatedAt: d.updatedAt, updatedLabel: d.updatedLabel,
         payload: { subject: d.subject, body: d.preview, recipientType: d.recipientType, groups: d.groups, members: [], attachments: [] }, missingAttachments: 0 }; },
-    saveCommuniqueDraft: () => ({ success: true, id: "d1", updatedAt: Date.parse("2026-10-14T15:00:00+03:00"), updatedLabel: "Wed 14 Oct · 15:00" }),
+    saveCommuniqueDraft: () => ({ success: true, id: "d1", updatedAt: Date.parse("2026-10-14T15:00:00+03:00"), savedLabel: "Wed 14 Oct · 15:00" }),
     deleteCommuniqueDraft: () => ({ success: true }),
     deleteCommuniqueAttachment: () => ({ success: true, kept: false, reason: "" }),
+    // Communiqué templates. Only full admins edit others' templates; a section admin edits their own.
+    getCommuniqueTemplates: () => TEMPLATES.map(t => templateRow(t, state.role !== "sectionAdmin")),
+    getCommuniqueTemplate: id => { const t = TEMPLATES.find(x => x.id === id);
+      if (!t) throw new Error("Template not found - it may have been deleted."); return templateFull(t, state.role !== "sectionAdmin"); },
+    // state.tplSave = "stale": the update is refused as saved elsewhere, which shows the Save-as-new panel.
+    saveCommuniqueTemplate: tpl => {
+      if (state.tplSave === "stale" && tpl && tpl.id) throw new Error("This template was saved somewhere else (another tab, device or admin) at Wed 14 Oct · 14:52. " +
+        "Reopen it to get the latest version, or save yours as a new template.");
+      return { success: true, id: (tpl && tpl.id) || "tpl_4", updatedAt: Date.parse("2026-10-14T15:00:00+03:00"), savedLabel: "Wed 14 Oct · 15:00" };
+    },
     // Activity log
     getActivityLog: () => ({ entries: ACTIVITY, actions: [...new Set(ACTIVITY.map(e => e.action))].sort(), total: ACTIVITY.length }),
     // Chorale years
     getYearInfo: () => yearInfo(state, superAdmin),
     previewNewYear: () => newYearPlan(state),
-    startNewYear: label => ({ success: true, label: label || "2026/27", previousLabel: "2025/26", startsOn: "2026-11-01", customStart: false,
+    // state.yearStart = "running": Start stays in flight (the waiting state); "already": the backend's second-Start notice.
+    startNewYear: label => state.yearStart === "running" ? HOLD : state.yearStart === "already"
+      ? (() => { throw new Error("The new year is already being started - this takes a few minutes. Reload the page in a few minutes to see it."); })()
+      : ({ success: true, label: label || "2026/27", previousLabel: "2025/26", startsOn: "2026-11-01", customStart: false,
       archiveUrl: "https://docs.google.com/spreadsheets/d/archive-2025-26", backupUrl: "https://drive.google.com/file/d/backup-2025-26",
       summary: "1840 attendance rows archived · 2 probations carried", warnings: [], message: "Started 2026/27." }),
     // Dark mode plumbing: the server preference. render.cjs overrides it per mode.
@@ -396,4 +441,4 @@ function fixtures(scenario, state) {
   return fx;
 }
 
-module.exports = { fixtures, FIXED_NOW, MY_APOLOGY };
+module.exports = { fixtures, FIXED_NOW, MY_APOLOGY, HOLD };

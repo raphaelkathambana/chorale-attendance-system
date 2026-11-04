@@ -28,3 +28,7 @@
 /* accept: THEMING.md §3b D13 · birthday accent buttons (.bbtn--accent) fill accent → 85% accent + black, border mix 76% → 72%
    match: \.bbtn--accent\s*\{[^}]*background:\s*color-mix\(in srgb,\s*var\(--accent\)\s*85%,\s*#000\)[^}]*border-color:\s*color-mix\(in srgb,\s*var\(--accent\)\s*72%,\s*#000\) */
 .bbtn--accent { background: color-mix(in srgb, var(--accent) 85%, #000) !important; border-color: color-mix(in srgb, var(--accent) 72%, #000) !important; }
+
+/* accept: THEMING.md §3b D14 · birthday accent buttons (.bbtn--accent) on hover darken (brightness 1.06 → 0.94)
+   match: \.bbtn--accent:hover\s*\{[^}]*filter:\s*brightness\(0\.94\) */
+.bbtn--accent:hover { filter: brightness(0.94) !important; }
