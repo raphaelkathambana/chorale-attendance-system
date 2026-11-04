@@ -34,8 +34,10 @@ function loadPlaywright() {
 const VIEWPORTS = [{ id: "mobile", width: 390, height: 844 }, { id: "desktop", width: 1440, height: 960 }];
 // Each screen is reached the way a user would: the app's own navigation functions.
 //   go     a JS string, or a list of steps with a settle between each (e.g. load a list, then open an item)
-//   state  fixture state for this screen (fixtures.cjs: role, year, myApology, emergency, birthdays). A screen with state, or
-//          with fresh: true, boots the app fresh, and so does the screen after it, so nothing leaks.
+//   state  fixture state for this screen (fixtures.cjs: role, year, myApology, emergency, birthdays, yearStart, tplSave).
+//          A screen with state, or with fresh: true, boots the app fresh, and so does the screen after it, so nothing leaks.
+//   waiting  the screen's spinner is the state being checked (a call left in flight with HOLD), so don't report it as loading
+//   hover  a selector to hover before the screenshot. The mouse stays there, so hover screens go last in their list.
 const MY_APOLOGY_SCREENS = Object.keys(MY_APOLOGY).map(k => ({ id: "myatt-apology-" + k, state: { myApology: k }, go: "switchTab('myatt')" }));
 const SCREENS = {
   admin: [
@@ -80,6 +82,26 @@ const SCREENS = {
     { id: "birthdays-month", fresh: true, go: ["switchTab('birthdays')", "setBirthdayRange('month')"] },
     { id: "birthdays-edit", fresh: true, go: ["switchTab('birthdays')", "openBdayEdit('bp-amani_wanjiru_example_org')"] },
     { id: "birthday-banner", state: { birthdays: "banner" }, go: "switchTab('record')" },
+    // Communiqué templates (Design 3 Nov): the Templates sub-tab, a template loaded to use and to edit (with
+    // unsaved changes), its row marked as in the composer, the name dialog with the duplicate-name note,
+    // a refused update, and a section admin's list (Edit and Delete only on their own).
+    { id: "comm-templates", go: "switchTab('communique'); showCommSubtab('templates')" },
+    { id: "comm-template-use", fresh: true, go: ["switchTab('communique'); showCommSubtab('templates')", "openCommuniqueTemplate('tpl_1', false)"] },
+    { id: "comm-template-edit", fresh: true, go: ["switchTab('communique'); showCommSubtab('templates')", "openCommuniqueTemplate('tpl_2', true)",
+      "var s = document.getElementById('commSubject'); s.value += ' (updated)'; renderCommuniquePreview(); paintDraftState()"] },
+    { id: "comm-template-current", fresh: true, go: ["switchTab('communique'); showCommSubtab('templates')", "openCommuniqueTemplate('tpl_2', true)", "showCommSubtab('templates')"] },
+    { id: "comm-template-dialog", fresh: true, go: ["switchTab('communique')",
+      "document.getElementById('commSubject').value = 'Concert dress code'; openTemplateNameDialog('new')"] },
+    { id: "comm-template-refused", state: { tplSave: "stale" },
+      go: ["switchTab('communique'); showCommSubtab('templates')", "openCommuniqueTemplate('tpl_2', true)",
+        "var s = document.getElementById('commSubject'); s.value += ' (updated)'; renderCommuniquePreview(); paintDraftState()", "commUpdateTemplate()"] },
+    { id: "comm-templates-sectionadmin", state: { role: "sectionAdmin" }, go: "switchTab('communique'); showCommSubtab('templates')" },
+    // Chorale year: Start in flight (button busy, Approve/Reject disabled, the running note) and pressed a second time.
+    { id: "year-starting", state: { year: "pending", yearStart: "running" }, waiting: true,
+      go: ["openYearPage()", "nyTyped(yearInfo.nextLabel); startNewYearNow()"] },
+    { id: "year-start-again", state: { year: "available", yearStart: "already" }, go: ["openYearPage()", "nyTyped(yearInfo.nextLabel); startNewYearNow()"] },
+    // Last (it leaves the mouse there): a birthday "Send card" button hovered, the .bbtn--accent:hover change (§3b).
+    { id: "birthdays-hover", fresh: true, go: "switchTab('birthdays')", hover: "#bp-amani_wanjiru_example_org .bperson__actions .bbtn--accent" },
   ],
   member: [
     { id: "myatt", go: "switchTab('myatt')" },
@@ -152,6 +174,7 @@ const STUB = `<script>
       return function () {
         var args = [].slice.call(arguments); window.__calls.push(name); window.__pending++;
         window.__callServer(name, JSON.stringify(args)).then(function (res) {
+          if (res.hold) { window.__pending--; return; }   // fixtures HOLD: left in flight on purpose
           setTimeout(function () {
             try { res.error ? (fail && fail(new Error(res.error))) : (ok && ok(res.value)); }
             catch (e) { window.__handlerErrors.push(name + ": " + e.message); }
@@ -191,7 +214,8 @@ async function renderAll(browser, html, label, mode, screens, out, extraCss) {
       try {
         if (name === "getUserRole") return { value: Object.assign({}, fn(), { theme: m.serverTheme }) };
         if (!fn) return { value: /^(get|list|count)/.test(name) ? [] : { success: true } };
-        return { value: fn.apply(null, JSON.parse(argsJson)) };
+        const value = fn.apply(null, JSON.parse(argsJson));
+        return value && value.__hold === true ? { hold: true } : { value };
       } catch (e) { return { error: e.message }; }
     });
     // Settled = no call in flight and no NEW call for 400 ms (outlasts the 220 ms debounces),
@@ -223,6 +247,7 @@ async function renderAll(browser, html, label, mode, screens, out, extraCss) {
         await settle();
       }
       await p.evaluate(() => window.scrollTo(0, 0));
+      if (s.hover) { await p.hover(s.hover); await p.waitForTimeout(300); }   // past the .12s transitions
       // A screen still loading checked nothing: say so, so a missing fixture can't pass as a green run.
       const loading = await p.evaluate(() => {
         const vis = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length) && getComputedStyle(el).visibility !== "hidden";
@@ -232,7 +257,7 @@ async function renderAll(browser, html, label, mode, screens, out, extraCss) {
           .filter(el => el.classList.contains("spinner") || /^(loading|checking)\b|\u2026\s*$/i.test((el.textContent || "").trim()));
         return busy.length ? ((busy[0].closest(".loading") || busy[0]).textContent || "").trim().slice(0, 60) || "spinner" : "";
       });
-      if (loading) log.push(`[${vp.id} ${s.id}] still loading: "${loading}"`);
+      if (loading && !s.waiting) log.push(`[${vp.id} ${s.id}] still loading: "${loading}"`);
       const shot = path.join(out, `${label.name}-${mode}-${vp.id}-${s.id}.png`);
       await p.screenshot({ path: shot, fullPage: true, animations: "disabled", caret: "hide" });
       shots[`${vp.id}-${s.id}`] = shot;
