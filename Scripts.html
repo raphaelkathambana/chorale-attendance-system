@@ -2630,6 +2630,8 @@ function renderMyAttendance(data) {
         +   '<span class="gold-rule"></span>'
         +   '<div class="display" style="font-size:36px">' + greet + ',<br>' + esc(firstName) + '.</div>';
   h +=   '</div>';
+  // Subscription line (§14b) — painted by paintMySubsNudge() once getMySubscription returns.
+  h += '<div id="mySubsNudge"></div>';
 
   // Probation outcome banner — passed
   if (data.probationPassed && !data.probationAcknowledged) {
@@ -2768,6 +2770,7 @@ function renderMyAttendance(data) {
 
   c.innerHTML = h;
   paintMyAttNextSession();
+  paintMySubsNudge();
 }
 
 // Short date — "Tue · 26 May" (no year)
@@ -3343,6 +3346,8 @@ function renderProfile() {
           ? 'Your access is view only, so this record can\u2019t be edited from here.'
           : 'Tap ✎ on your photo to change it. Phone updates instantly; faculty, course and year of study go to an admin for approval.')
       + '</div>'
+      // Subscription card (§14b): painted from the cached copy, refreshed by loadMySubscription().
+      + (noRecord ? '' : '<div id="mySubsCard">' + (mySubs ? mySubsCardHtml(mySubs) : '') + '</div>')
       + appearanceRowHtml()
       + '<div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--paper-200)">'
       +   '<button class="btn btn-secondary btn-block" onclick="signOut()" style="color:var(--crimson-600)">Sign out</button>'
@@ -3553,8 +3558,8 @@ function syncApologySlots() {
 // Mobile bottom-tabs can't hold 9 admin tabs — show these, fold the rest into a "More" sheet.
 var MOBILE_PRIMARY = ["record", "sessions", "members"];
 var PERSONAL_TAB_IDS = ["myatt"];   // desktop sidebar: split under a "Personal" heading
-var NAV_GLYPHS = { record: "\u270E", sessions: "\u274F", members: "\u25D0", probation: "\u25D4", requests: "\u21CC", dashboard: "\u25A6", view: "\u229F", communique: "\u2709", birthdays: "\u2740", myatt: "\u25C9", apology: "\u2709" };
-var NAV_HINTS = { record: "Mark tonight", sessions: "Recorded sessions", members: "Roster & standings", probation: "New-member pipeline", requests: "Approvals", dashboard: "Section analytics", view: "Past sessions", communique: "Email members", birthdays: "Celebrations", myatt: "This term", apology: "Submit apology" };
+var NAV_GLYPHS = { record: "\u270E", sessions: "\u274F", members: "\u25D0", probation: "\u25D4", requests: "\u21CC", dashboard: "\u25A6", view: "\u229F", subscriptions: "\u00A4", communique: "\u2709", birthdays: "\u2740", myatt: "\u25C9", apology: "\u2709" };
+var NAV_HINTS = { record: "Mark tonight", sessions: "Recorded sessions", members: "Roster & standings", probation: "New-member pipeline", requests: "Approvals", dashboard: "Section analytics", view: "Past sessions", subscriptions: "Fees & payments", communique: "Email members", birthdays: "Celebrations", myatt: "This term", apology: "Submit apology" };
 var moreTabIds = [];
 
 function navBtnHtml(t, active) {
@@ -3863,7 +3868,8 @@ function isManagement()   { return userRole === "admin" || userRole === "section
 function sectionAllowed(g) { return isFullAdmin() || userAccess.allowedSections.indexOf(g) !== -1; }
 // Elevated reps have no Requests queue — their register is record-only.
 function activeTabs() {
-  if (!userAccess.isAdminLike) return memberTabs;
+  // A Treasurer can be an ordinary member: they get the Subscriptions tab beside My attendance.
+  if (!userAccess.isAdminLike) return memberTabs.concat(subsCaps().canView ? adminTabs.filter(function (t) { return t.id === "subscriptions"; }) : []);
   // Birthdays is full-admin only; elevated reps also lose Requests.
   return adminTabs.filter(function (t) {
     if (t.id === "birthdays") return isFullAdmin();
@@ -3881,6 +3887,8 @@ function activeTabs() {
     if (t.id === "communique") return !isReadOnly();
     // No Members row → no personal attendance page.
     if (t.id === "myatt")     return isMemberAccount();
+    // Subscriptions (§14): full admins, Super Admin, section admins, reps (their section) and the Treasurer.
+    if (t.id === "subscriptions") return !!subsCaps().canView;
     return true;
   });
 }
@@ -3960,7 +3968,7 @@ function applyReadOnlyUI() {
 
 // Apology is NOT a top-level tab — it is a sub-page reached from My attendance
 // (keeps "My attendance" active in the nav, like the Profile sub-page).
-var adminTabs  = [{ id: "record", label: "Record" }, { id: "sessions", label: "Sessions" }, { id: "members", label: "Members" }, { id: "probation", label: "Probation", short: "Prob." }, { id: "requests", label: "Requests", short: "Reqs" }, { id: "dashboard", label: "Group Dashboard", short: "Stats" }, { id: "communique", label: "Communiqué", short: "Send" }, { id: "birthdays", label: "Birthdays", short: "Bdays" }, { id: "activity", label: "Activity log", short: "Log" }, { id: "year", label: "Chorale year", short: "Year" }, { id: "myatt", label: "My attendance", short: "Mine" }];
+var adminTabs  = [{ id: "record", label: "Record" }, { id: "sessions", label: "Sessions" }, { id: "members", label: "Members" }, { id: "probation", label: "Probation", short: "Prob." }, { id: "requests", label: "Requests", short: "Reqs" }, { id: "dashboard", label: "Group Dashboard", short: "Stats" }, { id: "subscriptions", label: "Subscriptions", short: "Subs" }, { id: "communique", label: "Communiqué", short: "Send" }, { id: "birthdays", label: "Birthdays", short: "Bdays" }, { id: "activity", label: "Activity log", short: "Log" }, { id: "year", label: "Chorale year", short: "Year" }, { id: "myatt", label: "My attendance", short: "Mine" }];
 var memberTabs = [{ id: "myatt", label: "My attendance", short: "Attendance" }];
 
 google.script.run.withSuccessHandler(function (r) {
@@ -3980,7 +3988,9 @@ google.script.run.withSuccessHandler(function (r) {
     isMember: (r.isMember !== undefined) ? !!r.isMember : true,
     // Chorale years (§12a): past-year views and the November rollover.
     canViewPastYears: !!r.canViewPastYears,
-    canStartNewYear: !!r.canStartNewYear
+    canStartNewYear: !!r.canStartNewYear,
+    // Subscriptions (§14): { canView, canAct, canAppoint, scope, section, treasurerPaused }
+    subscriptions: r.subscriptions || {}
   };
   if (userAccess.readOnly) applyReadOnlyUI();
   // Globals read by emailDeniedAdmin() (§11). adminContactEmail comes from the
@@ -4017,6 +4027,8 @@ google.script.run.withSuccessHandler(function (r) {
   // Super Admin (whose first tab is Sessions — there is no Record tab for a
   // view-only role) saw the static pre-wiring demo instead of getSessionsList().
   switchTab(firstTab);
+  // Subscription line on My attendance (§14b). Quiet: nothing to show is not an error.
+  if (isMemberAccount() && !isReadOnly()) loadMySubscription(null, true);
 }).withFailureHandler(function (e) {
   document.getElementById("authScreen").style.display = "none";
   document.getElementById("deniedScreen").style.display = "block";
@@ -4202,7 +4214,7 @@ function switchTab(tab) {
   for (var j = 0; j < sBtns.length; j++) sBtns[j].classList.toggle("active", sBtns[j].getAttribute("data-tab") === navTab);
 
   // Hide all tab pages
-  var allPages = ["record", "sessions", "dashboard", "probation", "requests", "view", "members", "communique", "birthdays", "activity", "myatt", "apology", "profile", "year", "yeargate"];
+  var allPages = ["record", "sessions", "dashboard", "probation", "requests", "view", "members", "subscriptions", "communique", "birthdays", "activity", "myatt", "apology", "profile", "year", "yeargate"];
   for (var p = 0; p < allPages.length; p++) {
     var el = document.getElementById("tab-" + allPages[p]);
     if (el) el.classList.remove("active");
@@ -4236,7 +4248,8 @@ function switchTab(tab) {
   if (tab === "members")          { if (!isArchiveView() && (!memberListData || memberListData.length === 0)) refreshMemberList(); setMembersMode(activeMembersMode()); }
   if (tab === "activity"          && !activityLoaded)  loadActivityLog();
   if (tab === "year")             loadYearPage();
-  if (tab === "profile")          { profileMode = "view"; loadProfile(); }
+  if (tab === "profile")          { profileMode = "view"; loadProfile(); if (isMemberAccount()) loadMySubscription(null, true); }
+  if (tab === "subscriptions")    loadSubscriptions();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -7520,6 +7533,7 @@ function showCommSubtab(which){
   }
   if(which==="scheduled")loadScheduledEmails();
   if(which==="drafts")loadCommuniqueDrafts();
+  if(which!=="templates")commTplJustSaved=null;
   if(which==="templates")openTemplatesList();
 }
 
@@ -8978,9 +8992,8 @@ function deleteDraft(id) {
 }
 
 // ─── 12e. COMMUNIQUÉ TEMPLATES (backend 3 Nov 2026) ──────────────────────
-// The LOGIC block is the backend's, pasted verbatim with one change: the failure
-// handler in saveCommuniqueTemplateNow() asks commTemplateRefused(e) first, so a
-// refused update gets the "Save as new template" panel the way drafts do.
+// saveCommuniqueTemplateNow() hands its result to the render code below:
+// commTemplateSaved(r, asNew) on success, commTemplateRefused(e) on failure.
 // ─── TEMPLATES (backend 3 Nov) ───────────────────────────────────────────
 // "Use" loads a COPY: composerDraft stays empty, so Save draft makes a new draft
 // and sending never touches the template. "Edit" (owner or full admin) loads it
@@ -9016,6 +9029,7 @@ function saveCommuniqueTemplateNow(name, asNew) {
     composerTemplate = { id: r.id, name: p.templateName, updatedAt: r.updatedAt, editing: true };
     commMarkClean();
     loadCommuniqueTemplates(function () { if (typeof renderCommTemplates === "function") renderCommTemplates(); });
+    commTemplateSaved(r, asNew);
   }).withFailureHandler(function (e) { if (!commTemplateRefused(e)) showToast(serverError(e), "error"); }).saveCommuniqueTemplate(p);
 }
 
@@ -9033,6 +9047,10 @@ function deleteCommuniqueTemplateNow(id, name) {
 var commTplBusy = null;      // { id, at } while a template save is in flight; cleared when composerTemplate moves on
 var commTplNotice = null;    // { msg, key, stale } refused update, shown under the strip
 var commTplStripSig = "";
+var commTplSaving = false;   // the name dialog is frozen while its save runs
+var commTplJustSaved = null; // id of the template just saved from the dialog, marked in the list
+var commTplInert = [];
+var commTplFinishing = false;
 
 // Strip for a composer loaded from a template. commDraftStripHtml() hands over to this.
 function commTemplateStripHtml() {
@@ -9064,7 +9082,7 @@ function commTemplateStripHtml() {
 // Called from paintDraftState(): repaints the strip only when the template state changes.
 function paintCommTemplateStrip(dirty) {
   var t = composerTemplate;
-  if (commTplBusy && (!t || t.id !== commTplBusy.id || t.updatedAt !== commTplBusy.at)) commTplBusy = null;
+  if (commTplBusy && !commTplSaving &&(!t || t.id !== commTplBusy.id || t.updatedAt !== commTplBusy.at)) commTplBusy = null;
   if (commTplNotice && (!t || commTplNotice.key !== t.id + "|" + t.updatedAt)) commTplNotice = null;
   var sb = document.getElementById("btnSaveTemplate"); if (sb) sb.disabled = !!commTplBusy;
   var sig = t ? [t.id, t.name, t.updatedAt, t.editing, !!dirty, !!commTplBusy, commTplNotice ? commTplNotice.msg : ""].join("|") : "";
@@ -9079,12 +9097,20 @@ function commUpdateTemplate() {
   paintDraftState();
   saveCommuniqueTemplateNow(null, false);
 }
-// The one addition to the LOGIC block's failure handler. A refused update (saved
-// somewhere else, deleted, someone else's) gets the panel with Save as new template,
-// as drafts do; anything else falls through to the toast.
+// A refused update (saved somewhere else, deleted, someone else's) gets the panel
+// with Save as new template, as drafts do; anything else falls through to the toast.
+// Returns true when the message is shown here (dialog or panel) instead of as a toast.
 function commTemplateRefused(e) {
+  var msg = serverError(e);
   commTplBusy = null;
-  var msg = serverError(e), t = composerTemplate;
+  // From the name dialog: unfreeze it and show the message there, so the name can be fixed or the save retried.
+  if (commTplSaving) {
+    tplDialogSaving(false);
+    var er = document.getElementById("tplNameErr"); if (er) er.textContent = msg;
+    paintDraftState();
+    return true;
+  }
+  var t = composerTemplate;
   var refused = !!t && /saved somewhere else|no longer exists|keep your own copy/i.test(msg);
   if (refused) commTplNotice = { msg: msg, key: t.id + "|" + t.updatedAt, stale: /saved somewhere else/i.test(msg) };
   paintDraftState();
@@ -9102,17 +9128,19 @@ function openTemplateNameDialog(mode) {
   var pre = (mode === "copy" && composerTemplate) ? (composerTemplate.name || "") : (subj ? subj.value.trim() : "");
   var o = document.createElement("div");
   o.className = "overlay"; o.id = "tplNameOverlay";
-  o.innerHTML = '<div class="dialog tpl-dialog" role="dialog" aria-modal="true" aria-labelledby="tplDlgTitle">'
+  o.innerHTML = '<div class="dialog tpl-dialog" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="tplDlgTitle">'
     + '<h3 id="tplDlgTitle">' + (mode === "copy" ? "Save as new template" : "Save as template") + '</h3>'
     + '<p>A template stays after you send it. Everyone who can send a communiqu\u00e9 can use it; only you and full admins can change it.</p>'
     + '<div class="form-group"><label class="form-label" for="tplNameInput">Template name</label>'
     +   '<input type="text" id="tplNameInput" class="form-input" maxlength="120" autocomplete="off" spellcheck="false" oninput="tplNameChanged()">'
     +   '<div class="tpl-dlg-dup" id="tplNameDup"></div></div>'
     + '<div class="tpl-dlg-note">Saves the subject, message, attachments, signature and recipients. A scheduled send time isn\u2019t kept.</div>'
-    + '<div class="dialog-actions"><button type="button" class="btn btn-secondary" onclick="closeTemplateNameDialog()">Cancel</button>'
-    +   '<button type="button" class="btn btn-primary" id="tplNameSave" onclick="submitTemplateName()">Save template</button></div></div>';
-  o.addEventListener("mousedown", function (ev) { if (ev.target === o) closeTemplateNameDialog(); });
+    + '<div class="tpl-dlg-err" id="tplNameErr" role="alert"></div>'
+    + '<div class="dialog-actions"><button type="button" class="btn btn-secondary" id="tplNameCancel" onclick="closeTemplateNameDialog()">Cancel</button>'
+    +   '<button type="button" class="btn btn-primary" id="tplNameSave" onclick="submitTemplateName()"><span class="tpl-spin" aria-hidden="true"></span><span id="tplNameSaveLbl">Save template</span></button></div></div>';
+  o.addEventListener("mousedown", function (ev) { if (ev.target === o && !commTplSaving) closeTemplateNameDialog(); });
   o.addEventListener("keydown", function (ev) {
+    if (commTplSaving) { if (ev.key === "Escape" || ev.key === "Enter") ev.preventDefault(); return; }
     if (ev.key === "Escape") closeTemplateNameDialog();
     else if (ev.key === "Enter" && ev.target && ev.target.id === "tplNameInput") { ev.preventDefault(); submitTemplateName(); }
   });
@@ -9121,18 +9149,61 @@ function openTemplateNameDialog(mode) {
   inp.value = pre; inp.focus(); inp.select();
   tplNameChanged();
 }
-function closeTemplateNameDialog() { var o = document.getElementById("tplNameOverlay"); if (o) o.remove(); }
+function closeTemplateNameDialog() {
+  if (commTplSaving) return;
+  var o = document.getElementById("tplNameOverlay"); if (o) o.remove();
+}
+// Freezes the dialog while the save runs: Save shows a spinner, Cancel, the name,
+// Escape and the backdrop do nothing, and the page behind it is inert.
+function tplDialogSaving(on) {
+  commTplSaving = !!on;
+  var o = document.getElementById("tplNameOverlay"); if (!o) return;
+  o.querySelector(".tpl-dialog").classList.toggle("is-saving", commTplSaving);
+  var inp = document.getElementById("tplNameInput"), sv = document.getElementById("tplNameSave");
+  inp.readOnly = commTplSaving;
+  document.getElementById("tplNameCancel").disabled = commTplSaving;
+  sv.disabled = commTplSaving || !inp.value.trim();
+  if (commTplSaving) sv.setAttribute("aria-busy", "true"); else sv.removeAttribute("aria-busy");
+  document.getElementById("tplNameSaveLbl").textContent = commTplSaving ? "Saving template\u2026" : "Save template";
+  if (commTplSaving) {
+    commTplInert = [].filter.call(document.body.children, function (c) { return c !== o && !c.inert && c.tagName !== "SCRIPT"; });
+    commTplInert.forEach(function (c) { c.inert = true; });
+    o.querySelector(".tpl-dialog").focus();
+  } else {
+    commTplInert.forEach(function (c) { c.inert = false; }); commTplInert = [];
+  }
+}
+// After a save from the name dialog: clear the composer and open the Templates tab
+// with the new template marked. Update template stays in the composer.
+function commTemplateSaved(r, asNew) {
+  if (!commTplSaving || commTplFinishing) return;
+  commTplFinishing = true;
+  var done = function () {
+    commTplFinishing = false;
+    composerDraft = { id: null, updatedAt: null }; commDraftOwner = ""; commDraftLabel = "";
+    composerTemplate = null; commTplBusy = null;
+    resetCommuniqueForm();
+    tplDialogSaving(false);
+    closeTemplateNameDialog();
+    commTplJustSaved = r.id;
+    showCommSubtab("templates");
+  };
+  google.script.run.withSuccessHandler(function (rows) { commTemplates = rows || []; done(); }).withFailureHandler(done).getCommuniqueTemplates();
+}
 function tplNameChanged() {
   var inp = document.getElementById("tplNameInput"); if (!inp) return;
   var v = inp.value.trim(), lv = v.toLowerCase();
   var dup = !!v && (commTemplates || []).some(function (t) { return String(t.name || "").trim().toLowerCase() === lv; });
   document.getElementById("tplNameDup").textContent = dup ? "A template called \u2018" + v + "\u2019 already exists. Saving makes a second one." : "";
   document.getElementById("tplNameSave").disabled = !v;
+  document.getElementById("tplNameErr").textContent = "";
 }
 function submitTemplateName() {
+  if (commTplSaving) return;
   var inp = document.getElementById("tplNameInput"); if (!inp) return;
   var name = inp.value.trim(); if (!name) { inp.focus(); return; }
-  closeTemplateNameDialog();
+  document.getElementById("tplNameErr").textContent = "";
+  tplDialogSaving(true);
   commTplNotice = null;
   commTplBusy = { id: composerTemplate ? composerTemplate.id : null, at: composerTemplate ? composerTemplate.updatedAt : null };
   paintDraftState();
@@ -9158,12 +9229,12 @@ function renderCommTemplates() {
                  + rows.map(commTemplateRowHtml).join("");
 }
 function commTemplateRowHtml(t) {
-  var cur = !!composerTemplate && composerTemplate.id === t.id, id = esc(t.id);
+  var cur = !!composerTemplate && composerTemplate.id === t.id, just = !cur && commTplJustSaved === t.id, id = esc(t.id);
   var meta = ["By " + esc(t.mine ? "you" : (t.ownerName || t.ownerEmail || "\u2014"))];
   var rc = draftRecipients(t); if (rc) meta.push(esc(rc));
   if (t.attachmentCount) meta.push(t.attachmentCount + " attachment" + (t.attachmentCount === 1 ? "" : "s"));
   meta.push("Updated " + esc(t.updatedLabel || "\u2014"));
-  return '<div class="tpl-row' + (cur ? ' is-current' : '') + '">'
+  return '<div class="tpl-row' + (cur ? ' is-current' : '') + (just ? ' is-just' : '') + '">'
     + '<div class="tpl-main">'
     +   '<div class="tpl-name">' + esc(t.name || "Untitled template") + '</div>'
     +   '<div class="tpl-subject"><span class="k">Subject</span>' + (t.subject ? esc(t.subject) : '<span style="color:var(--ink-400);font-weight:500;font-style:italic">No subject</span>') + '</div>'
@@ -9173,6 +9244,7 @@ function commTemplateRowHtml(t) {
     + '</div>'
     + '<div class="tpl-side">'
     +   (cur ? '<span class="draft-here">' + (composerTemplate.editing ? 'Editing' : 'In composer') + '</span>' : '')
+    +   (just ? '<span class="draft-here">Just saved</span>' : '')
     +   '<div class="tpl-acts">'
     +     (t.canEdit ? '<button type="button" class="sched-cancel" data-write onclick="commTemplateDelete(\'' + id + '\')">Delete</button>' : '')
     +     (t.canEdit && !t.corrupt ? '<button type="button" class="btn-export" data-write onclick="openCommuniqueTemplate(\'' + id + '\', true)">Edit</button>' : '')
@@ -9454,5 +9526,921 @@ function saveMeetingEdit(m, changes, btn) {
     if (isDuplicateNotice(e)) { showToast(e.message, "info"); return; }
     showToast(e.message, "error");
   }).updateMeeting(m.id, changes);
+}
+// ═════════════════════════════════════════════════════════════════
+//  14.  SUBSCRIPTIONS · STAGE 1 (backend 9 Nov 2026)
+//       14a Helpers · 14b Member card + My attendance line · 14c "I've paid"
+//       14d Commitment · 14e Subscriptions tab · 14f Treasurer tools
+//       14g Treasurer post (full admins)
+//  Access comes from getUserRole().subscriptions (userAccess.subscriptions):
+//    { canView, canAct, canAppoint, scope: "all" | "section", section, treasurerPaused }
+//  canAct is the Treasurer only. Everyone else with canView sees the tab read-only.
+// ═════════════════════════════════════════════════════════════════
+
+// ─── 14a. Helpers ─────────────────────────────────────────────────────────
+function subsCaps() { return (userAccess && userAccess.subscriptions) || {}; }
+function subsAttr(s) { return esc(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
+// 1070 → "Ksh 1,070"; 1070.5 → "Ksh 1,070.50"
+function subsKsh(n) {
+  var v = Math.round(Number(n || 0) * 100) / 100;
+  var p = v.toFixed(2).replace(/\.00$/, "").split(".");
+  p[0] = p[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return "Ksh\u00a0" + p.join(".");
+}
+// "2026-11-30" → "30 Nov 2026"; "2026-11-09 05:20" → "9 Nov 2026, 05:20" (midnight = a date only)
+function subsDate(s) {
+  s = String(s || "");
+  if (!s) return "";
+  var t = s.slice(11, 16);
+  return niceDay(s.slice(0, 10)) + (t && t !== "00:00" ? ", " + t : "");
+}
+function subsShort(s) { var p = yrParts(String(s || "").slice(0, 10)); return p ? Number(p[2]) + " " + YR_MON[Number(p[1]) - 1] : ""; }
+function subsPhone(n) { n = String(n || ""); return /^0\d{9}$/.test(n) ? n.slice(0, 4) + " " + n.slice(4, 7) + " " + n.slice(7) : n; }
+var SUBS_STATUSES = ["Paid", "Part paid", "Committed", "Due", "Unpaid", "Not due yet", "Not required", "On hiatus", "Inactive", "Not set up"];
+var SUBS_OWING = ["Paid", "Part paid", "Committed", "Due", "Unpaid"];
+var SUBS_TONE = { "Paid": "t-ok", "Confirmed": "t-ok", "Approved": "t-ok", "Part paid": "t-warn", "Pending": "t-warn",
+                  "Committed": "t-info", "Due": "t-due", "Unpaid": "t-bad", "Rejected": "t-bad" };
+function subsChip(st) { return '<span class="subs-chip ' + (SUBS_TONE[st] || "") + '">' + esc(st) + '</span>'; }
+// Why someone's due date isn't the general deadline (dueReason from the backend).
+function subsDueWhy(reason, forMember) {
+  var r = String(reason || "").replace(/,\s*corrected\)/, ")");
+  if (!r || r === "Deadline") return "";
+  if (/^Passed probation \(new member/.test(r)) return forMember ? "a month after you passed probation" : "new member";
+  if (/^Passed probation \(rejoined/.test(r))   return forMember ? "a month after you rejoined" : "rejoined";
+  if (/^Returned to active/.test(r))            return forMember ? "a month after you came back" : "came back";
+  return r;
+}
+// One overlay + dialog, closed by Cancel, Escape or the backdrop.
+function subsOpenDialog(id, html) {
+  subsCloseDialog(id);
+  var o = document.createElement("div");
+  o.className = "overlay"; o.id = id;
+  o.innerHTML = '<div class="dialog subs-dialog" role="dialog" aria-modal="true" aria-labelledby="' + id + 'Title">' + html + '</div>';
+  o.addEventListener("mousedown", function (ev) { if (ev.target === o) subsCloseDialog(id); });
+  o.addEventListener("keydown", function (ev) { if (ev.key === "Escape") subsCloseDialog(id); });
+  document.body.appendChild(o);
+  var first = o.querySelector("textarea, input, select");
+  if (first) setTimeout(function () { try { first.focus(); } catch (e) {} }, 30);
+  return o;
+}
+function subsCloseDialog(id) { var o = document.getElementById(id); if (o) o.remove(); }
+function subsCopy(btn) {
+  var text = btn.getAttribute("data-copy") || "";
+  copyTextToClipboard(text, function (ok) {
+    if (!ok) { showToast("Couldn’t copy — select the number instead.", "error"); return; }
+    var was = btn.textContent; btn.textContent = "Copied";
+    setTimeout(function () { btn.textContent = was; }, 1500);
+  });
+}
+// What was read from an M-Pesa message (member or Treasurer preview).
+function subsReadHtml(r) {
+  return '<div class="subs-read"><div class="amt">' + subsKsh(r.amount) + '</div>'
+    + '<div class="ln"><code>' + esc(r.code) + '</code> · ' + esc(subsDate(r.date + " " + r.time)) + '</div>'
+    + '<div class="ln">' + (r.kind === "received" ? "Received from " : "Sent to ") + esc(r.name) + ' · <span class="nw">' + esc(subsPhone(r.number)) + '</span></div></div>';
+}
+
+// ─── 14b. Member: the Subscription card (profile) ─────────────────────────
+// loadMySubscription(cb, quiet): quiet skips the error toast (the background load
+// for the My attendance line shouldn't complain).
+var mySubs = null;
+var mySubsScrollTo = false;
+function loadMySubscription(cb, quiet) {
+  google.script.run.withSuccessHandler(function (d) {
+    mySubs = d;
+    renderMySubscription(d);
+    if (cb) cb(d);
+  }).withFailureHandler(function (e) {
+    if (!quiet) showToast(serverError(e), "error");
+    var box = document.getElementById("mySubsCard");
+    if (box && !mySubs) box.innerHTML = "";
+  }).getMySubscription();
+}
+function withdrawMySubscriptionItem(id, btn) {
+  if (roBlock()) return;
+  var done = beginAction("subWithdraw", [btn], "Withdrawing…"); if (!done) return;
+  google.script.run.withSuccessHandler(function () { done(); showToast("Withdrawn.", "success"); loadMySubscription(); })
+    .withFailureHandler(function (e) { done(); showToast(serverError(e), "error"); }).withdrawSubscriptionItem(id);
+}
+function renderMySubscription(d) {
+  var box = document.getElementById("mySubsCard");
+  if (box) box.innerHTML = mySubsCardHtml(d);
+  paintMySubsNudge();
+  if (mySubsScrollTo && box && box.firstChild) {
+    mySubsScrollTo = false;
+    try { box.firstChild.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) {}
+  }
+}
+// From the My attendance line: open the profile and scroll to the card.
+function openMySubscription() { mySubsScrollTo = true; openProfile(); }
+
+function mySubsCardHtml(d) {
+  if (!d) return "";
+  var h = '<div class="card subs-card">'
+    + '<div class="subs-card-head"><div class="eyebrow">Subscription · ' + esc(d.year) + '</div>' + (d.ready ? subsChip(d.status) : "") + '</div>';
+  if (!d.ready) {
+    return h + '<div class="subs-quiet">Subscription details will appear here once the Treasurer has set them up.</div>' + mySubsHistoryHtml(d) + '</div>';
+  }
+  if (d.owes) {
+    var pct = d.fee ? Math.min(100, Math.round(d.paid * 100 / d.fee)) : 0;
+    h += '<div class="subs-amount"><span class="big">' + subsKsh(d.paid) + '</span><span class="of">paid of ' + subsKsh(d.fee) + '</span></div>'
+      +  '<div class="subs-bar' + (d.status === "Paid" ? "" : " is-part") + '"><span style="width:' + pct + '%"></span></div>';
+    if (d.status === "Paid") {
+      h += '<div class="subs-meta">You’re fully paid for ' + esc(d.year) + '. Thank you.</div>';
+    } else {
+      var late = d.status === "Unpaid", why = subsDueWhy(d.dueReason, true);
+      h += '<div class="subs-meta' + (late ? " is-late" : "") + '">Balance <b>' + subsKsh(d.balance) + '</b>'
+        +  (d.dueDate ? ' · ' + (late ? "was due " : "due ") + '<b>' + esc(subsDate(d.dueDate)) + '</b>' + (why ? " (" + esc(why) + ")" : "") : "")
+        +  '</div>';
+    }
+  } else {
+    h += '<div class="subs-quiet">' + mySubsNotOwingText(d) + '</div>';
+  }
+  if (d.pendingAmount > 0) h += '<div class="subs-note t-warn"><b>' + subsKsh(d.pendingAmount) + '</b> waiting for the Treasurer to confirm.</div>';
+  if (d.commitmentPending) h += '<div class="subs-note">Your commitment to pay is waiting for the Treasurer.</div>';
+  if (d.commitment && !d.commitment.lapsed && d.status !== "Paid") {
+    h += '<div class="subs-note">Committed to pay <b>' + subsKsh(d.commitment.amount) + '</b> by <b>' + esc(subsDate(d.commitment.payBy)) + '</b>.</div>';
+  }
+  if (d.commitment && d.commitment.lapsed && d.status === "Unpaid") {
+    h += '<div class="subs-note t-bad">Your commitment to pay by ' + esc(subsDate(d.commitment.payBy)) + ' has passed.</div>';
+  }
+  var payable = d.status !== "Paid" && d.status !== "Not required" && d.status !== "On hiatus" && d.status !== "Inactive";
+  if (payable) h += mySubsHowHtml(d);
+  if (payable && !isReadOnly()) {
+    h += '<div class="subs-acts"><button type="button" class="btn btn-primary" onclick="openSubPayDialog()">I’ve paid</button>'
+      +  (d.canCommit ? '<button type="button" class="btn btn-secondary" onclick="openSubCommitDialog()">Commit to pay</button>' : "")
+      +  '</div>';
+  }
+  return h + mySubsHistoryHtml(d) + '</div>';
+}
+function mySubsNotOwingText(d) {
+  var paid = d.paid > 0 ? " You’ve paid " + subsKsh(d.paid) + " so far." : "";
+  switch (d.status) {
+    case "Not due yet":  return "You’ll owe the " + esc(d.year) + " fee of " + subsKsh(d.fee) + ", due a month after you pass probation." + paid;
+    case "Not required": return "There’s no fee for you in " + esc(d.year) + ": new members who pass probation from 1 September don’t pay for that year.";
+    case "On hiatus":    return "No fee is due while you’re on hiatus. When you come back you’ll have a month to pay, unless you’ve already paid this year." + paid;
+    case "Inactive":     return "No fee is due while your membership isn’t active." + paid;
+    default:             return "";
+  }
+}
+function mySubsHowHtml(d) {
+  var nums = d.receivingNumbers || [];
+  var h = '<div class="subs-howto"><div class="form-label" style="margin:0">How to pay</div>'
+    + '<div class="subs-howto-text">' + (d.instructions ? esc(d.instructions)
+        : "Use M-Pesa Send Money to the number below. Then tap “I’ve paid” and paste the confirmation message.") + '</div>';
+  nums.forEach(function (n) {
+    h += '<div class="subs-num"><div><span class="n">' + esc(subsPhone(n.number)) + '</span>' + (n.name ? '<span class="who">' + esc(n.name) + '</span>' : "") + '</div>'
+      +  '<button type="button" class="btn-export" data-copy="' + subsAttr(n.number) + '" onclick="subsCopy(this)">Copy</button></div>';
+  });
+  h += '</div>';
+  if ((d.treasurers || []).length) h += '<div class="subs-hint">Questions? Ask the Treasurer: ' + esc(d.treasurers.join(" or ")) + '.</div>';
+  return h;
+}
+function mySubsHistoryHtml(d) {
+  var items = d.items || [];
+  if (!items.length) return "";
+  var h = '<div class="subs-hist"><div class="form-label" style="margin-bottom:4px">History</div>';
+  items.forEach(function (it) {
+    var isCom = it.type === "Commitment";
+    var what = isCom ? "Commitment · " + subsKsh(it.amount) + " by " + subsDate(it.payBy)
+      : subsKsh(it.amount) + (it.source === "Split" ? " · " + (it.note || "part of a shared payment")
+        : it.source === "Treasurer" ? (it.code ? " · recorded by the Treasurer" : " · cash") : "");
+    var sub = isCom ? "Asked " + subsDate(it.submittedAt) : [it.code, subsDate(it.paidAt)].filter(Boolean).join(" · ");
+    var extra = "";
+    if (it.status === "Rejected" && it.reason) extra = '<div class="why">“' + esc(it.reason) + '”</div>';
+    else if (it.status === "Confirmed" && /^Split:/.test(it.reason || "")) extra = '<div class="sub">' + esc(it.reason) + '</div>';
+    h += '<div class="subs-hist-row"><div><div class="what">' + esc(what) + '</div>' + (sub ? '<div class="sub">' + esc(sub) + '</div>' : "") + extra + '</div>'
+      +  '<div class="end">' + subsChip(it.status)
+      +  (it.status === "Pending" && !isReadOnly() ? '<button type="button" class="subs-link" data-id="' + subsAttr(it.id) + '" onclick="withdrawMySubscriptionItem(this.getAttribute(\'data-id\'), this)">Withdraw</button>' : "")
+      +  '</div></div>';
+  });
+  return h + '</div>';
+}
+// My attendance: one line while something needs doing.
+function paintMySubsNudge() {
+  var el = document.getElementById("mySubsNudge"); if (!el) return;
+  var d = mySubs;
+  if (!d || !d.ready || !d.owes || ["Due", "Part paid", "Unpaid"].indexOf(d.status) === -1 || isReadOnly()) { el.innerHTML = ""; return; }
+  var late = d.status === "Unpaid", waiting = d.pendingAmount > 0;
+  var t = d.status === "Part paid" ? subsKsh(d.balance) + " left on your " + d.year + " subscription"
+        : late ? "Your " + d.year + " subscription is unpaid" : "Your " + d.year + " subscription: " + subsKsh(d.balance);
+  var s = waiting ? subsKsh(d.pendingAmount) + " waiting for the Treasurer to confirm"
+        : d.dueDate ? (late ? "It was due " : "Due by ") + subsDate(d.dueDate) : "";
+  el.innerHTML = '<div class="subs-nudge' + (late && !waiting ? " t-bad" : "") + '"><div class="t">' + esc(t) + (s ? '<span>' + esc(s) + '</span>' : "") + '</div>'
+    + '<button type="button" class="btn btn-secondary" onclick="openMySubscription()">' + (waiting ? "View" : "Pay") + '</button></div>';
+}
+
+// ─── 14c. Member: "I've paid" (paste the M-Pesa message) ──────────────────
+function previewSubPayment(text, cb) {
+  google.script.run.withSuccessHandler(cb)
+    .withFailureHandler(function (e) { cb({ ok: false, error: serverError(e) }); })
+    .previewMpesaMessage(text);
+}
+function submitSubPayment(text, note, btn, onDone) {
+  if (roBlock()) return;
+  var done = beginAction("subSubmit", [btn], "Sending…"); if (!done) return;
+  google.script.run.withSuccessHandler(function (r) {
+    done();
+    showToast("Sent to the Treasurer · " + r.code, "success");
+    loadMySubscription();
+    if (onDone) onDone(true);
+  }).withFailureHandler(function (e) {
+    done();
+    if (isDuplicateNotice(e)) { showToast(e.message, "info"); return; }
+    showToast(serverError(e), "error");
+    if (onDone) onDone(false);
+  }).submitSubscriptionPayment(text, note || "");
+}
+var subsPayTimer = null, subsPaySeq = 0, subsPayRead = null;
+function openSubPayDialog() {
+  if (roBlock() || !mySubs) return;
+  subsPayRead = null;
+  var nums = (mySubs.receivingNumbers || []).map(function (n) { return subsPhone(n.number) + (n.name ? " (" + n.name + ")" : ""); });
+  subsOpenDialog("subsPayDlg",
+      '<h3 id="subsPayDlgTitle">I’ve paid.</h3>'
+    + '<p>Paste the whole M-Pesa message you got after sending the money' + (nums.length ? ' to <b>' + esc(nums.join(" or ")) + '</b>' : "") + '. The Treasurer checks it and confirms.</p>'
+    + '<div class="form-group"><label class="form-label" for="subsPayText">M-Pesa message</label>'
+    +   '<textarea id="subsPayText" rows="5" spellcheck="false" autocomplete="off" placeholder="e.g. UK9RK1H8LC Confirmed. Ksh1,070.00 sent to … on 9/11/26 at 5:20 AM…" oninput="subsPayChanged()"></textarea>'
+    +   '<div class="subs-hint">With or without the balance line. Only the code, amount, number, date and time are kept.</div>'
+    +   '<div id="subsPayRead"></div></div>'
+    + '<div class="form-group"><label class="form-label" for="subsPayNote">Note for the Treasurer <span style="text-transform:none;letter-spacing:.02em;color:var(--ink-400)">· optional</span></label>'
+    +   '<input type="text" id="subsPayNote" maxlength="300" placeholder="e.g. paid from my mum’s line"></div>'
+    + '<div class="dialog-actions"><button type="button" class="btn btn-secondary" onclick="subsCloseDialog(\'subsPayDlg\')">Cancel</button>'
+    +   '<button type="button" class="btn btn-primary" id="subsPaySend" disabled onclick="subsPaySend(this)">Send to Treasurer</button></div>');
+}
+function subsPayChanged() {
+  subsPayRead = null;
+  var send = document.getElementById("subsPaySend"); if (send) send.disabled = true;
+  var ta = document.getElementById("subsPayText"), out = document.getElementById("subsPayRead");
+  clearTimeout(subsPayTimer); subsPaySeq++;
+  if (!ta || !out) return;
+  if (!ta.value.trim()) { out.innerHTML = ""; return; }
+  out.innerHTML = '<div class="subs-busy">Reading the message…</div>';
+  subsPayTimer = setTimeout(subsPayCheck, 600);
+}
+function subsPayCheck() {
+  var ta = document.getElementById("subsPayText"); if (!ta) return;
+  var text = ta.value, seq = ++subsPaySeq;
+  previewSubPayment(text, function (r) {
+    var ta2 = document.getElementById("subsPayText"), out = document.getElementById("subsPayRead");
+    if (seq !== subsPaySeq || !ta2 || ta2.value !== text || !out) return;
+    subsPayRead = r && r.ok ? r : null;
+    out.innerHTML = subsPayRead ? subsReadHtml(subsPayRead) : '<div class="subs-err">' + esc((r && r.error) || "That message couldn’t be read.") + '</div>';
+    var send = document.getElementById("subsPaySend"); if (send) send.disabled = !subsPayRead;
+  });
+}
+function subsPaySend(btn) {
+  var ta = document.getElementById("subsPayText"), note = document.getElementById("subsPayNote");
+  if (!ta || !subsPayRead) return;
+  submitSubPayment(ta.value, note ? note.value.trim() : "", btn, function (ok) { if (ok) subsCloseDialog("subsPayDlg"); });
+}
+
+// ─── 14d. Member: commitment to pay ───────────────────────────────────────
+function requestSubCommitment(amount, payBy, note, btn, onDone) {
+  if (roBlock()) return;
+  var done = beginAction("subCommit", [btn], "Sending…"); if (!done) return;
+  google.script.run.withSuccessHandler(function () {
+    done(); showToast("Sent to the Treasurer for approval.", "success"); loadMySubscription(); if (onDone) onDone(true);
+  }).withFailureHandler(function (e) {
+    done();
+    if (isDuplicateNotice(e)) { showToast(e.message, "info"); return; }
+    showToast(serverError(e), "error"); if (onDone) onDone(false);
+  }).requestSubscriptionCommitment(Number(amount), payBy, note || "");
+}
+function openSubCommitDialog() {
+  if (roBlock() || !mySubs) return;
+  subsOpenDialog("subsComDlg",
+      '<h3 id="subsComDlgTitle">Commit to pay.</h3>'
+    + '<p>Ask the Treasurer to accept a promise to pay by a date. If the Treasurer approves it and the date passes without a payment, your subscription shows as unpaid.</p>'
+    + '<div class="subs-row2">'
+    +   '<div class="form-group"><label class="form-label" for="subsComAmt">Amount (Ksh)</label>'
+    +     '<input type="text" id="subsComAmt" inputmode="decimal" autocomplete="off" value="' + subsAttr(String(mySubs.balance || "")) + '"></div>'
+    +   '<div class="form-group"><label class="form-label" for="subsComDate">Pay by</label>'
+    +     '<input type="date" id="subsComDate" min="' + todayStr() + '"></div>'
+    + '</div>'
+    + '<div class="form-group"><label class="form-label" for="subsComNote">Note <span style="text-transform:none;letter-spacing:.02em;color:var(--ink-400)">· optional</span></label>'
+    +   '<input type="text" id="subsComNote" maxlength="300" placeholder="e.g. after my HELB comes through"></div>'
+    + '<div class="subs-err" id="subsComErr"></div>'
+    + '<div class="dialog-actions"><button type="button" class="btn btn-secondary" onclick="subsCloseDialog(\'subsComDlg\')">Cancel</button>'
+    +   '<button type="button" class="btn btn-primary" onclick="subsComSend(this)">Send for approval</button></div>');
+}
+function subsComSend(btn) {
+  var amt = Number(String((document.getElementById("subsComAmt") || {}).value || "").replace(/[, ]/g, ""));
+  var by = (document.getElementById("subsComDate") || {}).value || "";
+  var note = ((document.getElementById("subsComNote") || {}).value || "").trim();
+  var err = document.getElementById("subsComErr");
+  var msg = !(amt > 0) ? "Enter the amount you’ll pay."
+    : mySubs && amt > mySubs.balance ? "That’s more than your balance of " + subsKsh(mySubs.balance) + "."
+    : !by ? "Choose the date you’ll pay by."
+    : by < todayStr() ? "The pay-by date can’t be in the past." : "";
+  if (err) err.textContent = msg;
+  if (msg) return;
+  requestSubCommitment(amt, by, note, btn, function (ok) { if (ok) subsCloseDialog("subsComDlg"); });
+}
+
+// ─── 14e. Subscriptions tab (canView) ─────────────────────────────────────
+// The overview is loaded whole and filtered here, so search is instant; exports
+// send subsFilters so the file matches what's on screen.
+var subsOverview = null;
+var subsFilters = { section: "All", status: "All", search: "" };
+var subsView = "members";        // members | queue | record | remind | settings | recent (the last five: Treasurer only)
+var subsLoading = false;
+function loadSubscriptions(cb) {
+  var box = document.getElementById("subsContent");
+  if (subsOverview) renderSubscriptions(subsOverview);
+  subsLoading = true;
+  google.script.run.withSuccessHandler(function (d) {
+    subsLoading = false;
+    subsOverview = d;
+    renderSubscriptions(d);
+    if (cb) cb(d);
+  }).withFailureHandler(function (e) {
+    subsLoading = false;
+    showToast(serverError(e), "error");
+    if (box && !subsOverview) box.innerHTML = '<p class="loading">' + esc(serverError(e)) + '</p>';
+  }).getSubscriptionsOverview({});
+}
+function exportSubscriptions(kind, btn) {
+  var done = beginAction("subExport", [btn], kind === "pdf" ? "Preparing…" : "Exporting…"); if (!done) return;
+  var r = google.script.run.withSuccessHandler(function (out) {
+    done();
+    if (kind === "pdf") openPrintHTML(out); else downloadCSV_(out, "subscriptions.csv");
+  }).withFailureHandler(function (e) { done(); showToast("Export failed: " + serverError(e), "error"); });
+  if (kind === "pdf") r.exportSubscriptionsPDF(subsFilters); else r.exportSubscriptionsCSV(subsFilters);
+}
+function subsSetView(v) {
+  subsView = v;
+  if (subsOverview) renderSubscriptions(subsOverview);
+  try { var t = document.getElementById("tab-subscriptions"); if (t && t.getBoundingClientRect().top < 0) window.scrollTo(0, 0); } catch (e) {}
+}
+function subsSetFilter(k, v) {
+  subsFilters[k] = v;
+  if (k !== "search") { if (subsOverview) renderSubscriptions(subsOverview); return; }
+  var list = document.getElementById("subsMemberList");
+  if (list && subsOverview) list.innerHTML = subsMembersListHtml(subsOverview);
+}
+function subsToggleStatus(st) {
+  subsFilters.status = subsFilters.status === st ? "All" : st;
+  subsView = "members";
+  if (subsOverview) renderSubscriptions(subsOverview);
+}
+function subsClearFilters() {
+  subsFilters = { section: "All", status: "All", search: "" };
+  if (subsOverview) renderSubscriptions(subsOverview);
+}
+function subsIsSetUp(d) { var s = d.settings || {}; return !!(s.fee && (s.receivingNumbers || []).length); }
+
+function renderSubscriptions(d) {
+  var box = document.getElementById("subsContent"); if (!box || !d) return;
+  var c = d.caps || {};
+  if (!c.canAct && subsView !== "members") subsView = "members";
+  var q = d.queue || [];
+  if (subsSplit.id && !q.some(function (x) { return x.id === subsSplit.id; })) subsSplit = { id: null, rows: [] };
+  if (subsRejectId && !q.some(function (x) { return x.id === subsRejectId; })) subsRejectId = null;
+  if (c.canAct && !subsSet) subsSet = subsSettingsDraft(d);
+  var h = subsHeadHtml(d, c);
+  if (c.treasurerPaused) {
+    h += '<div class="subs-banner is-quiet"><div class="t"><b>Your Treasurer access is paused.</b>It comes back when your own membership is active again. You can still view this page.</div></div>';
+  }
+  if (c.canAct && !subsIsSetUp(d) && subsView !== "settings") {
+    h += '<div class="subs-banner"><div class="t"><b>Set up ' + esc(d.year) + ' subscriptions.</b>Set the fee, the deadline and the number members send money to. Members can’t send payments until then.</div>'
+      +  '<button type="button" class="btn btn-primary" onclick="subsSetView(\'settings\')">Open settings</button></div>';
+  } else if (!c.canAct && !d.fee) {
+    h += '<div class="subs-banner is-quiet"><div class="t">' + ((d.treasurers || []).length
+          ? "The Treasurer hasn’t set up " + esc(d.year) + " subscriptions yet."
+          : "No Treasurer has been appointed yet" + (c.canAppoint ? " — appoint one from the Treasurer panel." : ". A full admin appoints one.")) + '</div></div>';
+  }
+  if (d.fee) h += subsKpisHtml(d, c);   // nothing to sum until there's a fee
+  if (c.canAct) h += subsTabsHtml(d);
+  h += '<div class="subs-layout"><div class="subs-main">' + subsMainHtml(d, c) + '</div><div class="subs-side">' + subsSideHtml(d, c) + '</div></div>';
+  h += '<datalist id="subsNameList">' + (d.members || []).map(function (m) { return '<option value="' + subsAttr(m.name) + '">'; }).join("") + '</datalist>';
+  // Keep the caret in the search box across a repaint.
+  var a = document.activeElement, keep = a && a.id ? { id: a.id, pos: a.selectionStart } : null;
+  box.innerHTML = h;
+  if (keep) { var el = document.getElementById(keep.id); if (el && el.tagName === "INPUT" && el.type === "text") { el.focus(); try { el.setSelectionRange(keep.pos, keep.pos); } catch (e) {} } }
+  var f = document.getElementById("subsMailFrame");
+  if (f && subsRemind.preview) f.srcdoc = subsRemind.preview.sampleHtml || "";
+}
+function subsHeadHtml(d, c) {
+  var eb = "Subscriptions · " + d.year + (c.scope === "section" ? " · " + c.section : "") + (c.canAct ? " · Treasurer" : "");
+  var sub = d.fee
+    ? subsKsh(d.fee) + " per member" + (d.deadline ? ", due by " + subsDate(d.deadline) : "") + ". New members and returners get a month from the day they start owing."
+    : "One fee per member for the chorale year, paid by M-Pesa.";
+  return '<div class="subs-head"><div class="section-head" style="margin-top:0"><div class="eyebrow">' + esc(eb) + '</div><span class="gold-rule"></span>'
+    + '<h2>' + (d.fee ? esc(subsKsh(d.fee)) + ' a member.' : 'Subscriptions.') + '</h2>'
+    + '<p class="subtitle">' + esc(sub) + '</p></div>'
+    + '<div class="subs-exports"><button type="button" class="btn-export" onclick="exportSubscriptions(\'csv\', this)">CSV</button>'
+    + '<button type="button" class="btn-export" onclick="exportSubscriptions(\'pdf\', this)">PDF</button></div></div>';
+}
+function subsKpisHtml(d, c) {
+  var s = d.summary || {}, n = s.counts || {};
+  var stillOwe = Math.max(0, (s.owing || 0) - (n.Paid || 0));
+  var k = '<div class="subs-kpis">'
+    + '<div class="subs-kpi t-ok"><div class="eyebrow">Collected</div><div class="v"><span class="num">' + esc(subsKsh(s.collected)) + '</span><span class="sub">of ' + esc(subsKsh(s.expected)) + '</span></div>'
+    +   '<div class="subs-bar"><span style="width:' + Math.max(0, Math.min(100, s.percentPaid || 0)) + '%"></span></div></div>'
+    + '<div class="subs-kpi' + (s.outstanding > 0 ? " t-bad" : "") + '"><div class="eyebrow">Outstanding</div><div class="v"><span class="num">' + esc(subsKsh(s.outstanding)) + '</span><span class="sub">' + stillOwe + ' still to pay</span></div></div>'
+    + '<div class="subs-kpi"><div class="eyebrow">Paid in full</div><div class="v"><span class="num">' + (n.Paid || 0) + '</span><span class="sub">of ' + (s.owing || 0) + ' who owe</span></div></div>';
+  if (c.canAct) {
+    k += '<button type="button" class="subs-kpi is-link' + (s.waiting ? " t-warn" : "") + '" onclick="subsSetView(\'queue\')"><div class="eyebrow">Waiting for you</div>'
+      +  '<div class="v"><span class="num">' + (s.waiting || 0) + '</span><span class="sub">to confirm or approve</span></div></button>';
+  } else {
+    k += '<div class="subs-kpi' + (n.Unpaid ? " t-bad" : "") + '"><div class="eyebrow">Unpaid</div><div class="v"><span class="num">' + (n.Unpaid || 0) + '</span><span class="sub">past their deadline</span></div></div>';
+  }
+  k += '</div>';
+  var chips = SUBS_STATUSES.filter(function (st) { return n[st]; }).map(function (st) {
+    return '<button type="button" class="filter-chip' + (subsFilters.status === st ? " active" : "") + '" data-st="' + subsAttr(st) + '" onclick="subsToggleStatus(this.getAttribute(\'data-st\'))">' + esc(st) + '<span class="n">' + n[st] + '</span></button>';
+  });
+  return k + (chips.length ? '<div class="subs-counts">' + chips.join("") + '</div>' : "");
+}
+function subsTabsHtml(d) {
+  var w = (d.queue || []).length;
+  var tabs = [["members", "Members"], ["queue", "Waiting"], ["record", "Record payment"], ["remind", "Reminders"], ["settings", "Settings"], ["recent", "History"]];
+  return '<div class="subs-tabs" role="tablist">' + tabs.map(function (t) {
+    return '<button type="button" role="tab" aria-selected="' + (subsView === t[0]) + '" class="subs-tab' + (subsView === t[0] ? " is-active" : "") + '" onclick="subsSetView(\'' + t[0] + '\')">'
+      + t[1] + (t[0] === "queue" && w ? '<span class="n">' + w + '</span>' : "") + '</button>';
+  }).join("") + '</div>';
+}
+function subsMainHtml(d, c) {
+  if (subsView === "queue")    return subsQueueHtml(d);
+  if (subsView === "record")   return subsRecordHtml(d);
+  if (subsView === "remind")   return subsRemindHtml(d);
+  if (subsView === "settings") return subsSettingsHtml(d);
+  if (subsView === "recent")   return subsRecentHtml(d);
+  return subsMembersHtml(d, c);
+}
+
+// Members table
+function subsFilteredMembers(d) {
+  var f = subsFilters, q = String(f.search || "").trim().toLowerCase();
+  return (d.members || []).filter(function (m) {
+    if (f.section && f.section !== "All" && (m.groups || []).indexOf(f.section) === -1) return false;
+    if (f.status && f.status !== "All" && m.status !== f.status) return false;
+    if (q && m.name.toLowerCase().indexOf(q) === -1) return false;
+    return true;
+  });
+}
+function subsMembersHtml(d, c) {
+  var opt = function (v, label, cur) { return '<option value="' + subsAttr(v) + '"' + (v === cur ? " selected" : "") + '>' + esc(label) + '</option>'; };
+  var h = '<div class="subs-filters">'
+    + '<input type="text" id="subsSearch" placeholder="Search names" autocomplete="off" value="' + subsAttr(subsFilters.search) + '" oninput="subsSetFilter(\'search\', this.value)">';
+  if (c.scope !== "section") {
+    h += '<select id="subsSection" aria-label="Section" onchange="subsSetFilter(\'section\', this.value)">'
+      +  opt("All", "All sections", subsFilters.section) + ["Choir", "Band", "Orchestra"].map(function (g) { return opt(g, g, subsFilters.section); }).join("") + '</select>';
+  }
+  h += '<select id="subsStatus" aria-label="Status" onchange="subsSetFilter(\'status\', this.value)">' + opt("All", "All statuses", subsFilters.status)
+    +  SUBS_STATUSES.map(function (st) { return opt(st, st, subsFilters.status); }).join("") + '</select></div>';
+  return h + '<div id="subsMemberList">' + subsMembersListHtml(d) + '</div>';
+}
+function subsMembersListHtml(d) {
+  var list = subsFilteredMembers(d);
+  if (!(d.members || []).length) return '<div class="empty-pane">No members to show yet.</div>';
+  if (!list.length) {
+    return '<div class="empty-pane">Nobody matches these filters.<div style="margin-top:14px"><button type="button" class="btn-export" style="font-style:normal" onclick="subsClearFilters()">Clear filters</button></div></div>';
+  }
+  var h = '<div class="subs-table"><div class="subs-tr is-head"><span>Name</span><span>Status</span><span>Paid</span><span>Balance</span><span>Due</span><span>Note</span></div>';
+  list.forEach(function (m) { h += subsMemberRowHtml(m); });
+  return h + '</div><div class="subs-more">' + list.length + ' of ' + d.members.length + ' member' + (d.members.length === 1 ? "" : "s") + '</div>';
+}
+function subsMemberRowHtml(m) {
+  var owes = SUBS_OWING.indexOf(m.status) !== -1, late = m.status === "Unpaid";
+  var why = subsDueWhy(m.dueReason, false), notes = [];
+  if (m.pendingAmount > 0) notes.push(subsKsh(m.pendingAmount) + " waiting to be confirmed");
+  if (m.commitmentPending) notes.push("commitment waiting");
+  if (m.commitment && !m.commitment.lapsed && m.status !== "Paid") notes.push("committed " + subsKsh(m.commitment.amount) + " by " + subsShort(m.commitment.payBy));
+  if (m.commitment && m.commitment.lapsed && late) notes.push("commitment lapsed " + subsShort(m.commitment.payBy));
+  var quiet = !owes && !(m.paid > 0);
+  return '<div class="subs-tr' + (quiet ? " is-quiet" : "") + '">'
+    + '<div class="c-name"><div class="nm">' + esc(m.name) + '</div><div class="gr">' + esc((m.groups || []).join(" · ").toUpperCase()) + '</div></div>'
+    + '<div class="c-status">' + subsChip(m.status) + '</div>'
+    + '<div class="c-nums">'
+    +   '<span><span class="l">Paid </span><b>' + (m.paid > 0 ? esc(subsKsh(m.paid)) : "—") + '</b></span>'
+    +   '<span><span class="l">Balance </span><b>' + (owes && m.balance > 0 ? esc(subsKsh(m.balance)) : "—") + '</b></span>'
+    +   '<span' + (late ? ' class="late"' : "") + '><span class="l">Due </span><b>' + (m.dueDate && owes ? esc(subsShort(m.dueDate)) : "—") + '</b>'
+    +     (why && owes ? ' <span class="why">' + esc(why) + '</span>' : "") + '</span>'
+    + '</div>'
+    + '<div class="c-note">' + esc(notes.join(" · ")) + '</div>'
+    + '</div>';
+}
+
+// Side panel: the Treasurer (everyone), how members pay (Treasurer), what the statuses mean.
+function subsSideHtml(d, c) {
+  var h = subsTreasurerCardHtml(d, c);
+  if (c.canAct && subsIsSetUp(d)) {
+    var s = d.settings;
+    h += '<div class="card"><div class="subs-side-title">How members pay</div>'
+      +  '<div class="subs-meta">Fee <b>' + esc(subsKsh(s.fee)) + '</b>' + (s.deadline ? ' · due <b>' + esc(subsDate(s.deadline)) + '</b>' : ' · no deadline set') + '</div>'
+      +  (s.receivingNumbers || []).map(function (n) { return '<div class="subs-num"><div><span class="n">' + esc(subsPhone(n.number)) + '</span>' + (n.name ? '<span class="who">' + esc(n.name) + '</span>' : "") + '</div></div>'; }).join("")
+      +  '<button type="button" class="subs-link" style="margin-top:6px" onclick="subsSetView(\'settings\')">Change settings</button></div>';
+  }
+  h += '<div class="card"><details><summary class="subs-side-title" style="cursor:pointer;margin:0">What the statuses mean</summary><div class="subs-meta" style="margin-top:10px;font-size:12px">'
+    +  '<p style="margin:0 0 6px">' + subsChip("Due") + ' owes, nothing paid, deadline not passed.</p>'
+    +  '<p style="margin:0 0 6px">' + subsChip("Part paid") + ' something paid; safe at the deadline.</p>'
+    +  '<p style="margin:0 0 6px">' + subsChip("Committed") + ' the Treasurer approved a date to pay by.</p>'
+    +  '<p style="margin:0 0 6px">' + subsChip("Unpaid") + ' past the deadline with nothing paid, or a commitment that lapsed.</p>'
+    +  '<p style="margin:0 0 6px">' + subsChip("Not due yet") + ' on probation; owes a month after passing.</p>'
+    +  '<p style="margin:0">' + subsChip("Not required") + ' a new member who passed probation from 1 September.</p>'
+    +  '</div></details></div>';
+  return h;
+}
+
+// ─── 14f. Treasurer tools (caps.canAct) ───────────────────────────────────
+// after(res): optional, runs on success before the reload (close a dialog, reset a form).
+function subsCall(key, btn, busy, okMsg, call, after) {
+  var done = beginAction(key, [btn], busy); if (!done) return;
+  var r = google.script.run.withSuccessHandler(function (res) {
+    done(); if (okMsg) showToast(typeof okMsg === "function" ? okMsg(res) : okMsg, "success");
+    if (after) after(res);
+    loadSubscriptions();
+  }).withFailureHandler(function (e) {
+    done();
+    if (isDuplicateNotice(e)) { showToast(e.message, "info"); return; }
+    showToast(serverError(e), "error");
+  });
+  call(r);
+}
+function confirmSubPayment(id, allocations, btn) {
+  subsCall("subConfirm", btn, "Confirming…", function (r) { return "Confirmed · " + r.emailed + " receipt(s) sent"; },
+    function (r) { r.confirmSubscriptionPayment(id, allocations || []); }, function () { subsSplit = { id: null, rows: [] }; });
+}
+function rejectSubItem(id, reason, btn) {
+  subsCall("subReject", btn, "Rejecting…", "Rejected · member told why", function (r) { r.rejectSubscriptionItem(id, reason); },
+    function () { subsRejectId = null; });
+}
+function approveSubCommitment(id, btn) {
+  subsCall("subApprove", btn, "Approving…", "Commitment approved", function (r) { r.approveSubscriptionCommitment(id); });
+}
+function recordSubPayment(p, btn) {
+  subsCall("subRecord", btn, "Recording…", "Payment recorded · receipt sent", function (r) { r.recordSubscriptionPayment(p); },
+    function () { subsRec = { member: "", method: subsRec.method, manual: false, message: "", read: null }; });
+}
+function previewTreasurerMessage(text, cb) {
+  google.script.run.withSuccessHandler(cb).withFailureHandler(function (e) { cb({ ok: false, error: serverError(e) }); })
+    .previewTreasurerMpesaMessage(text);
+}
+function saveSubSettings(p, btn) {
+  subsCall("subSettings", btn, "Saving…", "Settings saved", function (r) { r.updateSubscriptionSettings(p); },
+    function () { subsSet = null; subsView = "members"; });
+}
+function previewSubReminders(statuses, cb) {
+  google.script.run.withSuccessHandler(cb).withFailureHandler(function (e) { showToast(serverError(e), "error"); cb(null); })
+    .sendSubscriptionReminders({ preview: true, statuses: statuses });
+}
+function sendSubReminders(statuses, count, btn) {
+  if (!confirm("Email a reminder to " + count + " member(s)?")) return;
+  subsCall("subRemind", btn, "Sending…",
+    function (r) { return r.sent + " reminder(s) sent" + (r.failed.length ? " · " + r.failed.length + " failed" : ""); },
+    function (r) { r.sendSubscriptionReminders({ statuses: statuses }); }, function () { subsRemind.preview = null; });
+}
+
+// Waiting queue
+var subsSplit = { id: null, rows: [] };
+var subsRejectId = null;
+function subsQueueHtml(d) {
+  var q = d.queue || [];
+  if (!q.length) return '<div class="empty-pane">Nothing waiting.<div class="subs-hint" style="font-family:var(--f-sans);font-style:normal">Payments and commitments members send show up here, oldest first.</div></div>';
+  return q.map(subsQueueItemHtml).join("");
+}
+function subsQueueItemHtml(it) {
+  var isPay = it.type === "Payment", id = subsAttr(it.id);
+  var h = '<div class="subs-q' + (it.numberChanged ? " is-flag" : "") + '" id="subsQ_' + id + '">'
+    + '<div class="subs-q-head"><div><div class="nm">' + esc(it.member) + '</div>'
+    +   '<div class="ty"><span class="subs-chip">' + (isPay ? "Payment" : "Commitment") + '</span><span class="subs-hint" style="margin:0">Sent ' + esc(subsDate(it.submittedAt)) + '</span></div></div>'
+    +   '<div class="subs-q-amt">' + esc(subsKsh(it.amount)) + '</div></div>';
+  if (isPay) {
+    h += '<div class="subs-q-meta"><code>' + esc(it.code) + '</code><span>Paid ' + esc(subsDate(it.paidAt)) + '</span>' + (it.recipient ? '<span>to ' + esc(it.recipient) + '</span>' : "") + '</div>';
+    if (it.numberChanged) h += '<div class="subs-note t-bad">Sent to a number that’s no longer in Settings. Check the statement before confirming.</div>';
+  } else {
+    h += '<div class="subs-q-meta"><span>Pay by <b>' + esc(subsDate(it.payBy)) + '</b></span></div>';
+  }
+  if (it.note) h += '<div class="subs-q-quote">“' + esc(it.note) + '”</div>';
+  if (isPay && it.message) h += '<details><summary>M-Pesa message</summary><div class="msg">' + esc(it.message) + '</div></details>';
+  var open = subsSplit.id === it.id || subsRejectId === it.id;
+  if (!open) {
+    h += '<div class="subs-q-acts">'
+      + (isPay
+          ? '<button type="button" class="btn btn-green" data-id="' + id + '" onclick="subsConfirmClick(this)">Confirm</button>'
+          + '<button type="button" class="btn btn-secondary" data-id="' + id + '" onclick="subsOpenSplit(this.getAttribute(\'data-id\'))">Split…</button>'
+          : '<button type="button" class="btn btn-green" data-id="' + id + '" onclick="approveSubCommitment(this.getAttribute(\'data-id\'), this)">Approve</button>')
+      + '<button type="button" class="btn btn-ghost subs-bad" data-id="' + id + '" onclick="subsOpenReject(this.getAttribute(\'data-id\'))">Reject…</button></div>';
+  }
+  if (subsSplit.id === it.id) h += subsSplitHtml(it);
+  if (subsRejectId === it.id) h += subsRejectHtml(it);
+  return h + '</div>';
+}
+function subsQueueItem(id) { return ((subsOverview && subsOverview.queue) || []).filter(function (x) { return x.id === id; })[0]; }
+function subsRepaintQueueItem(id) {
+  var it = subsQueueItem(id), el = document.getElementById("subsQ_" + id);
+  if (it && el) el.outerHTML = subsQueueItemHtml(it);
+}
+function subsConfirmClick(btn) {
+  var it = subsQueueItem(btn.getAttribute("data-id")); if (!it) return;
+  if (!confirm("Confirm " + subsKsh(it.amount).replace("\u00a0", " ") + " (" + it.code + ") for " + it.member + "? A receipt is emailed to them.")) return;
+  confirmSubPayment(it.id, [], btn);
+}
+function subsOpenSplit(id) {
+  var prev = subsSplit.id || subsRejectId;
+  subsSplit = { id: id, rows: [{ member: "", amount: "" }] }; subsRejectId = null;
+  if (prev && prev !== id) subsRepaintQueueItem(prev);
+  subsRepaintQueueItem(id);
+  var first = document.querySelector("#subsQ_" + id + " .subs-split-row input"); if (first) first.focus();
+}
+function subsOpenReject(id) {
+  var prev = subsSplit.id || subsRejectId;
+  subsRejectId = id; subsSplit = { id: null, rows: [] };
+  if (prev && prev !== id) subsRepaintQueueItem(prev);
+  subsRepaintQueueItem(id);
+  var ta = document.getElementById("subsRejectReason"); if (ta) ta.focus();
+}
+function subsCloseForms() {
+  var prev = subsSplit.id || subsRejectId;
+  subsSplit = { id: null, rows: [] }; subsRejectId = null;
+  if (prev) subsRepaintQueueItem(prev);
+}
+function subsSplitHtml(it) {
+  var h = '<div class="subs-inline"><div class="form-label">Split ' + esc(subsKsh(it.amount)) + '</div>'
+    + '<div class="subs-hint" style="margin:0 0 10px">Add the other members this payment covers and how much each gets. ' + esc(it.member) + ' keeps the rest.</div>';
+  subsSplit.rows.forEach(function (r, i) {
+    h += '<div class="subs-split-row">'
+      +  '<input type="text" list="subsNameList" placeholder="Member" aria-label="Member" autocomplete="off" value="' + subsAttr(r.member) + '" oninput="subsSplitEdit(' + i + ', \'member\', this.value)">'
+      +  '<input type="text" inputmode="decimal" placeholder="Ksh" aria-label="Amount" autocomplete="off" value="' + subsAttr(r.amount) + '" oninput="subsSplitEdit(' + i + ', \'amount\', this.value)">'
+      +  '<button type="button" class="x" aria-label="Remove" onclick="subsSplitRemove(' + i + ')">×</button></div>';
+  });
+  h += '<button type="button" class="subs-link" onclick="subsSplitAdd()">+ Add another member</button>'
+    +  '<div class="subs-split-sum" id="subsSplitSum">' + subsSplitSumHtml(it) + '</div>'
+    +  '<div class="subs-q-acts"><button type="button" class="btn btn-green" id="subsSplitGo" data-id="' + subsAttr(it.id) + '" onclick="subsSplitConfirm(this)"' + (subsSplitValid(it) ? "" : " disabled") + '>Confirm split</button>'
+    +  '<button type="button" class="btn btn-ghost" onclick="subsCloseForms()">Cancel</button></div></div>';
+  return h;
+}
+function subsSplitTotals(it) {
+  var others = 0;
+  subsSplit.rows.forEach(function (r) { var a = Number(String(r.amount || "").replace(/[, ]/g, "")); if (a > 0) others += Math.round(a * 100); });
+  return { others: others / 100, keeps: (Math.round(it.amount * 100) - others) / 100 };
+}
+function subsSplitValid(it) {
+  var t = subsSplitTotals(it), any = false, ok = true;
+  subsSplit.rows.forEach(function (r) {
+    var a = Number(String(r.amount || "").replace(/[, ]/g, "")), m = String(r.member || "").trim();
+    if (!m && !r.amount) return;
+    if (!m || !(a > 0)) ok = false; else any = true;
+  });
+  return ok && any && t.keeps >= 0;
+}
+function subsSplitSumHtml(it) {
+  var t = subsSplitTotals(it);
+  return t.keeps < 0
+    ? '<span>That’s more than the payment</span><b>over by ' + esc(subsKsh(-t.keeps)) + '</b>'
+    : '<span>' + esc(it.member) + ' keeps</span><b>' + esc(subsKsh(t.keeps)) + '</b>';
+}
+function subsSplitEdit(i, k, v) {
+  if (!subsSplit.rows[i]) return;
+  subsSplit.rows[i][k] = v;
+  var it = subsQueueItem(subsSplit.id); if (!it) return;
+  var sum = document.getElementById("subsSplitSum");
+  if (sum) { sum.innerHTML = subsSplitSumHtml(it); sum.classList.toggle("is-over", subsSplitTotals(it).keeps < 0); }
+  var go = document.getElementById("subsSplitGo"); if (go) go.disabled = !subsSplitValid(it);
+}
+function subsSplitAdd() { subsSplit.rows.push({ member: "", amount: "" }); subsRepaintQueueItem(subsSplit.id); var r = document.querySelectorAll("#subsQ_" + subsSplit.id + " .subs-split-row input[list]"); if (r.length) r[r.length - 1].focus(); }
+function subsSplitRemove(i) { subsSplit.rows.splice(i, 1); if (!subsSplit.rows.length) subsSplit.rows.push({ member: "", amount: "" }); subsRepaintQueueItem(subsSplit.id); }
+function subsSplitConfirm(btn) {
+  var it = subsQueueItem(btn.getAttribute("data-id")); if (!it || !subsSplitValid(it)) return;
+  var names = ((subsOverview && subsOverview.members) || []).map(function (m) { return m.name; });
+  var allocs = subsSplit.rows.filter(function (r) { return String(r.member || "").trim(); })
+    .map(function (r) { return { member: String(r.member).trim(), amount: Number(String(r.amount).replace(/[, ]/g, "")) }; });
+  var bad = allocs.filter(function (a) { return names.indexOf(a.member) === -1; })[0];
+  if (bad) { showToast("“" + bad.member + "” isn’t a member name. Pick one from the list.", "error"); return; }
+  var t = subsSplitTotals(it);
+  if (!confirm("Confirm " + it.code + ": " + allocs.map(function (a) { return a.member + " " + subsKsh(a.amount).replace("\u00a0", " "); }).join(", ")
+               + ", and " + it.member + " " + subsKsh(t.keeps).replace("\u00a0", " ") + "? Each is emailed a receipt.")) return;
+  confirmSubPayment(it.id, allocs, btn);
+}
+function subsRejectHtml(it) {
+  return '<div class="subs-inline"><div class="form-group"><label class="form-label" for="subsRejectReason">Why? ' + esc(it.member) + ' is emailed this.</label>'
+    + '<textarea id="subsRejectReason" rows="2" maxlength="300" style="min-height:64px" placeholder="' + (it.type === "Payment" ? "e.g. This code isn’t on the Chorale statement" : "e.g. Please pick a date before the end of term") + '"></textarea></div>'
+    + '<div class="subs-q-acts"><button type="button" class="btn btn-crimson" data-id="' + subsAttr(it.id) + '" onclick="subsRejectGo(this)">Reject</button>'
+    + '<button type="button" class="btn btn-ghost" onclick="subsCloseForms()">Cancel</button></div></div>';
+}
+function subsRejectGo(btn) {
+  var ta = document.getElementById("subsRejectReason"), reason = ta ? ta.value.trim() : "";
+  if (reason.length < 3) { showToast("Give a reason — the member will see it.", "error"); if (ta) ta.focus(); return; }
+  rejectSubItem(btn.getAttribute("data-id"), reason, btn);
+}
+
+// Record a payment
+var subsRec = { member: "", method: "mpesa", manual: false, message: "", read: null };
+var subsRecTimer = null, subsRecSeq = 0;
+function subsRecordHtml(d) {
+  var r = subsRec, mp = r.method === "mpesa";
+  var seg = function (v, label) { return '<button type="button" class="' + (r.method === v ? "active" : "") + '" aria-pressed="' + (r.method === v) + '" onclick="subsRecMethod(\'' + v + '\')">' + label + '</button>'; };
+  var h = '<div class="subs-form"><div class="card">'
+    + '<p class="subs-quiet" style="margin:0 0 14px">For cash, or a member who can’t use the app. It’s confirmed straight away and the member is emailed a receipt.</p>'
+    + '<div class="form-group"><label class="form-label" for="subsRecMember">Member</label>'
+    +   '<input type="text" id="subsRecMember" list="subsNameList" autocomplete="off" placeholder="Start typing a name" value="' + subsAttr(r.member) + '" oninput="subsRec.member = this.value"></div>'
+    + '<div class="form-group"><span class="form-label">Paid by</span><div class="seg-control" role="group" aria-label="Paid by">' + seg("mpesa", "M-Pesa") + seg("cash", "Cash") + '</div></div>';
+  if (mp && !r.manual) {
+    h += '<div class="form-group"><label class="form-label" for="subsRecMsg">M-Pesa message</label>'
+      +  '<textarea id="subsRecMsg" class="subs-paste" spellcheck="false" autocomplete="off" placeholder="Paste the message your phone received, or the member’s Send Money message" oninput="subsRecMsgChanged(this.value)">' + esc(r.message) + '</textarea>'
+      +  '<div id="subsRecRead">' + (r.read ? subsReadHtml(r.read) : "") + '</div>'
+      +  '<button type="button" class="subs-link" style="margin-top:8px" onclick="subsRecManual(true)">No message? Enter the code, amount and date</button></div>';
+  } else {
+    if (mp) {
+      h += '<div class="form-group"><label class="form-label" for="subsRecCode">M-Pesa code</label>'
+        +  '<input type="text" id="subsRecCode" maxlength="10" autocomplete="off" spellcheck="false" style="font-family:var(--f-mono);text-transform:uppercase" placeholder="e.g. UK9RK1H8LC"></div>';
+    }
+    h += '<div class="subs-row2"><div class="form-group"><label class="form-label" for="subsRecAmt">Amount (Ksh)</label><input type="text" id="subsRecAmt" inputmode="decimal" autocomplete="off"></div>'
+      +  '<div class="form-group"><label class="form-label" for="subsRecDate">Paid on</label><input type="date" id="subsRecDate" max="' + todayStr() + '" value="' + todayStr() + '"></div></div>';
+    if (mp) h += '<button type="button" class="subs-link" style="margin:-4px 0 14px" onclick="subsRecManual(false)">Paste the message instead</button>';
+  }
+  h += '<div class="form-group"><label class="form-label" for="subsRecNote">Note <span style="text-transform:none;letter-spacing:.02em;color:var(--ink-400)">· optional</span></label>'
+    +  '<input type="text" id="subsRecNote" maxlength="300" placeholder="e.g. paid at the rehearsal on Saturday"></div>'
+    +  '<button type="button" class="btn btn-primary" id="subsRecGo" onclick="subsRecSubmit(this)">Record payment</button>'
+    +  '</div></div>';
+  return h;
+}
+function subsRecKeep() {
+  var m = document.getElementById("subsRecMember"); if (m) subsRec.member = m.value;
+  var t = document.getElementById("subsRecMsg"); if (t) subsRec.message = t.value;
+}
+function subsRecMethod(v) { subsRecKeep(); subsRec.method = v; subsRec.manual = false; renderSubscriptions(subsOverview); }
+function subsRecManual(on) { subsRecKeep(); subsRec.manual = !!on; renderSubscriptions(subsOverview); }
+function subsRecMsgChanged(v) {
+  subsRec.message = v; subsRec.read = null;
+  var out = document.getElementById("subsRecRead");
+  clearTimeout(subsRecTimer); subsRecSeq++;
+  if (!out) return;
+  if (!v.trim()) { out.innerHTML = ""; return; }
+  out.innerHTML = '<div class="subs-busy">Reading the message…</div>';
+  subsRecTimer = setTimeout(function () {
+    var seq = ++subsRecSeq, text = v;
+    previewTreasurerMessage(text, function (r) {
+      var o = document.getElementById("subsRecRead");
+      if (seq !== subsRecSeq || subsRec.message !== text || !o) return;
+      subsRec.read = r && r.ok ? r : null;
+      o.innerHTML = subsRec.read ? subsReadHtml(subsRec.read) : '<div class="subs-err">' + esc((r && r.error) || "That message couldn’t be read.") + '</div>';
+    });
+  }, 600);
+}
+function subsRecSubmit(btn) {
+  subsRecKeep();
+  var names = ((subsOverview && subsOverview.members) || []).map(function (m) { return m.name; });
+  var member = String(subsRec.member || "").trim();
+  if (names.indexOf(member) === -1) { showToast("Choose a member from the list.", "error"); var mi = document.getElementById("subsRecMember"); if (mi) mi.focus(); return; }
+  var note = ((document.getElementById("subsRecNote") || {}).value || "").trim();
+  var p = { member: member, method: subsRec.method, note: note };
+  if (subsRec.method === "mpesa" && !subsRec.manual) {
+    if (!subsRec.read) { showToast(subsRec.message.trim() ? "Wait for the message to be read, or fix it." : "Paste the M-Pesa message, or enter the details instead.", "error"); return; }
+    p.message = subsRec.message;
+  } else {
+    p.amount = Number(String((document.getElementById("subsRecAmt") || {}).value || "").replace(/[, ]/g, ""));
+    p.date = (document.getElementById("subsRecDate") || {}).value || "";
+    if (subsRec.method === "mpesa") p.code = String((document.getElementById("subsRecCode") || {}).value || "").trim().toUpperCase();
+    if (!(p.amount > 0)) { showToast("Enter the amount.", "error"); return; }
+    if (!p.date) { showToast("Enter the date it was paid.", "error"); return; }
+    if (subsRec.method === "mpesa" && !/^[A-Z0-9]{10}$/.test(p.code)) { showToast("Enter the 10-character M-Pesa code.", "error"); return; }
+  }
+  recordSubPayment(p, btn);
+}
+
+// Settings
+var subsSet = null;   // the form's working copy: { fee, deadline, nums: [{ number, name }], instructions }
+function subsSettingsDraft(d) {
+  var s = (d && d.settings) || {};
+  var nums = (s.receivingNumbers || []).map(function (n) { return { number: n.number, name: n.name || "" }; });
+  return { fee: s.fee ? String(s.fee) : "", deadline: s.deadline || "", nums: nums.length ? nums : [{ number: "", name: "" }], instructions: s.instructions || "" };
+}
+function subsSettingsHtml(d) {
+  var s = subsSet || subsSettingsDraft(d);
+  var h = '<div class="subs-form"><div class="card">'
+    + '<div class="subs-row2"><div class="form-group"><label class="form-label" for="subsSetFee">Fee for ' + esc(d.year) + ' (Ksh)</label>'
+    +   '<input type="text" id="subsSetFee" inputmode="decimal" autocomplete="off" value="' + subsAttr(s.fee) + '" oninput="subsSet.fee = this.value"></div>'
+    + '<div class="form-group"><label class="form-label" for="subsSetDeadline">Deadline</label>'
+    +   '<input type="date" id="subsSetDeadline" value="' + subsAttr(s.deadline) + '" oninput="subsSet.deadline = this.value"></div></div>'
+    + '<div class="subs-hint" style="margin:-6px 0 16px">The same fee for everyone. New members and returners get a month from the day they start owing, whatever the deadline.</div>'
+    + '<div class="form-group"><span class="form-label">Number members send money to</span>';
+  s.nums.forEach(function (n, i) {
+    h += '<div class="subs-numrow"><input type="text" inputmode="tel" autocomplete="off" placeholder="07XX XXX XXX" aria-label="Phone number" value="' + subsAttr(n.number) + '" oninput="subsSet.nums[' + i + '].number = this.value">'
+      +  '<input type="text" autocomplete="off" placeholder="Name on M-Pesa (optional)" aria-label="Name" value="' + subsAttr(n.name) + '" oninput="subsSet.nums[' + i + '].name = this.value">'
+      +  (s.nums.length > 1 ? '<button type="button" class="x" aria-label="Remove number" onclick="subsSetRemoveNum(' + i + ')">×</button>' : '<span></span>') + '</div>';
+  });
+  if (s.nums.length < 2) h += '<button type="button" class="subs-link" onclick="subsSetAddNum()">+ Add a second number</button>';
+  h += '<div class="subs-hint">Members’ messages must show money sent to one of these, or the app won’t accept them. Use the name exactly as M-Pesa shows it.</div></div>'
+    +  '<div class="form-group"><label class="form-label" for="subsSetInstr">Payment instructions</label>'
+    +    '<textarea id="subsSetInstr" rows="4" maxlength="500" style="min-height:96px" placeholder="e.g. Send Money from your own line if you can. Paying for a friend? Add their name in the note." oninput="subsSet.instructions = this.value">' + esc(s.instructions) + '</textarea>'
+    +    '<div class="subs-hint">Members see this on their card and in reminder emails.</div></div>'
+    +  '<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn btn-primary" onclick="subsSaveSettings(this)">Save settings</button>'
+    +  '<button type="button" class="btn btn-ghost" onclick="subsSet = null; subsSetView(\'members\')">Cancel</button></div>'
+    +  '</div></div>';
+  return h;
+}
+function subsSetAddNum() { if (subsSet && subsSet.nums.length < 2) { subsSet.nums.push({ number: "", name: "" }); renderSubscriptions(subsOverview); } }
+function subsSetRemoveNum(i) { if (subsSet) { subsSet.nums.splice(i, 1); renderSubscriptions(subsOverview); } }
+function subsSaveSettings(btn) {
+  var s = subsSet; if (!s) return;
+  var fee = Number(String(s.fee || "").replace(/[, ]/g, ""));
+  if (!(fee > 0)) { showToast("Enter the yearly fee in Ksh.", "error"); return; }
+  var nums = s.nums.filter(function (n) { return String(n.number || "").trim(); }).map(function (n) { return { number: String(n.number).trim(), name: String(n.name || "").trim() }; });
+  if (!nums.length) { showToast("Add the number members send money to.", "error"); return; }
+  saveSubSettings({ fee: fee, deadline: s.deadline || "", receivingNumbers: nums, instructions: String(s.instructions || "").trim() }, btn);
+}
+
+// Reminders
+var subsRemind = { statuses: ["Due", "Part paid", "Unpaid"], preview: null, loading: false };
+function subsRemindHtml(d) {
+  var r = subsRemind;
+  var box = function (st) {
+    return '<label class="checkbox-label"><input type="checkbox"' + (r.statuses.indexOf(st) !== -1 ? " checked" : "") + ' data-st="' + subsAttr(st) + '" onchange="subsRemindToggle(this)"> ' + esc(st) + '</label>';
+  };
+  var h = '<div class="subs-form"><div class="card">'
+    + '<p class="subs-quiet" style="margin:0 0 14px">Emails each member their balance, due date and how to pay. Preview first: you’ll see who gets it and the email itself.</p>'
+    + '<div class="form-group"><span class="form-label">Who to remind</span><div class="subs-checks">' + box("Due") + box("Part paid") + box("Unpaid") + box("Committed") + '</div></div>'
+    + '<button type="button" class="btn btn-secondary" id="subsRemindPrev" onclick="subsRemindPreview(this)"' + (r.statuses.length ? "" : " disabled") + '>' + (r.loading ? "Checking…" : "Preview") + '</button>';
+  if (r.preview) {
+    var p = r.preview, shown = p.names.slice(0, 40);
+    if (!p.count) {
+      h += '<div class="subs-note">Nobody to remind with these statuses.</div>';
+    } else {
+      h += '<div style="margin-top:16px"><div class="form-label">' + p.count + ' member' + (p.count === 1 ? "" : "s") + ' will get this</div>'
+        +  '<div class="subs-names">' + shown.map(function (n) { return '<span>' + esc(n) + '</span>'; }).join("") + (p.names.length > shown.length ? '<span>and ' + (p.names.length - shown.length) + ' more</span>' : "") + '</div>'
+        +  '<div class="form-label">The email (shown for ' + esc(p.names[0]) + ')</div>'
+        +  '<iframe id="subsMailFrame" class="subs-mail" sandbox="" title="Reminder email preview"></iframe>'
+        +  '<button type="button" class="btn btn-primary" style="margin-top:14px" onclick="sendSubReminders(subsRemind.statuses.slice(), ' + p.count + ', this)">Send ' + p.count + ' reminder' + (p.count === 1 ? "" : "s") + '</button></div>';
+    }
+  }
+  return h + '</div></div>';
+}
+function subsRemindToggle(el) {
+  var st = el.getAttribute("data-st"), i = subsRemind.statuses.indexOf(st);
+  if (el.checked && i === -1) subsRemind.statuses.push(st);
+  if (!el.checked && i !== -1) subsRemind.statuses.splice(i, 1);
+  subsRemind.preview = null;
+  renderSubscriptions(subsOverview);
+}
+function subsRemindPreview(btn) {
+  if (!subsRemind.statuses.length || subsRemind.loading) return;
+  subsRemind.loading = true; btn.disabled = true; btn.textContent = "Checking…";
+  previewSubReminders(subsRemind.statuses.slice(), function (r) {
+    subsRemind.loading = false;
+    subsRemind.preview = r || null;
+    renderSubscriptions(subsOverview);
+  });
+}
+
+// History (recent decisions)
+function subsRecentHtml(d) {
+  var rows = d.recent || [];
+  if (!rows.length) return '<div class="empty-pane">No decisions yet.</div>';
+  var byId = {}; rows.forEach(function (r) { byId[r.id] = r; });
+  var h = '<div class="card">';
+  rows.forEach(function (r) {
+    var isCom = r.type === "Commitment";
+    var how = r.source === "Split" ? "part of " + (byId[r.splitFrom] ? byId[r.splitFrom].member + "’s" : "a shared") + " payment"
+      : r.source === "Treasurer" ? (r.code ? "recorded by the Treasurer" : "cash, recorded by the Treasurer")
+      : r.status === "Withdrawn" ? "withdrawn by the member" : "";
+    var what = '<b>' + esc(r.member) + '</b> · ' + esc(subsKsh(r.amount)) + (isCom ? " by " + esc(subsDate(r.payBy)) + " (commitment)" : "") + (how ? " · " + esc(how) : "");
+    var sub = [r.code, r.decidedAt ? "decided " + subsDate(r.decidedAt) : ""].filter(Boolean).join(" · ");
+    h += '<div class="subs-recent-row"><div class="what">' + what + '</div><div>' + subsChip(r.status) + '</div>'
+      +  (sub ? '<div class="sub">' + esc(sub) + '</div>' : "")
+      +  (r.reason && !/^Split:/.test(r.reason) ? '<div class="why">“' + esc(r.reason) + '”</div>' : r.reason ? '<div class="sub">' + esc(r.reason) + '</div>' : "")
+      +  '</div>';
+  });
+  return h + '</div><div class="subs-more">The last ' + rows.length + ' decision' + (rows.length === 1 ? "" : "s") + '. The CSV has everyone’s totals.</div>';
+}
+
+// ─── 14g. Treasurer post (full admins appoint; everyone with canView sees who) ──
+function appointSubTreasurer(name, btn) {
+  subsCall("subAppoint", btn, "Appointing…", function () { return name + " is now Treasurer"; }, function (r) { r.appointTreasurer(name); },
+    function () { subsCloseDialog("subsAppointDlg"); });
+}
+function removeSubTreasurer(email, name, btn) {
+  if (!confirm("Remove " + name + " as Treasurer?")) return;
+  subsCall("subRemoveT", btn, "Removing…", "Treasurer removed", function (r) { r.removeTreasurer(email); });
+}
+function subsTreasurerCardHtml(d, c) {
+  var t = d.treasurers || [];
+  var h = '<div class="card"><div class="subs-side-title">Treasurer</div>';
+  if (!t.length) h += '<div class="subs-meta">No Treasurer appointed yet.' + (c.canAppoint ? "" : " A full admin appoints one.") + '</div>';
+  t.forEach(function (x) {
+    h += '<div class="subs-person"><div><div class="nm">' + esc(x.name) + '</div>'
+      +  '<div class="since">Since ' + esc(subsDate(x.appointedOn)) + (x.appointedBy ? " · by " + esc(x.appointedBy) : "") + '</div></div>'
+      +  (c.canAppoint && x.email ? '<button type="button" class="btn-export" data-email="' + subsAttr(x.email) + '" data-name="' + subsAttr(x.name) + '" onclick="removeSubTreasurer(this.getAttribute(\'data-email\'), this.getAttribute(\'data-name\'), this)">Remove</button>' : "")
+      +  '</div>';
+  });
+  if (c.canAppoint && t.length < 2) h += '<button type="button" class="btn btn-secondary btn-block" style="margin-top:12px" onclick="subsOpenAppoint()">Appoint' + (t.length ? " a second" : "") + '…</button>';
+  if (c.canAppoint) h += '<div class="subs-hint">Up to two. The Treasurer sets the fee and confirms payments. Full admins can view everything here; appointing is the one thing they do.</div>';
+  return h + '</div>';
+}
+function subsOpenAppoint() {
+  if (roBlock()) return;
+  subsOpenDialog("subsAppointDlg",
+      '<h3 id="subsAppointDlgTitle">Appoint a Treasurer.</h3>'
+    + '<p>They’ll set the fee, confirm payments and send reminders. They must be an active member with an email on the Members sheet.</p>'
+    + '<div class="form-group"><label class="form-label" for="subsAppointName">Member</label>'
+    +   '<input type="text" id="subsAppointName" list="subsNameList" autocomplete="off" placeholder="Start typing a name"></div>'
+    + '<div class="dialog-actions"><button type="button" class="btn btn-secondary" onclick="subsCloseDialog(\'subsAppointDlg\')">Cancel</button>'
+    +   '<button type="button" class="btn btn-primary" onclick="subsAppointGo(this)">Appoint</button></div>');
+}
+function subsAppointGo(btn) {
+  var name = ((document.getElementById("subsAppointName") || {}).value || "").trim();
+  var names = ((subsOverview && subsOverview.members) || []).map(function (m) { return m.name; });
+  if (names.indexOf(name) === -1) { showToast("Choose a member from the list.", "error"); return; }
+  appointSubTreasurer(name, btn);
 }
 </script>

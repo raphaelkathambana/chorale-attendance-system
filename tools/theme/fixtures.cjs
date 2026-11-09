@@ -319,6 +319,133 @@ const DETAILS_FULL = { admissionNumber: "140370", courseFaculty: "SCES", courseN
   phoneNumber: "+254 711 222333", passportNumber: "AK1234567", nationalIdNumber: "34567890", gender: "M", yearOfStudy: "3", memberStatus: "On Hiatus" };
 const REDACTED_FOR_SECTION_ADMINS = ["passportNumber", "nationalIdNumber", "nokName", "nokPhone", "nokRelationship", "nokResidence"];
 
+// ─── Subscriptions (Scripts §14, backend 9 Nov 2026) ─────────────────────────
+// Off by default so every other screen stays as it was: getUserRole() carries no
+// `subscriptions` caps (no tab) and getMySubscription() throws (no card, no line).
+// state.subs: "admin" | "treasurer" | "treasurerMember" | "section" | "paused" | "superadmin"
+// state.subsSetup: "none" (the Treasurer hasn't set the fee or a number yet)
+// state.mySubs: a SUBS_MINE key (the signed-in member's card)
+const SUBS_YEAR = "2025/26", SUBS_FEE = 1000, SUBS_DEADLINE = "2025-11-30";
+const SUBS_MEMBERS = [
+  { name: "Amani Wanjiru", status: "Paid", paid: 1000, balance: 0, dueDate: SUBS_DEADLINE, dueReason: "Deadline" },
+  { name: "Brian Otieno", status: "Part paid", paid: 600, balance: 400, dueDate: SUBS_DEADLINE, dueReason: "Deadline", pendingAmount: 400 },
+  { name: "Cynthia Achieng", status: "Committed", paid: 0, balance: 1000, dueDate: SUBS_DEADLINE, dueReason: "Deadline", commitment: { id: "sub_c1", amount: 1000, payBy: "2026-10-30", lapsed: false } },
+  { name: "Dennis Ouma", status: "Unpaid", paid: 0, balance: 1000, dueDate: SUBS_DEADLINE, dueReason: "Deadline", pendingAmount: 2000 },
+  { name: "Esther Njeri", status: "Due", paid: 0, balance: 1000, dueDate: "2026-10-25", dueReason: "Returned to active", pendingAmount: 1000 },
+  { name: "Faith Kerubo", status: "Paid", paid: 1000, balance: 0, dueDate: SUBS_DEADLINE, dueReason: "Deadline" },
+  { name: "George Kamau", status: "Not required", paid: 0, balance: 0 },
+  { name: "Hellen Mutua", status: "On hiatus", paid: 0, balance: 0 },
+  { name: "Ian Mwangi", status: "Not due yet", paid: 0, balance: 0 },
+  { name: "Joy Wambui", status: "Not due yet", paid: 400, balance: 0 },
+  { name: "Victor Otieno", status: "Unpaid", paid: 0, balance: 1000, dueDate: SUBS_DEADLINE, dueReason: "Deadline", commitment: { id: "sub_c0", amount: 1000, payBy: "2026-09-30", lapsed: true }, commitmentPending: true },
+];
+const SUBS_SETTINGS = { fee: SUBS_FEE, deadline: SUBS_DEADLINE, receivingNumbers: [{ number: "0712345678", name: "STRATHMORE CHORALE" }],
+  instructions: "Send Money to the Chorale line below, from your own line if you can.\nPaying for someone else too? Say who in the note." };
+const SUBS_QUEUE = [
+  { id: "sub_q1", type: "Payment", member: "Brian Otieno", amount: 400, code: "UK9RK1H8LC", paidAt: "2026-10-12 17:42", recipient: "STRATHMORE CHORALE 0712345678",
+    message: "UK9RK1H8LC Confirmed. Ksh400.00 sent to STRATHMORE CHORALE 0712345678 on 12/10/26 at 5:42 PM.", note: "Balance for the year", payBy: "", submittedAt: "2026-10-12 17:45", numberChanged: false },
+  { id: "sub_q2", type: "Payment", member: "Dennis Ouma", amount: 2000, code: "UK8QW2E5TP", paidAt: "2026-10-13 09:02", recipient: "STRATHMORE CHORALE 0712345678",
+    message: "UK8QW2E5TP Confirmed. Ksh2,000.00 sent to STRATHMORE CHORALE 0712345678 on 13/10/26 at 9:02 AM.", note: "For me and Victor Otieno", payBy: "", submittedAt: "2026-10-13 09:10", numberChanged: false },
+  { id: "sub_q3", type: "Payment", member: "Esther Njeri", amount: 1000, code: "UK7HD4M1RN", paidAt: "2026-10-13 20:15", recipient: "JANE MWANGI 0798765432",
+    message: "UK7HD4M1RN Confirmed. Ksh1,000.00 sent to JANE MWANGI 0798765432 on 13/10/26 at 8:15 PM.", note: "", payBy: "", submittedAt: "2026-10-13 20:20", numberChanged: true },
+  { id: "sub_q4", type: "Commitment", member: "Victor Otieno", amount: 1000, code: "", paidAt: "", recipient: "", message: "", note: "After my HELB comes through",
+    payBy: "2026-10-30", submittedAt: "2026-10-14 08:30", numberChanged: false },
+];
+const SUBS_RECENT = [
+  { id: "sub_r1", type: "Commitment", member: "Cynthia Achieng", amount: 1000, status: "Approved", code: "", paidAt: "", payBy: "2026-10-30", reason: "", decidedAt: "2026-10-10 11:05", decidedBy: "faith.kerubo@example.org", source: "Member", splitFrom: "" },
+  { id: "sub_r2", type: "Payment", member: "Victor Otieno", amount: 1000, status: "Rejected", code: "UJ1AB2CD3E", paidAt: "2026-10-08 19:20", payBy: "", reason: "This code isn't on the Chorale statement. Check you sent it to 0712 345 678.", decidedAt: "2026-10-09 10:00", decidedBy: "faith.kerubo@example.org", source: "Member", splitFrom: "" },
+  { id: "sub_r3", type: "Payment", member: "Joy Wambui", amount: 400, status: "Confirmed", code: "UJ9XY7KL2M", paidAt: "2026-10-03 18:10", payBy: "", reason: "", decidedAt: "2026-10-04 09:30", decidedBy: "faith.kerubo@example.org", source: "Split", splitFrom: "sub_r4" },
+  { id: "sub_r4", type: "Payment", member: "Brian Otieno", amount: 600, status: "Confirmed", code: "UJ9XY7KL2M", paidAt: "2026-10-03 18:10", payBy: "", reason: "Split: Joy Wambui Ksh 400", decidedAt: "2026-10-04 09:30", decidedBy: "faith.kerubo@example.org", source: "Member", splitFrom: "" },
+  { id: "sub_r5", type: "Payment", member: "Faith Kerubo", amount: 1000, status: "Confirmed", code: "", paidAt: "2026-10-02 00:00", payBy: "", reason: "", decidedAt: "2026-10-02 18:40", decidedBy: "faith.kerubo@example.org", source: "Treasurer", splitFrom: "" },
+  { id: "sub_r6", type: "Payment", member: "Amani Wanjiru", amount: 1000, status: "Confirmed", code: "UJ3PL0Q2ZX", paidAt: "2026-09-29 07:55", payBy: "", reason: "", decidedAt: "2026-09-30 08:15", decidedBy: "faith.kerubo@example.org", source: "Member", splitFrom: "" },
+];
+const SUBS_TREASURERS = [{ name: "Faith Kerubo", appointedOn: "2025-11-03", appointedBy: "Test Admin", email: "faith.kerubo@example.org" }];
+const SUBS_ITEM = (o) => Object.assign({ id: "", type: "Payment", amount: 0, status: "", code: "", paidAt: "", payBy: "", note: "", reason: "", submittedAt: "", decidedAt: "", source: "Member", mine: true }, o);
+const SUBS_MINE = {
+  due:       { status: "Due", owes: true, paid: 0, balance: 1000, dueDate: "2026-10-25", dueReason: "Returned to active", canCommit: true, items: [] },
+  part:      { status: "Part paid", owes: true, paid: 600, balance: 400, dueDate: SUBS_DEADLINE, dueReason: "Deadline", pendingAmount: 400, canCommit: true, items: [
+               SUBS_ITEM({ id: "sub_q1", amount: 400, status: "Pending", code: "UK9RK1H8LC", paidAt: "2026-10-12 17:42", submittedAt: "2026-10-12 17:45" }),
+               SUBS_ITEM({ id: "sub_r2", amount: 1000, status: "Rejected", code: "UJ1AB2CD3E", paidAt: "2026-10-08 19:20", reason: "This code isn't on the Chorale statement. Check you sent it to 0712 345 678.", submittedAt: "2026-10-08 19:25" }),
+               SUBS_ITEM({ id: "sub_r4", amount: 600, status: "Confirmed", code: "UJ9XY7KL2M", paidAt: "2026-10-03 18:10", reason: "Split: Joy Wambui Ksh 400", submittedAt: "2026-10-03 18:12" })] },
+  unpaid:    { status: "Unpaid", owes: true, paid: 0, balance: 1000, dueDate: SUBS_DEADLINE, dueReason: "Deadline", canCommit: true,
+               commitment: { id: "sub_c0", amount: 1000, payBy: "2026-09-30", lapsed: true },
+               items: [SUBS_ITEM({ id: "sub_c0", type: "Commitment", amount: 1000, status: "Approved", payBy: "2026-09-30", submittedAt: "2026-09-12 10:00" })] },
+  committed: { status: "Committed", owes: true, paid: 0, balance: 1000, dueDate: SUBS_DEADLINE, dueReason: "Deadline", canCommit: false,
+               commitment: { id: "sub_c1", amount: 1000, payBy: "2026-10-30", lapsed: false },
+               items: [SUBS_ITEM({ id: "sub_c1", type: "Commitment", amount: 1000, status: "Approved", payBy: "2026-10-30", submittedAt: "2026-10-09 15:00" })] },
+  paid:      { status: "Paid", owes: true, paid: 1000, balance: 0, dueDate: SUBS_DEADLINE, dueReason: "Deadline", items: [
+               SUBS_ITEM({ id: "sub_r6", amount: 1000, status: "Confirmed", code: "UJ3PL0Q2ZX", paidAt: "2026-09-29 07:55", submittedAt: "2026-09-29 08:00" })] },
+  notdue:    { status: "Not due yet", owes: false, paid: 0, balance: 0, items: [] },
+  notready:  { ready: false, status: "Not set up", owes: false, paid: 0, balance: 0, items: [] },
+};
+function subsMine(key) {
+  const v = SUBS_MINE[key]; if (!v) throw new Error("Subscriptions are for members - your account has no Members row.");
+  return Object.assign({ year: SUBS_YEAR, fee: SUBS_FEE, deadline: SUBS_DEADLINE, ready: true, pendingAmount: 0, commitment: null, commitmentPending: false,
+    canCommit: false, instructions: SUBS_SETTINGS.instructions, receivingNumbers: SUBS_SETTINGS.receivingNumbers, treasurers: ["Faith Kerubo"], dueDate: "", dueReason: "" }, v);
+}
+function subsCapsFor(state) {
+  const k = state.subs;
+  if (!k) return undefined;
+  if (k === "treasurer") return { canView: true, canAct: true, canAppoint: true, scope: "all", section: "", treasurerPaused: false };
+  if (k === "treasurerMember") return { canView: true, canAct: true, canAppoint: false, scope: "all", section: "", treasurerPaused: false };
+  if (k === "section") return { canView: true, canAct: false, canAppoint: false, scope: "section", section: "Choir", treasurerPaused: false };
+  if (k === "paused") return { canView: true, canAct: false, canAppoint: true, scope: "all", section: "", treasurerPaused: true };
+  if (k === "superadmin") return { canView: true, canAct: false, canAppoint: false, scope: "all", section: "", treasurerPaused: false };
+  return { canView: true, canAct: false, canAppoint: true, scope: "all", section: "", treasurerPaused: false };
+}
+function subsOverview(state) {
+  const caps = subsCapsFor(state) || { canView: true, canAct: false, canAppoint: false, scope: "all", section: "" };
+  const none = state.subsSetup === "none";
+  const groupsOf = n => (PEOPLE.find(p => p.name === n) || {}).groups || [];
+  let members = SUBS_MEMBERS.map(m => Object.assign({ pendingAmount: 0, commitment: null, commitmentPending: false, dueDate: "", dueReason: "" }, m, { groups: groupsOf(m.name) }));
+  if (none) members = members.map(m => Object.assign({}, m, { status: "Not set up", paid: 0, balance: 0, dueDate: "", dueReason: "", pendingAmount: 0, commitment: null, commitmentPending: false }));
+  if (caps.scope === "section") members = members.filter(m => m.groups.indexOf(caps.section) !== -1);
+  const owing = ["Paid", "Part paid", "Committed", "Due", "Unpaid"], counts = {};
+  let expected = 0, collected = 0, outstanding = 0, waiting = 0;
+  members.forEach(m => {
+    counts[m.status] = (counts[m.status] || 0) + 1; collected += m.paid;
+    if (owing.indexOf(m.status) !== -1) { expected += SUBS_FEE; outstanding += m.balance; }
+    waiting += (m.pendingAmount ? 1 : 0) + (m.commitmentPending ? 1 : 0);
+  });
+  const fee = none ? 0 : SUBS_FEE, deadline = none ? "" : SUBS_DEADLINE;
+  const out = { year: SUBS_YEAR, fee, deadline, caps,
+    summary: { owing: members.filter(m => owing.indexOf(m.status) !== -1).length, expected, collected, outstanding,
+               percentPaid: expected ? Math.round(Math.min(collected, expected) * 100 / expected) : 0, counts, waiting },
+    members, treasurers: SUBS_TREASURERS.map(t => caps.canAppoint ? Object.assign({}, t) : { name: t.name, appointedOn: t.appointedOn, appointedBy: t.appointedBy }),
+    settings: { fee, deadline } };
+  if (caps.canAct) {
+    out.settings = none ? { fee: 0, deadline: "", receivingNumbers: [], instructions: "" } : SUBS_SETTINGS;
+    out.queue = none ? [] : SUBS_QUEUE; out.recent = none ? [] : SUBS_RECENT;
+  }
+  return out;
+}
+const SUBS_READ = { ok: true, code: "UK9RK1H8LC", amount: 1000, name: "STRATHMORE CHORALE", number: "0712345678", date: "2026-10-14", time: "05:20" };
+const SUBS_EMAIL = '<div style="font-family:Arial,sans-serif;background:#FBF7EE;padding:24px"><div style="max-width:560px;margin:0 auto;background:#fff;border:1px solid #E8DEC6">'
+  + '<div style="background:#14110F;color:#FBF7EE;padding:22px 26px;font-family:Georgia,serif;font-style:italic;font-size:24px">Subscription<div style="font:13px Arial;color:#B5AC9D;font-style:normal;margin-top:6px">2025/26</div></div>'
+  + '<div style="padding:22px 26px;font-size:13.5px;line-height:1.6;color:#2A2522"><p>Hi Brian,</p><p>This is a reminder about your <b>2025/26</b> Chorale subscription of Ksh 1,000.</p>'
+  + '<p>Paid so far: <b>Ksh 600</b> of Ksh 1,000. Balance: <b>Ksh 400</b>. Due by <b>2025-11-30</b>.</p><p>Send Money to: 0712345678 (STRATHMORE CHORALE).</p></div></div></div>';
+function subsFixtures(state) {
+  return {
+    getMySubscription: () => subsMine(state.mySubs),
+    previewMpesaMessage: text => /Confirmed/i.test(text || "") ? Object.assign({ kind: "sent" }, SUBS_READ)
+      : { ok: false, error: "That doesn't look like an M-Pesa Send Money confirmation. Paste the whole message, from the code to the date and time." },
+    submitSubscriptionPayment: () => ({ success: true, id: "sub_new", code: "UK9RK1H8LC", amount: 1000 }),
+    requestSubscriptionCommitment: () => ({ success: true, id: "sub_new" }),
+    withdrawSubscriptionItem: () => ({ success: true }),
+    getSubscriptionsOverview: () => subsOverview(state),
+    previewTreasurerMpesaMessage: text => /Confirmed/i.test(text || "") ? Object.assign({ kind: "received" }, SUBS_READ, { name: "DENNIS OUMA", number: "0722***456" })
+      : { ok: false, error: "That doesn't look like an M-Pesa confirmation. Paste the whole message as it arrived." },
+    confirmSubscriptionPayment: () => ({ success: true, emailed: 1 }),
+    rejectSubscriptionItem: () => ({ success: true, emailed: true }),
+    approveSubscriptionCommitment: () => ({ success: true, emailed: true }),
+    recordSubscriptionPayment: () => ({ success: true, id: "sub_new", emailed: true }),
+    updateSubscriptionSettings: p => Object.assign({ success: true }, p),
+    sendSubscriptionReminders: o => o && o.preview ? { count: 4, names: ["Brian Otieno", "Dennis Ouma", "Esther Njeri", "Victor Otieno"], sampleHtml: SUBS_EMAIL } : { success: true, sent: 4, failed: [] },
+    appointTreasurer: () => ({ success: true, treasurers: SUBS_TREASURERS }),
+    removeTreasurer: () => ({ success: true, treasurers: [] }),
+  };
+}
+
 // scenario: "admin" | "member" | "member-failed" | "superadmin".
 // state (set per screen by render.cjs, read lazily): { role: "sectionAdmin", year: "before"|"available"|"pending",
 //   myApology: <MY_APOLOGY key>, emergency: "prominent"|"hidden", birthdays: "banner",
@@ -339,7 +466,7 @@ function fixtures(scenario, state) {
       isAdminLike: true, readOnly: false, isMember: true, canViewPastYears: true, canStartNewYear: true };
   };
   const fx = {
-    getUserRole: roleFor,
+    getUserRole: () => { const r = roleFor(), c = subsCapsFor(state); return c ? Object.assign(r, { subscriptions: c }) : r; },
     getMembers: () => PEOPLE.map(p => ({ name: p.name, groups: p.groups, roles: p.roles, probation: p.name === "Joy Wambui", probationStart: "2026-09-01" })),
     getAllMemberNames: () => PEOPLE.map(p => p.name),
     getMemberList: memberList,
@@ -423,7 +550,8 @@ function fixtures(scenario, state) {
       return { success: true, id: (tpl && tpl.id) || "tpl_4", updatedAt: Date.parse("2026-10-14T15:00:00+03:00"), savedLabel: "Wed 14 Oct · 15:00" };
     },
     // Activity log
-    getActivityLog: () => ({ entries: ACTIVITY, actions: [...new Set(ACTIVITY.map(e => e.action))].sort(), total: ACTIVITY.length }),
+    getActivityLog: () => ({ entries: ACTIVITY, actions: [...new Set(ACTIVITY.map(e => e.action))].sort(), total: ACTIVITY.length,
+      actors: [...new Map(ACTIVITY.map(e => [e.actor, { email: e.actor, name: e.actorName }])).values()] }),
     // Chorale years
     getYearInfo: () => yearInfo(state, superAdmin),
     previewNewYear: () => newYearPlan(state),
@@ -436,6 +564,7 @@ function fixtures(scenario, state) {
     // Dark mode plumbing: the server preference. render.cjs overrides it per mode.
     getThemePreference: () => "system",
   };
+  Object.assign(fx, subsFixtures(state));
   // Archived-year reads go through callForYear(label, fn, args) and return fn's own shape.
   fx.callForYear = (label, fn, args) => (fx[fn] ? fx[fn].apply(null, args || []) : (/^(get|list|count)/.test(fn) ? [] : { success: true }));
   return fx;

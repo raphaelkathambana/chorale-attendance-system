@@ -38,7 +38,7 @@ var APP_URL = "https://script.google.com/a/macros/strathmore.edu/s/AKfycbw0_PlBu
 var EMAIL_CC = "aapela@strathmore.edu";
 var EMAIL_FROM_NAME = "Strathmore Chorale";
 // Contact email shown to unknown users on the access-denied screen
-var ADMIN_CONTACT_EMAIL = "aapela@strathmore.edu.edu";
+var ADMIN_CONTACT_EMAIL = "aapela@strathmore.edu";
  
 // Status → Points mapping
 var POINTS_MAP = {
@@ -80,6 +80,11 @@ var PAST_YEARS_FOR_SECTION_ADMINS = true;
 var EDITOR_ROLLOVER_START_DATE = "";
 
 // ======================= END OF CONFIG =======================
+// When you paste a new version, keep YOUR values above this line and replace
+// everything below it. Only settings live above - no functions. (An old
+// one-line getSpreadsheet_() kept up here used to override the year-aware
+// one below and broke past-year views; it now lives further down.)
+// =============================================================
 
 function doGet() {
   return HtmlService.createTemplateFromFile("Page").evaluate()
@@ -87,7 +92,7 @@ function doGet() {
     .addMetaTag("viewport", "width=device-width, initial-scale=1, maximum-scale=1")
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
- 
+
 /** Includes an HTML file inside another (used for Scripts.html). */
 function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
@@ -672,6 +677,8 @@ function getUserRole() {
     // admins while PAST_YEARS_FOR_SECTION_ADMINS is true. Starting a year: full admins.
     canViewPastYears: canViewPastYears_(a),
     canStartNewYear: a.level >= ROLE_LEVELS.admin && !a.readOnly,
+    // Phase 7a - subscriptions: { canView, canAct, canAppoint, scope, section, treasurerPaused }
+    subscriptions: subsCapsSafe_(a, ss),
     // Appearance: "system" | "light" | "dark". Every return path of getUserRole()
     // must carry this (docs/THEMING.md section 1).
     theme: readThemePreference_()
@@ -1367,14 +1374,18 @@ function logActivity_(action, target, details) {
  * Activity log for full admins and the Super Admin, newest first.
  * filters: { from, to ("yyyy-MM-dd"), actor (email or name, substring),
  *            action (exact), search (substring over target/details), limit (default 200, max 1000) }
- * Returns { entries: [{ timestamp, actor, actorName, action, target, details }], actions: [...], total }.
+ * A search of the form yyyy-MM-dd (the app turns "15/9/26", "15th Sep"... into this) also
+ * matches that date written as "15 Sep 2026", "15 September 2026", "15/09/2026" or
+ * "15/9/2026", and every entry made that day.
+ * Returns { entries: [{ timestamp, actor, actorName, action, target, details }], actions: [...], total,
+ *           actors: [{ email, name }] } - actors is everyone in the log, whatever the filters.
  */
 function getActivityLog(filters) {
   requireLevel_(ROLE_LEVELS.admin);
   filters = filters || {};
   var ss = getSpreadsheet_();
   var sh = ss.getSheetByName(ACTIVITY_SHEET);
-  if (!sh || sh.getLastRow() < 2) return { entries: [], actions: [], total: 0 };
+  if (!sh || sh.getLastRow() < 2) return { entries: [], actions: [], total: 0, actors: [] };
   var tz = Session.getScriptTimeZone();
   var names = {};
   readAllMembers_(ss).forEach(function (m) { if (m.email) names[String(m.email).toLowerCase()] = m.name; });
@@ -1392,20 +1403,35 @@ function getActivityLog(filters) {
   var limit = Math.min(Math.max(parseInt(filters.limit, 10) || 200, 1), 1000);
   var actor = String(filters.actor || "").toLowerCase().trim();
   var search = String(filters.search || "").toLowerCase().trim();
+  var searchDate = /^\d{4}-\d{2}-\d{2}$/.test(search) ? search : "";
+  var needles = search ? [search] : [];
+  if (searchDate) {
+    var sp = searchDate.split("-");
+    var sd = new Date(Number(sp[0]), Number(sp[1]) - 1, Number(sp[2]), 12);
+    needles = [searchDate,
+      Utilities.formatDate(sd, tz, "d MMM yyyy"), Utilities.formatDate(sd, tz, "d MMMM yyyy"),
+      Utilities.formatDate(sd, tz, "dd/MM/yyyy"), Utilities.formatDate(sd, tz, "d/M/yyyy")]
+      .map(function (n) { return n.toLowerCase(); });
+  }
   var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 5).getValues();
-  var actions = {}, out = [], total = 0;
+  var actions = {}, actors = {}, out = [], total = 0;
   for (var i = rows.length - 1; i >= 0; i--) {
     var r = rows[i];
     var ts = r[0] instanceof Date ? r[0] : new Date(r[0]);
     var day = isNaN(ts.getTime()) ? "" : Utilities.formatDate(ts, tz, "yyyy-MM-dd");
     var email = String(r[1] || ""), act = String(r[2] || "");
     actions[act] = true;
+    if (email && !actors[email]) actors[email] = names[email.toLowerCase()] || email;
     if (filters.from && day < filters.from) continue;
     if (filters.to && day > filters.to) continue;
     if (filters.action && act !== filters.action) continue;
     var nm = names[email.toLowerCase()] || "";
     if (actor && email.toLowerCase().indexOf(actor) === -1 && nm.toLowerCase().indexOf(actor) === -1) continue;
-    if (search && (String(r[3]) + " " + String(r[4])).toLowerCase().indexOf(search) === -1) continue;
+    if (needles.length) {
+      var hay = (String(r[3]) + " " + String(r[4])).toLowerCase();
+      var hit = needles.some(function (n) { return hay.indexOf(n) !== -1; });
+      if (!hit && !(searchDate && day === searchDate)) continue;
+    }
     total++;
     if (out.length < limit) {
       out.push({ timestamp: isNaN(ts.getTime()) ? String(r[0]) : Utilities.formatDate(ts, tz, "yyyy-MM-dd HH:mm"),
@@ -1413,7 +1439,8 @@ function getActivityLog(filters) {
                  action: act, target: String(r[3] || ""), details: String(r[4] || "") });
     }
   }
-  return { entries: out, actions: Object.keys(actions).filter(Boolean).sort(), total: total };
+  return { entries: out, actions: Object.keys(actions).filter(Boolean).sort(), total: total,
+           actors: Object.keys(actors).map(function (e) { return { email: e, name: actors[e] }; }) };
 }
 
 // -------------------------------------------------------
@@ -1785,8 +1812,10 @@ function overturnProbationOutcome(memberName, notify) {
   // (Member Details "Left") - not if they've since gone on hiatus or similar.
   var membershipRestored = false;
   if (d.recorded === "failed" && !m.active && getMemberDetailStatus_(ss, m.name) === "Left") {
+    var subsBack = subsIsReturning_(ss, m);
     setMembershipState_(ss, m.name, "Active", "Active", "");
     membershipRestored = true;
+    subsNoteEvent_(ss, m.name, subsBack ? "Passed probation (rejoined, corrected)" : "Passed probation (new member, corrected)", !subsBack);
   }
 
   // Close a rejoin request they filed after failing - it is no longer needed.
@@ -2020,14 +2049,18 @@ function evaluateProbation_(ss) {
     if (stats.attended >= required) {
       // Clean pass: ≥80%
       outcome = "passed_clean";
+      var subsBackC = subsIsReturning_(ss, m);   // read before the status flips to Active
       try { setMembershipState_(ss, m.name, "Active", "Active", ""); } catch(e) {}
+      subsNoteEvent_(ss, m.name, subsBackC ? "Passed probation (rejoined)" : "Passed probation (new member)", !subsBackC);
       sheet.getRange(row, probIdx + 1).setValue("Passed");
       sheet.getRange(row, probEndIdx + 1).setValue(stats.lastSessionDate);
       sheet.getRange(row, penaltyIdx + 1).setValue(0);
     } else if (stats.attended >= minRequired) {
       // Conditional pass: 50-79% — passed but with penalty
       outcome = "passed_conditional";
+      var subsBackP = subsIsReturning_(ss, m);   // read before the status flips to Active
       try { setMembershipState_(ss, m.name, "Active", "Active", ""); } catch(e) {}
+      subsNoteEvent_(ss, m.name, subsBackP ? "Passed probation (rejoined)" : "Passed probation (new member)", !subsBackP);
       penalty = (required - stats.attended) * PROBATION_PENALTY_MULTIPLIER;
       sheet.getRange(row, probIdx + 1).setValue("Passed");
       sheet.getRange(row, probEndIdx + 1).setValue(stats.lastSessionDate);
@@ -8780,6 +8813,7 @@ function reinstateMemberActive_(ss, memberName) {
   }
   if (!found) throw new Error("Member not found: " + memberName);
   setMembershipState_(ss, memberName, "Active", "Active", "");
+  subsNoteEvent_(ss, memberName, "Returned to active", false);   // owes from now, unless already paid this year
   return true;
 }
 
@@ -11153,4 +11187,925 @@ function fullAdminEmails_(ss) {
     if (em && (role === "" || role === "admin")) out.push(em);
   }
   return out;
+}
+
+// =======================================================
+//  PHASE 7a - SUBSCRIPTIONS (Treasurer) - Stage 1, Nov 2026
+//
+//  One fee per chorale year, the same for everyone, set by the Treasurer in the app.
+//  WHO OWES: Active members who are not on probation (so not rejoining) and not on
+//  hiatus. Each of them has their OWN deadline:
+//    - existing members: the general deadline from the Treasurer's Settings
+//    - new members: 1 month after passing probation; nothing is owed for the year if
+//      they pass on or after 1 September of that chorale year
+//    - coming back (hiatus, reinstated, rejoined after probation): 1 month after
+//      returning, full fee at any time of year - unless a payment is already
+//      recorded for the year
+//  STATUS: Not set up | Not due yet | Not required | Due | Committed | Part paid |
+//          Paid | Unpaid | On hiatus | Inactive   (pending submissions ride alongside)
+//  "Part paid", "Committed" and "Paid" are safe at the deadline. A commitment (an
+//  amount + a pay-by date, approved by the Treasurer) lapses to Unpaid if its date
+//  passes with nothing paid. No waivers.
+//
+//  Members paste their M-Pesa Send Money confirmation; the Treasurer confirms or
+//  rejects it. Only the parsed fields are stored - code, amount, recipient, date and
+//  time - never the member's balance, the transaction cost or anything else.
+//  The Treasurer is a post appointed in the app by a full admin (up to 2). Viewing:
+//  full admins and the Super Admin see everyone; section admins and elevated members
+//  see their own section. Only a Treasurer acts.
+//  Settings and appointments live in Script Properties under "subs_settings"
+//  (the "subs_" prefix is reserved for this feature).
+//  Stage 2 (deadline warnings, pausing unpaid members) and Stage 3 (carrying unpaid
+//  balances into the next year at rollover) build on this.
+// =======================================================
+var SUBS_SHEET_ = "Subscriptions";
+var SUBS_EVENTS_SHEET_ = "Subscription Events";
+var SUBS_PROPS_KEY_ = "subs_settings";
+var SUBS_MAX_TREASURERS_ = 2;
+var SUBS_HEADERS_ = ["ID", "Year", "Type", "Member", "Amount", "Status", "M-Pesa Code", "Paid At", "Recipient",
+  "Message", "Note", "Pay By", "Submitted At", "Submitted By", "Decided At", "Decided By", "Reason", "Source", "Split From"];
+var SUBS_EVENT_HEADERS_ = ["Year", "Member", "Event", "Date", "Due By", "Not Required", "Logged At"];
+var SUBS_GONE_STATUSES_ = ["Left", "Alumnus", "Memorial"];
+
+// Raph's Send Money pattern (9 Nov), adapted: whitespace collapsed before matching,
+// balance / transaction cost optional and never captured, recipient split into
+// name + number, 10-character code, day/month/year dates.
+var MPESA_SENT_RE_ = /\b([A-Z0-9]{10}) Confirmed\s*\.\s*Ksh\s?([\d,]+\.\d{2}) sent to (.+?) (0\d{9}|\+?254\d{9}) on (\d{1,2})\/(\d{1,2})\/(\d{2,4}) at (\d{1,2}):(\d{2}) ?(AM|PM)/i;
+// What the Treasurer's phone receives (used only when the Treasurer records a payment).
+var MPESA_RECEIVED_RE_ = /\b([A-Z0-9]{10}) Confirmed\s*\.\s*You have received Ksh\s?([\d,]+\.\d{2}) from (.+?) (0[\d*]{9}|\+?254[\d*]{9}) on (\d{1,2})\/(\d{1,2})\/(\d{2,4}) at (\d{1,2}):(\d{2}) ?(AM|PM)/i;
+
+// ---------- settings + small helpers ----------
+function readSubsSettings_() {
+  var raw = null, s = {};
+  try { raw = PropertiesService.getScriptProperties().getProperty(SUBS_PROPS_KEY_); } catch (e) {}
+  try { s = raw ? JSON.parse(raw) : {}; } catch (e) { s = {}; }
+  s.treasurers = s.treasurers || [];
+  s.receivingNumbers = s.receivingNumbers || [];
+  s.instructions = s.instructions || "";
+  s.years = s.years || {};
+  return s;
+}
+function writeSubsSettings_(s) {
+  PropertiesService.getScriptProperties().setProperty(SUBS_PROPS_KEY_, JSON.stringify(s));
+}
+function subsYear_() {
+  if (YEAR_VIEW_) return { label: YEAR_VIEW_.label, startsOn: YEAR_VIEW_.startsOn, endsOn: YEAR_VIEW_.endsOn };
+  var y = getCurrentYear_(getLiveSpreadsheet_());
+  return { label: y.label, startsOn: y.startsOn, endsOn: y.endsOn };
+}
+/** New members who pass probation on/after this date owe nothing for the year. */
+function subsCutoff_(label) { return (parseInt(String(label), 10) + 1) + "-09-01"; }
+function subsNormPhone_(s) {
+  var d = String(s || "").replace(/[^\d*]/g, "");
+  if (/^254/.test(d)) d = "0" + d.slice(3);
+  return d;
+}
+function subsAddMonths_(dateStr, n) {
+  var p = String(dateStr).split("-").map(Number);
+  var y = p[0], m = p[1] - 1 + n, d = p[2];
+  y += Math.floor(m / 12); m = ((m % 12) + 12) % 12;
+  var last = new Date(y, m + 1, 0).getDate();
+  return y + "-" + pad2_(m + 1) + "-" + pad2_(Math.min(d, last));
+}
+function subsKsh_(n) {
+  n = Math.round(Number(n || 0) * 100) / 100;
+  var whole = Math.floor(Math.abs(n)), cents = Math.round((Math.abs(n) - whole) * 100);
+  var s = String(whole).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return "Ksh " + (n < 0 ? "-" : "") + s + (cents ? "." + pad2_(cents) : "");
+}
+function subsEsc_(s) {
+  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+/** Text typed by people never starts a formula in the sheet. */
+function subsCellText_(s, max) {
+  s = String(s == null ? "" : s).trim().slice(0, max || 300);
+  return /^[=+\-@]/.test(s) ? " " + s : s;
+}
+function subsNow_() { return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm"); }
+function subsFmtDT_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm");
+  return String(v == null ? "" : v).trim();
+}
+function subsCents_(n) { return Math.round(Number(n || 0) * 100); }
+
+// ---------- M-Pesa messages ----------
+/**
+ * Reads an M-Pesa confirmation. kind "sent" (what members paste) or "received"
+ * (what the Treasurer's phone gets). Returns only the fields we keep, plus a
+ * rebuilt one-line message without the balance, transaction cost or extras.
+ */
+function parseMpesa_(text, kind) {
+  var t = String(text || "").replace(/\s+/g, " ").trim();
+  if (!t) throw new Error("Paste the M-Pesa message first.");
+  if (t.length > 2000) throw new Error("That's too long to be an M-Pesa message.");
+  var m = (kind === "received" ? MPESA_RECEIVED_RE_ : MPESA_SENT_RE_).exec(t);
+  if (!m) {
+    throw new Error(kind === "received"
+      ? "That doesn't look like an M-Pesa \"You have received\" message. Paste the whole message as it arrived."
+      : "That doesn't look like an M-Pesa Send Money confirmation. Paste the whole message, from the code to the date and time.");
+  }
+  var amount = Math.round(parseFloat(m[2].replace(/,/g, "")) * 100) / 100;
+  var day = +m[5], mon = +m[6], yr = +m[7], h12 = +m[8], mi = +m[9], ampm = m[10].toUpperCase();
+  if (yr < 100) yr += 2000;
+  var check = new Date(yr, mon - 1, day);
+  if (mon < 1 || mon > 12 || check.getMonth() !== mon - 1 || h12 < 1 || h12 > 12 || mi > 59) {
+    throw new Error("The date or time in that message couldn't be read.");
+  }
+  if (!(amount > 0)) throw new Error("The amount in that message couldn't be read.");
+  var hr = (h12 % 12) + (ampm === "PM" ? 12 : 0);
+  var date = yr + "-" + pad2_(mon) + "-" + pad2_(day);
+  var name = m[3].replace(/\s+/g, " ").trim();
+  var code = m[1].toUpperCase();
+  return {
+    kind: kind === "received" ? "received" : "sent", code: code, amount: amount,
+    name: name, number: subsNormPhone_(m[4]), date: date, time: pad2_(hr) + ":" + pad2_(mi),
+    paidAt: date + " " + pad2_(hr) + ":" + pad2_(mi),
+    message: code + " Confirmed. Ksh" + m[2] + (kind === "received" ? " received from " : " sent to ") + name + " " +
+             m[4] + " on " + m[5] + "/" + m[6] + "/" + m[7] + " at " + m[8] + ":" + m[9] + " " + ampm + "."
+  };
+}
+
+// ---------- sheets ----------
+function ensureSubsSheet_(ss) {
+  var sh = ss.getSheetByName(SUBS_SHEET_);
+  if (!sh) {
+    sh = ss.insertSheet(SUBS_SHEET_);
+    sh.getRange(1, 1, 1, SUBS_HEADERS_.length).setValues([SUBS_HEADERS_]).setFontWeight("bold");
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+function readSubsRows_(ss) {
+  var sh = ss.getSheetByName(SUBS_SHEET_);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var data = sh.getDataRange().getValues(), hm = {};
+  data[0].forEach(function (h, i) { hm[String(h).trim().toLowerCase()] = i; });
+  function v(r, k) { return hm[k] != null ? r[hm[k]] : ""; }
+  var out = [];
+  for (var i = 1; i < data.length; i++) {
+    var r = data[i];
+    if (!String(v(r, "id")).trim()) continue;
+    out.push({
+      row: i + 1, id: String(v(r, "id")).trim(), year: String(v(r, "year")).trim(), type: String(v(r, "type")).trim(),
+      member: String(v(r, "member")).trim(), amount: Number(v(r, "amount")) || 0, status: String(v(r, "status")).trim(),
+      code: String(v(r, "m-pesa code")).trim().toUpperCase(), paidAt: subsFmtDT_(v(r, "paid at")),
+      recipient: String(v(r, "recipient")).trim(), message: String(v(r, "message")).trim(), note: String(v(r, "note")).trim(),
+      payBy: v(r, "pay by") ? formatSheetDate_(v(r, "pay by")) : "", submittedAt: subsFmtDT_(v(r, "submitted at")),
+      submittedBy: String(v(r, "submitted by")).trim(), decidedAt: subsFmtDT_(v(r, "decided at")),
+      decidedBy: String(v(r, "decided by")).trim(), reason: String(v(r, "reason")).trim(),
+      source: String(v(r, "source")).trim(), splitFrom: String(v(r, "split from")).trim()
+    });
+  }
+  return out;
+}
+function subsAppend_(sh, o) {
+  sh.appendRow(SUBS_HEADERS_.map(function (h) { var k = h.toLowerCase(); return o[k] == null ? "" : o[k]; }));
+}
+function subsSetCells_(sh, row, o) {
+  var hm = headerIndexMap_(sh);
+  Object.keys(o).forEach(function (k) {
+    if (hm[k] != null) sh.getRange(row, hm[k] + 1).setValue(o[k]);
+  });
+}
+function subsNewId_() { return "sub_" + new Date().getTime() + "_" + Math.floor(Math.random() * 1e4); }
+
+function ensureSubsEventsSheet_(ss) {
+  var sh = ss.getSheetByName(SUBS_EVENTS_SHEET_);
+  if (!sh) {
+    sh = ss.insertSheet(SUBS_EVENTS_SHEET_);
+    sh.getRange(1, 1, 1, SUBS_EVENT_HEADERS_.length).setValues([SUBS_EVENT_HEADERS_]).setFontWeight("bold");
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+/** name -> the latest event for the year: { event, date, dueBy, notRequired } */
+function readSubsEvents_(ss, label) {
+  var sh = ss.getSheetByName(SUBS_EVENTS_SHEET_), out = {};
+  if (!sh || sh.getLastRow() < 2) return out;
+  var data = sh.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]).trim() !== label) continue;
+    var name = String(data[i][1]).trim();
+    var ev = { event: String(data[i][2]).trim(), date: formatSheetDate_(data[i][3]), dueBy: formatSheetDate_(data[i][4]),
+               notRequired: String(data[i][5]).trim().toLowerCase() === "yes" };
+    if (!out[name] || ev.date >= out[name].date) out[name] = ev;   // later rows win ties
+  }
+  return out;
+}
+
+/**
+ * Records that someone starts owing part-way through the year: passing probation
+ * (new member or rejoiner) or returning to Active. Never throws - membership
+ * changes must not fail because of subscriptions.
+ */
+function subsNoteEvent_(ss, name, event, isNewMember) {
+  try {
+    var y = getCurrentYear_(getLiveSpreadsheet_());
+    var today = todayStr_();
+    var notReq = !!isNewMember && today >= subsCutoff_(y.label);
+    ensureSubsEventsSheet_(ss).appendRow([y.label, name, event, today, subsAddMonths_(today, 1), notReq ? "Yes" : "", new Date()]);
+  } catch (e) {
+    try { Logger.log("Subscription event not recorded for " + name + ": " + e.message); } catch (e2) {}
+  }
+}
+/** A probation pass by someone who was a member before (rejoined) - not a new member. */
+function subsIsReturning_(ss, m) {
+  try {
+    if (getMemberDetailStatus_(ss, m.name) === "Rejoining") return true;
+    var sh = ss.getSheetByName(PROBATION_HISTORY_SHEET);
+    if (!sh || sh.getLastRow() < 2) return false;
+    var data = sh.getDataRange().getValues();
+    var h = data[0].map(function (x) { return String(x).trim().toLowerCase(); });
+    var ni = h.indexOf("name"), si = h.indexOf("probation start");
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][ni]).trim() !== m.name) continue;
+      var st = formatSheetDate_(data[i][si]);
+      if (st && (!m.probationStart || st < m.probationStart)) return true;
+    }
+  } catch (e) {}
+  return false;
+}
+
+// ---------- status ----------
+function subsContext_(ss) {
+  var year = subsYear_(), s = readSubsSettings_(), ys = s.years[year.label] || {};
+  var details = {};
+  var dsh = ss.getSheetByName(MEMBER_DETAILS_SHEET);
+  if (dsh && dsh.getLastRow() > 1) {
+    var dm = headerIndexMap_(dsh), dd = dsh.getDataRange().getValues();
+    if (dm["member status"] != null) {
+      for (var i = 1; i < dd.length; i++) details[String(dd[i][0]).trim()] = String(dd[i][dm["member status"]]).trim();
+    }
+  }
+  return { year: year, settings: s, fee: Number(ys.fee) || 0, deadline: ys.deadline || "", today: todayStr_(),
+           details: details, rows: readSubsRows_(ss).filter(function (r) { return r.year === year.label; }),
+           events: readSubsEvents_(ss, year.label), cutoff: subsCutoff_(year.label) };
+}
+
+/** One member's position for the year. See the header comment for the rules. */
+function subsMemberStatus_(ctx, m) {
+  var mine = ctx.rows.filter(function (r) { return r.member === m.name; });
+  var paidC = 0, pendC = 0, pendN = 0, com = null, comPending = false;
+  mine.forEach(function (r) {
+    if (r.type === "Payment" && r.status === "Confirmed") paidC += subsCents_(r.amount);
+    if (r.type === "Payment" && r.status === "Pending") { pendC += subsCents_(r.amount); pendN++; }
+    if (r.type === "Commitment" && r.status === "Approved" && (!com || r.decidedAt > com.decidedAt)) com = r;
+    if (r.type === "Commitment" && r.status === "Pending") comPending = true;
+  });
+  var detail = ctx.details[m.name] || "";
+  var ev = ctx.events[m.name] || null;
+  var out = { name: m.name, groups: m.groups || [], fee: ctx.fee, paid: paidC / 100, balance: 0, owes: false,
+              status: "", dueDate: "", dueReason: "", pendingAmount: pendC / 100, pendingCount: pendN,
+              commitment: com ? { id: com.id, amount: com.amount, payBy: com.payBy, lapsed: com.payBy < ctx.today } : null,
+              commitmentPending: comPending, hasActivity: mine.length > 0 };
+  if (!ctx.fee) { out.status = "Not set up"; return out; }
+  if (!m.active || SUBS_GONE_STATUSES_.indexOf(detail) !== -1) {
+    out.status = detail === "On Hiatus" ? "On hiatus" : "Inactive";
+    return out;
+  }
+  if (m.probation) { out.status = "Not due yet"; return out; }
+  if (ev && ev.notRequired) { out.status = "Not required"; return out; }
+  out.owes = true;
+  var feeC = subsCents_(ctx.fee);
+  out.balance = Math.max(0, feeC - paidC) / 100;
+  if (ev) { out.dueDate = ev.dueBy; out.dueReason = ev.event; }
+  else { out.dueDate = ctx.deadline; out.dueReason = "Deadline"; }
+  if (paidC >= feeC) out.status = "Paid";
+  else if (com && !out.commitment.lapsed && paidC === 0) out.status = "Committed";
+  else if (paidC > 0) out.status = "Part paid";
+  else if (com && out.commitment.lapsed) out.status = "Unpaid";
+  else if (out.dueDate && ctx.today > out.dueDate) out.status = "Unpaid";
+  else out.status = "Due";
+  return out;
+}
+
+// ---------- access ----------
+/**
+ * What this person can do with subscriptions:
+ *   { canView, canAct, canAppoint, scope: "all" | "section" | "", section, treasurerPaused }
+ * A Treasurer's powers pause while their own membership is inactive.
+ */
+function subsCaps_(a, ss) {
+  var email = String(a.email || "").toLowerCase();
+  var s = readSubsSettings_();
+  var appointed = !!email && s.treasurers.some(function (t) { return t.email === email; });
+  var me = appointed ? findMemberByEmail_(ss, email) : null;
+  var canAct = appointed && !a.readOnly && !!(me && me.active && !me.probation);
+  var scope = "";
+  if (canAct || a.level >= ROLE_LEVELS.admin) scope = "all";
+  else if ((a.role === "sectionAdmin" || a.role === "elevated") && a.section) scope = "section";
+  return { canView: !!scope, canAct: canAct, canAppoint: a.level >= ROLE_LEVELS.admin && !a.readOnly,
+           scope: scope, section: scope === "section" ? a.section : "", treasurerPaused: appointed && !canAct };
+}
+/** getUserRole must never fail because of subscriptions. */
+function subsCapsSafe_(a, ss) {
+  try { return subsCaps_(a, ss); }
+  catch (e) { return { canView: false, canAct: false, canAppoint: false, scope: "", section: "", treasurerPaused: false }; }
+}
+function requireSubsView_() {
+  var a = getAccess_(), c = subsCaps_(a, getSpreadsheet_());
+  if (!c.canView) throw new Error("Subscriptions are visible to admins, section admins, elevated members and the Treasurer.");
+  return { a: a, c: c };
+}
+function requireTreasurer_() {
+  var a = getAccess_(), c = subsCaps_(a, getSpreadsheet_());
+  if (!c.canAct) {
+    throw new Error(c.treasurerPaused ? "Your Treasurer access is paused while your own membership isn't active."
+                                      : "Only the Treasurer can do this.");
+  }
+  return { a: a, c: c };
+}
+/** The signed-in member (their Members row), for member-side calls. */
+function subsMe_(forWrite) {
+  var a = getAccess_();
+  if (forWrite && a.readOnly) throw new Error(VIEW_ONLY_MSG_);
+  var email = String(a.email || "").toLowerCase();
+  if (!email) throw new Error("Could not detect your email.");
+  var ss = getSpreadsheet_();
+  var m = findMemberByEmail_(ss, email);
+  if (!m) throw new Error("Subscriptions are for members - your account has no Members row.");
+  return { a: a, ss: ss, m: m, email: email };
+}
+function subsWithLock_(fn) {
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(20000); } catch (e) { throw new Error("Someone is saving right now. Try again in a moment."); }
+  try { return fn(); } finally { try { lock.releaseLock(); } catch (e) {} }
+}
+/** Refuses an M-Pesa code that's already pending or confirmed. */
+function subsCheckCodeFree_(rows, code, memberName) {
+  if (!code) return;
+  var hit = rows.filter(function (r) { return r.code === code && r.type === "Payment" && (r.status === "Pending" || r.status === "Confirmed"); })[0];
+  if (!hit) return;
+  if (hit.member === memberName) {
+    throw new Error("You've already submitted this payment (" + code + ") - it's " +
+                    (hit.status === "Pending" ? "waiting for the Treasurer." : "confirmed."));
+  }
+  throw new Error("This payment (" + code + ") has already been submitted for another member. " +
+                  "If it covered you too, ask the Treasurer to split it.");
+}
+function subsCheckNumber_(settings, number) {
+  if (!settings.receivingNumbers.length) throw new Error("The Treasurer hasn't set up payment details yet.");
+  var ok = settings.receivingNumbers.some(function (n) { return n.number === number; });
+  if (!ok) {
+    throw new Error("This payment went to " + number + ", which isn't the Chorale's number. " +
+                    "Only payments sent to the Chorale's number can be recorded - check the payment instructions.");
+  }
+}
+
+// ---------- email ----------
+/** opts: { label, sigKey } - pass them when sending in a batch so they're looked up once. */
+function subsEmailOpts_() {
+  return { label: subsYear_().label, sigKey: getSignaturePerson_("treasurer") ? "treasurer" : "general" };
+}
+function subsEmail_(to, subject, paragraphsHtml, opts) {
+  if (!to) return false;
+  try {
+    opts = opts || subsEmailOpts_();
+    var body = paragraphsHtml.map(function (p) { return '<p style="margin:0 0 12px">' + p + "</p>"; }).join("");
+    var html = buildEmail_(body, { headerTitle: "Subscription", headerSubtitle: opts.label, signatureKey: opts.sigKey });
+    MailApp.sendEmail({ to: to, subject: subject, htmlBody: html, name: EMAIL_FROM_NAME });
+    return true;
+  } catch (e) {
+    try { Logger.log("Subscription email to " + to + " failed: " + e.message); } catch (e2) {}
+    return false;
+  }
+}
+function subsMemberEmail_(ss, name) {
+  var m = null;
+  readAllMembers_(ss).forEach(function (x) { if (x.name === name) m = x; });
+  return m ? m.email : "";
+}
+function subsReceiptLine_(st, label) {
+  if (st.status === "Paid") return "You're fully paid for " + subsEsc_(label) + ". Thank you.";
+  if (st.owes) return "Paid so far: <b>" + subsKsh_(st.paid) + "</b> of " + subsKsh_(st.fee) + ". Balance: <b>" + subsKsh_(st.balance) + "</b>.";
+  return "Paid so far this year: <b>" + subsKsh_(st.paid) + "</b>.";
+}
+
+// =======================================================
+//  MEMBER CALLS
+// =======================================================
+/**
+ * The signed-in member's subscription for the current year:
+ * { year, fee, deadline, ready, status, owes, paid, balance, dueDate, dueReason,
+ *   pendingAmount, commitment, commitmentPending, canCommit,
+ *   instructions, receivingNumbers: [{ number, name }], treasurers: [names],
+ *   items: [{ id, type, amount, status, code, paidAt, payBy, note, reason, submittedAt, decidedAt, source }] }
+ */
+function getMySubscription() {
+  var me = subsMe_(false), ctx = subsContext_(me.ss);
+  var st = subsMemberStatus_(ctx, me.m);
+  var items = ctx.rows.filter(function (r) { return r.member === me.m.name; })
+    .sort(function (a, b) { return (b.submittedAt || "").localeCompare(a.submittedAt || ""); })
+    .map(function (r) {
+      return { id: r.id, type: r.type, amount: r.amount, status: r.status, code: r.code, paidAt: r.paidAt,
+               payBy: r.payBy, note: r.note, reason: r.reason, submittedAt: r.submittedAt, decidedAt: r.decidedAt,
+               source: r.source, mine: r.submittedBy === me.email };
+    });
+  var ready = !!(ctx.fee && ctx.settings.receivingNumbers.length);
+  return {
+    year: ctx.year.label, fee: ctx.fee, deadline: ctx.deadline, ready: ready,
+    status: st.status, owes: st.owes, paid: st.paid, balance: st.balance, dueDate: st.dueDate, dueReason: st.dueReason,
+    pendingAmount: st.pendingAmount, commitment: st.commitment, commitmentPending: st.commitmentPending,
+    canCommit: ready && st.owes && st.status !== "Paid" && !st.commitmentPending && !(st.commitment && !st.commitment.lapsed),
+    instructions: ctx.settings.instructions, receivingNumbers: ctx.settings.receivingNumbers,
+    treasurers: ctx.settings.treasurers.map(function (t) { return t.name; }),
+    items: items
+  };
+}
+
+/**
+ * Checks a pasted message without saving anything, so the member can see what was
+ * read before submitting. Returns { ok, error?, code, amount, name, number, date, time }.
+ */
+function previewMpesaMessage(text) {
+  var me = subsMe_(false);
+  try {
+    var p = parseMpesa_(text, "sent");
+    var s = readSubsSettings_();
+    if (!(Number((s.years[subsYear_().label] || {}).fee) > 0)) throw new Error("The Treasurer hasn't set this year's fee yet.");
+    subsCheckNumber_(s, p.number);
+    if (p.date > todayStr_()) throw new Error("That message is dated in the future.");
+    subsCheckCodeFree_(readSubsRows_(me.ss), p.code, me.m.name);
+    return { ok: true, code: p.code, amount: p.amount, name: p.name, number: p.number, date: p.date, time: p.time };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/** Submits a payment for the Treasurer to confirm. Returns { success, id, code, amount }. */
+function submitSubscriptionPayment(text, note) {
+  return guardedCall_("submitSubscriptionPayment", submitSubscriptionPaymentCore_, arguments);
+}
+function submitSubscriptionPaymentCore_(text, note) {
+  var me = subsMe_(true);
+  var s = readSubsSettings_(), year = subsYear_();
+  if (!(Number((s.years[year.label] || {}).fee) > 0)) throw new Error("The Treasurer hasn't set this year's fee yet.");
+  var p = parseMpesa_(text, "sent");
+  subsCheckNumber_(s, p.number);
+  if (p.date > todayStr_()) throw new Error("That message is dated in the future.");
+  var id = subsNewId_();
+  subsWithLock_(function () {
+    var sh = ensureSubsSheet_(me.ss);
+    subsCheckCodeFree_(readSubsRows_(me.ss), p.code, me.m.name);
+    subsAppend_(sh, { "id": id, "year": year.label, "type": "Payment", "member": me.m.name, "amount": p.amount,
+      "status": "Pending", "m-pesa code": p.code, "paid at": p.paidAt, "recipient": subsCellText_(p.name + " " + p.number, 80),
+      "message": subsCellText_(p.message, 400), "note": subsCellText_(note, 300), "submitted at": subsNow_(),
+      "submitted by": me.email, "source": "Member" });
+  });
+  return { success: true, id: id, code: p.code, amount: p.amount };
+}
+
+/**
+ * Asks the Treasurer to approve a commitment to pay `amount` by `payBy` (yyyy-mm-dd).
+ * Returns { success, id }.
+ */
+function requestSubscriptionCommitment(amount, payBy, note) {
+  return guardedCall_("requestSubscriptionCommitment", requestSubscriptionCommitmentCore_, arguments);
+}
+function requestSubscriptionCommitmentCore_(amount, payBy, note) {
+  var me = subsMe_(true), ctx = subsContext_(me.ss);
+  var st = subsMemberStatus_(ctx, me.m);
+  if (!ctx.fee) throw new Error("The Treasurer hasn't set this year's fee yet.");
+  if (!st.owes) throw new Error("You don't owe a subscription for " + ctx.year.label + " right now.");
+  if (st.status === "Paid") throw new Error("You're already fully paid for " + ctx.year.label + ".");
+  if (st.commitmentPending) throw new Error("You already have a commitment waiting for the Treasurer.");
+  if (st.commitment && !st.commitment.lapsed) throw new Error("You already have an approved commitment (pay by " + st.commitment.payBy + ").");
+  amount = Math.round(Number(amount) * 100) / 100;
+  if (!(amount > 0)) throw new Error("Enter the amount you'll pay.");
+  if (subsCents_(amount) > subsCents_(st.balance)) throw new Error("That's more than your balance of " + subsKsh_(st.balance) + ".");
+  payBy = String(payBy || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(payBy)) throw new Error("Choose the date you'll pay by.");
+  if (payBy < ctx.today) throw new Error("The pay-by date can't be in the past.");
+  if (ctx.year.endsOn && payBy >= ctx.year.endsOn) throw new Error("The pay-by date must fall within " + ctx.year.label + ".");
+  var id = subsNewId_();
+  subsWithLock_(function () {
+    subsAppend_(ensureSubsSheet_(me.ss), { "id": id, "year": ctx.year.label, "type": "Commitment", "member": me.m.name,
+      "amount": amount, "status": "Pending", "pay by": payBy, "note": subsCellText_(note, 300),
+      "submitted at": subsNow_(), "submitted by": me.email, "source": "Member" });
+  });
+  return { success: true, id: id };
+}
+
+/** Withdraws the member's own pending payment or commitment. */
+function withdrawSubscriptionItem(id) {
+  var me = subsMe_(true);
+  return subsWithLock_(function () {
+    var r = readSubsRows_(me.ss).filter(function (x) { return x.id === String(id); })[0];
+    if (!r || r.member !== me.m.name) throw new Error("That submission wasn't found.");
+    if (r.status !== "Pending") throw new Error("Only something still waiting for the Treasurer can be withdrawn.");
+    subsSetCells_(me.ss.getSheetByName(SUBS_SHEET_), r.row, { "status": "Withdrawn", "decided at": subsNow_(), "decided by": me.email });
+    return { success: true };
+  });
+}
+
+// =======================================================
+//  TREASURER + VIEWERS
+// =======================================================
+/**
+ * The Subscriptions screen. Viewers (admins, Super Admin, section admins, elevated
+ * members) get the summary and the members table for their scope; the Treasurer
+ * also gets the queue, recent decisions and full settings.
+ * filters: { section?, status?, search? }
+ * Returns { year, fee, deadline, caps, summary, members, queue, recent, settings, treasurers }
+ */
+function getSubscriptionsOverview(filters) {
+  var x = requireSubsView_(), ss = getSpreadsheet_(), ctx = subsContext_(ss);
+  filters = filters || {};
+  var list = subsScopedStatuses_(ss, ctx, x.c);
+  var summary = subsSummary_(ctx, list);
+  var shown = subsFilter_(list, filters);
+  var out = {
+    year: ctx.year.label, fee: ctx.fee, deadline: ctx.deadline, caps: x.c, summary: summary,
+    members: shown.map(function (s) {
+      return { name: s.name, groups: s.groups, status: s.status, paid: s.paid, balance: s.balance, dueDate: s.dueDate,
+               dueReason: s.dueReason, pendingAmount: s.pendingAmount, commitment: s.commitment,
+               commitmentPending: s.commitmentPending };
+    }),
+    treasurers: ctx.settings.treasurers.map(function (t) {
+      var o = { name: t.name, appointedOn: t.appointedAt, appointedBy: t.appointedBy };
+      if (x.c.canAppoint) o.email = t.email;
+      return o;
+    }),
+    settings: { fee: ctx.fee, deadline: ctx.deadline }
+  };
+  if (x.c.canAct) {
+    out.settings = { fee: ctx.fee, deadline: ctx.deadline, receivingNumbers: ctx.settings.receivingNumbers,
+                     instructions: ctx.settings.instructions };
+    var nums = ctx.settings.receivingNumbers.map(function (n) { return n.number; });
+    out.queue = ctx.rows.filter(function (r) { return r.status === "Pending"; })
+      .sort(function (a, b) { return (a.submittedAt || "").localeCompare(b.submittedAt || ""); })
+      .map(function (r) {
+        var num = subsNormPhone_((r.recipient.match(/(0\d{9})\s*$/) || [])[1] || "");
+        return { id: r.id, type: r.type, member: r.member, amount: r.amount, code: r.code, paidAt: r.paidAt,
+                 recipient: r.recipient, message: r.message, note: r.note, payBy: r.payBy, submittedAt: r.submittedAt,
+                 numberChanged: r.type === "Payment" && !!num && nums.indexOf(num) === -1 };
+      });
+    out.recent = ctx.rows.filter(function (r) { return r.status !== "Pending"; })
+      .sort(function (a, b) { return (b.decidedAt || b.submittedAt || "").localeCompare(a.decidedAt || a.submittedAt || ""); })
+      .slice(0, 25)
+      .map(function (r) {
+        return { id: r.id, type: r.type, member: r.member, amount: r.amount, status: r.status, code: r.code,
+                 paidAt: r.paidAt, payBy: r.payBy, reason: r.reason, decidedAt: r.decidedAt, decidedBy: r.decidedBy,
+                 source: r.source, splitFrom: r.splitFrom };
+      });
+  }
+  return out;
+}
+/** Everyone the caller may see, with their status. Former members only if they have activity this year. */
+function subsScopedStatuses_(ss, ctx, caps) {
+  return readAllMembers_(ss)
+    .filter(function (m) { return caps.scope === "all" || (m.groups || []).indexOf(caps.section) !== -1; })
+    .map(function (m) { return subsMemberStatus_(ctx, m); })
+    .filter(function (s) { return s.status !== "Inactive" || s.hasActivity; })
+    .sort(function (a, b) { return a.name.toLowerCase().localeCompare(b.name.toLowerCase()); });
+}
+function subsSummary_(ctx, list) {
+  var counts = {}, expectedC = 0, collectedC = 0, outstandingC = 0;
+  list.forEach(function (s) {
+    counts[s.status] = (counts[s.status] || 0) + 1;
+    collectedC += subsCents_(s.paid);
+    if (s.owes) { expectedC += subsCents_(ctx.fee); outstandingC += subsCents_(s.balance); }
+  });
+  var pendingN = list.reduce(function (n, s) { return n + s.pendingCount + (s.commitmentPending ? 1 : 0); }, 0);
+  return { owing: list.filter(function (s) { return s.owes; }).length, expected: expectedC / 100,
+           collected: collectedC / 100, outstanding: outstandingC / 100,
+           percentPaid: expectedC ? Math.round(Math.min(collectedC, expectedC) * 100 / expectedC) : 0,
+           counts: counts, waiting: pendingN };
+}
+function subsFilter_(list, f) {
+  var q = String(f.search || "").trim().toLowerCase();
+  return list.filter(function (s) {
+    if (f.section && f.section !== "All" && s.groups.indexOf(f.section) === -1) return false;
+    if (f.status && f.status !== "All" && s.status !== f.status) return false;
+    if (q && s.name.toLowerCase().indexOf(q) === -1) return false;
+    return true;
+  });
+}
+
+/**
+ * Confirms a pending payment. To split one M-Pesa payment across members, pass
+ * allocations [{ member, amount }] for the OTHER members; the submitter keeps the
+ * rest (which may be 0). Emails a receipt to everyone it covers.
+ */
+function confirmSubscriptionPayment(id, allocations) {
+  var x = requireTreasurer_(), ss = getSpreadsheet_();
+  var res = subsWithLock_(function () {
+    var sh = ss.getSheetByName(SUBS_SHEET_);
+    var rows = readSubsRows_(ss);
+    var r = rows.filter(function (y) { return y.id === String(id); })[0];
+    if (!r || r.type !== "Payment") throw new Error("That payment wasn't found.");
+    if (r.status !== "Pending") throw new Error("That payment has already been " + r.status.toLowerCase() + ".");
+    var names = {};
+    readAllMembers_(ss).forEach(function (m) { names[m.name] = true; });
+    var allocs = (allocations || []).filter(function (a) { return a && String(a.member || "").trim() && Number(a.amount) > 0; })
+      .map(function (a) { return { member: String(a.member).trim(), amount: Math.round(Number(a.amount) * 100) / 100 }; });
+    var seen = {};
+    allocs.forEach(function (a) {
+      if (!names[a.member]) throw new Error(a.member + " isn't on the Members sheet.");
+      if (a.member === r.member) throw new Error("List only the OTHER members the payment covers - " + r.member + " keeps the rest.");
+      if (seen[a.member]) throw new Error(a.member + " is listed twice.");
+      seen[a.member] = true;
+    });
+    var otherC = allocs.reduce(function (n, a) { return n + subsCents_(a.amount); }, 0);
+    if (otherC > subsCents_(r.amount)) throw new Error("The split adds up to more than the payment (" + subsKsh_(r.amount) + ").");
+    var shareC = subsCents_(r.amount) - otherC, now = subsNow_();
+    var splitNote = allocs.length ? "Split: " + allocs.map(function (a) { return a.member + " " + subsKsh_(a.amount); }).join(", ") : "";
+    subsSetCells_(sh, r.row, { "status": "Confirmed", "amount": shareC / 100, "decided at": now, "decided by": x.a.email,
+                               "reason": splitNote });
+    allocs.forEach(function (a) {
+      subsAppend_(sh, { "id": subsNewId_(), "year": r.year, "type": "Payment", "member": a.member, "amount": a.amount,
+        "status": "Confirmed", "m-pesa code": r.code, "paid at": r.paidAt, "recipient": r.recipient, "message": r.message,
+        "note": "Part of " + r.member + "'s payment", "submitted at": now, "submitted by": x.a.email,
+        "decided at": now, "decided by": x.a.email, "source": "Split", "split from": r.id });
+    });
+    return { r: r, allocs: allocs, share: shareC / 100 };
+  });
+  logActivity_("Confirmed subscription payment", res.r.member,
+               subsKsh_(res.r.amount) + " (" + res.r.code + ")" + (res.allocs.length ? " - split with " + res.allocs.map(function (a) { return a.member; }).join(", ") : ""));
+  var ctx = subsContext_(ss), byName = {};
+  readAllMembers_(ss).forEach(function (m) { byName[m.name] = m; });
+  var emailed = 0, eo = { label: ctx.year.label, sigKey: getSignaturePerson_("treasurer") ? "treasurer" : "general" };
+  [{ member: res.r.member, amount: res.share }].concat(res.allocs).forEach(function (a) {
+    var m = byName[a.member];
+    if (!m || !m.email) return;
+    var st = subsMemberStatus_(ctx, m);
+    var lines = ["Hi " + subsEsc_(m.name.split(" ")[0]) + ",",
+                 "The Treasurer has confirmed your M-Pesa payment <b>" + subsEsc_(res.r.code) + "</b>" +
+                 (a.member === res.r.member ? "" : " (paid by " + subsEsc_(res.r.member) + ")") + ": <b>" + subsKsh_(a.amount) + "</b> towards your " + subsEsc_(ctx.year.label) + " subscription.",
+                 subsReceiptLine_(st, ctx.year.label)];
+    if (subsEmail_(m.email, "Payment received - " + subsKsh_(a.amount), lines, eo)) emailed++;
+  });
+  return { success: true, emailed: emailed };
+}
+
+/** Rejects a pending payment or commitment, with a reason the member sees. */
+function rejectSubscriptionItem(id, reason) {
+  var x = requireTreasurer_(), ss = getSpreadsheet_();
+  reason = String(reason || "").trim();
+  if (reason.length < 3) throw new Error("Give a reason - the member will see it.");
+  var r = subsWithLock_(function () {
+    var row = readSubsRows_(ss).filter(function (y) { return y.id === String(id); })[0];
+    if (!row) throw new Error("That submission wasn't found.");
+    if (row.status !== "Pending") throw new Error("That has already been " + row.status.toLowerCase() + ".");
+    subsSetCells_(ss.getSheetByName(SUBS_SHEET_), row.row, { "status": "Rejected", "decided at": subsNow_(),
+      "decided by": x.a.email, "reason": subsCellText_(reason, 300) });
+    return row;
+  });
+  logActivity_(r.type === "Commitment" ? "Rejected subscription commitment" : "Rejected subscription payment", r.member,
+               (r.code ? r.code + " - " : "") + reason);
+  var email = subsMemberEmail_(ss, r.member);
+  var emailed = subsEmail_(email, r.type === "Commitment" ? "Your commitment to pay wasn't approved" : "Your payment couldn't be confirmed", [
+    "Hi " + subsEsc_(r.member.split(" ")[0]) + ",",
+    r.type === "Commitment"
+      ? "The Treasurer didn't approve your commitment to pay " + subsKsh_(r.amount) + " by " + subsEsc_(r.payBy) + "."
+      : "The Treasurer couldn't confirm your M-Pesa payment <b>" + subsEsc_(r.code) + "</b> (" + subsKsh_(r.amount) + ").",
+    "Reason: " + subsEsc_(reason),
+    "You can submit again from your profile in the app."]);
+  return { success: true, emailed: emailed };
+}
+
+/** Approves a pending commitment to pay. */
+function approveSubscriptionCommitment(id) {
+  var x = requireTreasurer_(), ss = getSpreadsheet_();
+  var r = subsWithLock_(function () {
+    var row = readSubsRows_(ss).filter(function (y) { return y.id === String(id); })[0];
+    if (!row || row.type !== "Commitment") throw new Error("That commitment wasn't found.");
+    if (row.status !== "Pending") throw new Error("That commitment has already been " + row.status.toLowerCase() + ".");
+    if (row.payBy < todayStr_()) throw new Error("Its pay-by date (" + row.payBy + ") has already passed. Reject it so the member can make a new one.");
+    subsSetCells_(ss.getSheetByName(SUBS_SHEET_), row.row, { "status": "Approved", "decided at": subsNow_(), "decided by": x.a.email });
+    return row;
+  });
+  logActivity_("Approved subscription commitment", r.member, subsKsh_(r.amount) + " by " + r.payBy);
+  var emailed = subsEmail_(subsMemberEmail_(ss, r.member), "Your commitment to pay was approved", [
+    "Hi " + subsEsc_(r.member.split(" ")[0]) + ",",
+    "The Treasurer approved your commitment to pay <b>" + subsKsh_(r.amount) + "</b> by <b>" + subsEsc_(r.payBy) + "</b>.",
+    "If that date passes without a payment, your subscription will show as unpaid."]);
+  return { success: true, emailed: emailed };
+}
+
+/**
+ * Checks a message the Treasurer pastes when recording a payment directly: either
+ * what their phone received, or a member's Send Money confirmation.
+ * Returns { ok, error?, kind, code, amount, name, number, date, time }.
+ */
+function previewTreasurerMpesaMessage(text) {
+  requireTreasurer_();
+  try {
+    var p = subsParseAny_(text);
+    if (p.date > todayStr_()) throw new Error("That message is dated in the future.");
+    subsCheckCodeFree_(readSubsRows_(getSpreadsheet_()), p.code, "");
+    return { ok: true, kind: p.kind, code: p.code, amount: p.amount, name: p.name, number: p.number, date: p.date, time: p.time };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+function subsParseAny_(text) {
+  try { return parseMpesa_(text, "received"); }
+  catch (e) {
+    try { return parseMpesa_(text, "sent"); }
+    catch (e2) { throw new Error("That doesn't look like an M-Pesa confirmation. Paste the whole message as it arrived."); }
+  }
+}
+
+/**
+ * The Treasurer records a payment directly (cash, or a member without the app).
+ * p: { member, method: "mpesa" | "cash", message?, code?, amount?, date? (yyyy-mm-dd), note? }
+ * For M-Pesa, paste the message (received or sent) or give the code, amount and date.
+ */
+function recordSubscriptionPayment(p) {
+  return guardedCall_("recordSubscriptionPayment", recordSubscriptionPaymentCore_, arguments);
+}
+function recordSubscriptionPaymentCore_(p) {
+  var x = requireTreasurer_(), ss = getSpreadsheet_();
+  p = p || {};
+  var member = String(p.member || "").trim();
+  var m = null;
+  readAllMembers_(ss).forEach(function (y) { if (y.name === member) m = y; });
+  if (!m) throw new Error("Choose a member from the list.");
+  var year = subsYear_(), method = p.method === "cash" ? "cash" : "mpesa";
+  var amount, code = "", paidAt, recipient = "", message = "";
+  if (method === "mpesa" && String(p.message || "").trim()) {
+    var parsed = subsParseAny_(p.message);
+    amount = parsed.amount; code = parsed.code; paidAt = parsed.paidAt; message = parsed.message;
+    recipient = parsed.kind === "sent" ? parsed.name + " " + parsed.number : "";
+  } else {
+    amount = Math.round(Number(p.amount) * 100) / 100;
+    var d = String(p.date || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error("Enter the date it was paid.");
+    paidAt = d + " 00:00";
+    if (method === "mpesa") {
+      code = String(p.code || "").trim().toUpperCase();
+      if (!/^[A-Z0-9]{10}$/.test(code)) throw new Error("Enter the 10-character M-Pesa code, or paste the message.");
+    }
+  }
+  if (!(amount > 0)) throw new Error("Enter the amount.");
+  if (paidAt.slice(0, 10) > todayStr_()) throw new Error("The payment date can't be in the future.");
+  var id = subsNewId_(), now = subsNow_();
+  subsWithLock_(function () {
+    var sh = ensureSubsSheet_(ss);
+    subsCheckCodeFree_(readSubsRows_(ss), code, "");
+    subsAppend_(sh, { "id": id, "year": year.label, "type": "Payment", "member": m.name, "amount": amount,
+      "status": "Confirmed", "m-pesa code": code, "paid at": paidAt, "recipient": subsCellText_(recipient, 80),
+      "message": subsCellText_(message || (method === "cash" ? "Cash" : ""), 400), "note": subsCellText_(p.note, 300),
+      "submitted at": now, "submitted by": x.a.email, "decided at": now, "decided by": x.a.email, "source": "Treasurer" });
+  });
+  logActivity_("Recorded subscription payment", m.name, subsKsh_(amount) + (code ? " (" + code + ")" : " (cash)"));
+  var st = subsMemberStatus_(subsContext_(ss), m);
+  var emailed = subsEmail_(m.email, "Payment received - " + subsKsh_(amount), [
+    "Hi " + subsEsc_(m.name.split(" ")[0]) + ",",
+    "The Treasurer has recorded your payment of <b>" + subsKsh_(amount) + "</b>" + (code ? " (M-Pesa " + subsEsc_(code) + ")" : " (cash)") +
+    " towards your " + subsEsc_(year.label) + " subscription.",
+    subsReceiptLine_(st, year.label)]);
+  return { success: true, id: id, emailed: emailed };
+}
+
+/**
+ * The Treasurer's settings for the current year.
+ * p: { fee, deadline (yyyy-mm-dd, may be blank), receivingNumbers: [{ number, name }], instructions }
+ */
+function updateSubscriptionSettings(p) {
+  var x = requireTreasurer_();
+  p = p || {};
+  var year = subsYear_();
+  var fee = Math.round(Number(p.fee) * 100) / 100;
+  if (!(fee > 0) || fee > 1000000) throw new Error("Enter the yearly fee in Ksh.");
+  var deadline = String(p.deadline || "").trim();
+  if (deadline && !/^\d{4}-\d{2}-\d{2}$/.test(deadline)) throw new Error("The deadline must be a date.");
+  if (deadline && (deadline < year.startsOn || (year.endsOn && deadline >= year.endsOn))) {
+    throw new Error("The deadline must fall within " + year.label + ".");
+  }
+  var nums = [], seen = {};
+  (p.receivingNumbers || []).forEach(function (n) {
+    var num = subsNormPhone_(n && n.number);
+    if (!num) return;
+    if (!/^0\d{9}$/.test(num)) throw new Error(String(n.number) + " isn't a valid phone number.");
+    if (seen[num]) return;
+    seen[num] = true;
+    nums.push({ number: num, name: String((n && n.name) || "").trim().slice(0, 60) });
+  });
+  if (!nums.length) throw new Error("Add the number members send money to.");
+  var instructions = String(p.instructions || "").trim().slice(0, 500);
+  subsWithLock_(function () {
+    var s = readSubsSettings_();
+    s.years[year.label] = { fee: fee, deadline: deadline };
+    s.receivingNumbers = nums;
+    s.instructions = instructions;
+    writeSubsSettings_(s);
+  });
+  logActivity_("Updated subscription settings", year.label, "Fee " + subsKsh_(fee) + (deadline ? ", deadline " + deadline : ""));
+  return { success: true, fee: fee, deadline: deadline, receivingNumbers: nums, instructions: instructions };
+}
+
+/**
+ * Reminder emails to owing members who haven't paid in full.
+ * opts: { preview: true|false, statuses: ["Due", "Part paid", "Unpaid"] }
+ * Preview: { count, names, sampleHtml } (nothing sent). Send: { success, sent, failed }.
+ */
+function sendSubscriptionReminders(opts) {
+  opts = opts || {};
+  if (opts.preview) return subsRemindersCore_(opts);
+  return guardedCall_("sendSubscriptionReminders", subsRemindersCore_, arguments);
+}
+function subsRemindersCore_(opts) {
+  var x = requireTreasurer_(), ss = getSpreadsheet_(), ctx = subsContext_(ss);
+  var want = (opts.statuses && opts.statuses.length) ? opts.statuses : ["Due", "Part paid", "Unpaid"];
+  var members = readAllMembers_(ss);
+  var targets = members.map(function (m) { return { m: m, st: subsMemberStatus_(ctx, m) }; })
+    .filter(function (t) { return t.st.owes && t.st.status !== "Paid" && want.indexOf(t.st.status) !== -1 && t.m.email; });
+  function lines(t) {
+    var l = ["Hi " + subsEsc_(t.m.name.split(" ")[0]) + ",",
+             "This is a reminder about your <b>" + subsEsc_(ctx.year.label) + "</b> Chorale subscription of " + subsKsh_(ctx.fee) + ".",
+             subsReceiptLine_(t.st, ctx.year.label) + (t.st.dueDate ? " Due by <b>" + subsEsc_(t.st.dueDate) + "</b>." : "")];
+    if (ctx.settings.instructions) l.push(subsEsc_(ctx.settings.instructions).replace(/\n/g, "<br>"));
+    if (ctx.settings.receivingNumbers.length) {
+      l.push("Send Money to: " + ctx.settings.receivingNumbers.map(function (n) { return subsEsc_(n.number + (n.name ? " (" + n.name + ")" : "")); }).join(" or ") + ".");
+    }
+    l.push("After paying, open your profile in the app and paste the M-Pesa message under \"I've paid\".");
+    return l;
+  }
+  var eo = { label: ctx.year.label, sigKey: getSignaturePerson_("treasurer") ? "treasurer" : "general" };
+  if (opts.preview) {
+    var sample = "";
+    if (targets.length) {
+      sample = buildEmail_(lines(targets[0]).map(function (p) { return '<p style="margin:0 0 12px">' + p + "</p>"; }).join(""),
+                           { headerTitle: "Subscription", headerSubtitle: eo.label, signatureKey: eo.sigKey });
+    }
+    return { count: targets.length, names: targets.map(function (t) { return t.m.name; }), sampleHtml: sample };
+  }
+  var sent = 0, failed = [];
+  targets.forEach(function (t) {
+    if (subsEmail_(t.m.email, "Your " + ctx.year.label + " Chorale subscription", lines(t), eo)) sent++;
+    else failed.push(t.m.name);
+  });
+  logActivity_("Sent subscription reminders", sent + " member(s)", want.join(", "));
+  return { success: true, sent: sent, failed: failed };
+}
+
+/** Subscriptions table as CSV / print-ready HTML, with the same scope and filters as the screen. */
+function exportSubscriptionsCSV(filters) {
+  return arrayToCSV_(subsExportRows_(filters).rows);
+}
+function exportSubscriptionsPDF(filters) {
+  var e = subsExportRows_(filters);
+  return buildPrintHTML_("Subscriptions " + e.year + " - " + (e.rows.length - 1) + " member(s)", e.rows, e.describe);
+}
+function subsExportRows_(filters) {
+  var x = requireSubsView_(), ss = getSpreadsheet_(), ctx = subsContext_(ss);
+  filters = filters || {};
+  var list = subsFilter_(subsScopedStatuses_(ss, ctx, x.c), filters);
+  var rows = [["Name", "Sections", "Status", "Fee", "Paid", "Balance", "Due by", "Waiting to confirm", "Commitment"]];
+  list.forEach(function (s) {
+    rows.push([s.name, s.groups.join(", "), s.status, s.owes ? s.fee : "", s.paid, s.owes ? s.balance : "", s.dueDate,
+               s.pendingAmount || "", s.commitment ? subsKsh_(s.commitment.amount) + " by " + s.commitment.payBy : ""]);
+  });
+  var bits = [];
+  if (x.c.scope === "section") bits.push(x.c.section);
+  if (filters.section && filters.section !== "All") bits.push(filters.section);
+  if (filters.status && filters.status !== "All") bits.push(filters.status);
+  return { rows: rows, year: ctx.year.label, describe: bits.join(" · ") };
+}
+
+// ---------- the Treasurer post ----------
+/**
+ * Full admins appoint a Treasurer (up to two). Pass the member's name, or their
+ * Members-sheet email. The Treasurer must be an active member with an email.
+ */
+function appointTreasurer(nameOrEmail) {
+  var a = requireFullAdmin_(), ss = getLiveSpreadsheet_();
+  var key = String(nameOrEmail || "").trim();
+  if (!key) throw new Error("Choose a member.");
+  var m = null;
+  if (key.indexOf("@") !== -1) m = findMemberByEmail_(ss, key.toLowerCase());
+  else readAllMembers_(ss).forEach(function (x) { if (x.name === key) m = x; });
+  if (!m) throw new Error(key.indexOf("@") !== -1 ? "No member has that email. The Treasurer must be on the Members sheet."
+                                                  : "No member is called " + key + ".");
+  var email = String(m.email || "").trim().toLowerCase();
+  if (!email) throw new Error(m.name + " has no email on the Members sheet, so they couldn't sign in as Treasurer.");
+  if (!m.active || m.probation) throw new Error(m.name + " isn't an active member right now, so can't be appointed.");
+  if (getAccess_(ss, email).readOnly) throw new Error("The Super Admin's access is view-only, so they can't be Treasurer.");
+  var list = subsWithLock_(function () {
+    var s = readSubsSettings_();
+    if (s.treasurers.some(function (t) { return t.email === email; })) throw new Error(m.name + " is already a Treasurer.");
+    if (s.treasurers.length >= SUBS_MAX_TREASURERS_) throw new Error("There are already " + SUBS_MAX_TREASURERS_ + " Treasurers. Remove one first.");
+    s.treasurers.push({ email: email, name: m.name, appointedBy: a.name || a.email, appointedAt: todayStr_() });
+    writeSubsSettings_(s);
+    return s.treasurers;
+  });
+  logActivity_("Appointed Treasurer", m.name, "");
+  return { success: true, treasurers: list };
+}
+/** Full admins remove a Treasurer. */
+function removeTreasurer(email) {
+  requireFullAdmin_();
+  email = String(email || "").trim().toLowerCase();
+  var removed = null;
+  var list = subsWithLock_(function () {
+    var s = readSubsSettings_();
+    s.treasurers = s.treasurers.filter(function (t) { if (t.email === email) { removed = t; return false; } return true; });
+    if (!removed) throw new Error("That person isn't a Treasurer.");
+    writeSubsSettings_(s);
+    return s.treasurers;
+  });
+  logActivity_("Removed Treasurer", removed.name, "");
+  return { success: true, treasurers: list };
 }

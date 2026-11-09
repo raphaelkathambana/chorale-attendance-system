@@ -34,7 +34,7 @@ function loadPlaywright() {
 const VIEWPORTS = [{ id: "mobile", width: 390, height: 844 }, { id: "desktop", width: 1440, height: 960 }];
 // Each screen is reached the way a user would: the app's own navigation functions.
 //   go     a JS string, or a list of steps with a settle between each (e.g. load a list, then open an item)
-//   state  fixture state for this screen (fixtures.cjs: role, year, myApology, emergency, birthdays, yearStart, tplSave).
+//   state  fixture state for this screen (fixtures.cjs: role, year, myApology, emergency, birthdays, yearStart, tplSave, subs, subsSetup, mySubs).
 //          A screen with state, or with fresh: true, boots the app fresh, and so does the screen after it, so nothing leaks.
 //   waiting  the screen's spinner is the state being checked (a call left in flight with HOLD), so don't report it as loading
 //   hover  a selector to hover before the screenshot. The mouse stays there, so hover screens go last in their list.
@@ -96,6 +96,36 @@ const SCREENS = {
       go: ["switchTab('communique'); showCommSubtab('templates')", "openCommuniqueTemplate('tpl_2', true)",
         "var s = document.getElementById('commSubject'); s.value += ' (updated)'; renderCommuniquePreview(); paintDraftState()", "commUpdateTemplate()"] },
     { id: "comm-templates-sectionadmin", state: { role: "sectionAdmin" }, go: "switchTab('communique'); showCommSubtab('templates')" },
+    // Subscriptions (§14, backend 9 Nov): a full admin viewing, the Treasurer's six views and forms, a section admin,
+    // the set-up prompt, paused Treasurer access, the appoint dialog; the member card on the profile in five states,
+    // the two member dialogs and the My attendance line.
+    { id: "subs-admin", state: { subs: "admin" }, go: "switchTab('subscriptions')" },
+    { id: "subs-filtered", state: { subs: "admin" }, go: ["switchTab('subscriptions')", "subsToggleStatus('Unpaid')"] },
+    { id: "subs-appoint", state: { subs: "admin" }, go: ["switchTab('subscriptions')", "subsOpenAppoint()"] },
+    { id: "subs-section", state: { subs: "section", role: "sectionAdmin" }, go: "switchTab('subscriptions')" },
+    { id: "subs-paused", state: { subs: "paused" }, go: "switchTab('subscriptions')" },
+    { id: "subs-setup", state: { subs: "treasurer", subsSetup: "none" }, go: "switchTab('subscriptions')" },
+    { id: "subs-queue", state: { subs: "treasurer" }, go: ["switchTab('subscriptions')", "subsSetView('queue')"] },
+    { id: "subs-split", state: { subs: "treasurer" }, go: ["switchTab('subscriptions')", "subsSetView('queue')", "subsOpenSplit('sub_q2')",
+      "subsSplit.rows = [{ member: 'Victor Otieno', amount: '1000' }]; subsRepaintQueueItem('sub_q2')"] },
+    { id: "subs-reject", state: { subs: "treasurer" }, go: ["switchTab('subscriptions')", "subsSetView('queue')", "subsOpenReject('sub_q3')"] },
+    { id: "subs-record", state: { subs: "treasurer" }, go: ["switchTab('subscriptions')", "subsSetView('record')",
+      "subsRec.member = 'Dennis Ouma'; subsRec.message = 'UK9RK1H8LC Confirmed. Ksh1,000.00 sent to STRATHMORE CHORALE 0712345678 on 14/10/26 at 5:20 AM. New M-PESA balance is Ksh2,310.00.'; subsRec.read = { ok: true, kind: 'received', code: 'UK9RK1H8LC', amount: 1000, name: 'DENNIS OUMA', number: '0722***456', date: '2026-10-14', time: '05:20' }; renderSubscriptions(subsOverview)"] },
+    { id: "subs-record-cash", state: { subs: "treasurer" }, go: ["switchTab('subscriptions')", "subsSetView('record')", "subsRecMethod('cash')"] },
+    { id: "subs-settings", state: { subs: "treasurer" }, go: ["switchTab('subscriptions')", "subsSetView('settings')"] },
+    { id: "subs-remind", state: { subs: "treasurer" }, go: ["switchTab('subscriptions')", "subsSetView('remind')", "subsRemindPreview(document.getElementById('subsRemindPrev'))"] },
+    { id: "subs-history", state: { subs: "treasurer" }, go: ["switchTab('subscriptions')", "subsSetView('recent')"] },
+    { id: "profile-subs-part", state: { mySubs: "part" }, go: "openProfile()" },
+    { id: "profile-subs-unpaid", state: { mySubs: "unpaid" }, go: "openProfile()" },
+    { id: "profile-subs-committed", state: { mySubs: "committed" }, go: "openProfile()" },
+    { id: "profile-subs-notdue", state: { mySubs: "notdue" }, go: "openProfile()" },
+    { id: "profile-subs-notready", state: { mySubs: "notready" }, go: "openProfile()" },
+    { id: "subs-pay-dialog", state: { mySubs: "due" }, go: ["openProfile()", "openSubPayDialog()",
+      "document.getElementById('subsPayText').value = 'UK9RK1H8LC Confirmed. Ksh1,000.00 sent to STRATHMORE CHORALE 0712345678 on 14/10/26 at 5:20 AM. New M-PESA balance is Ksh2,310.00.'; subsPayCheck()"] },
+    { id: "subs-pay-error", state: { mySubs: "due" }, go: ["openProfile()", "openSubPayDialog()",
+      "document.getElementById('subsPayText').value = 'Sent the money to the chorale'; subsPayCheck()"] },
+    { id: "subs-commit-dialog", state: { mySubs: "due" }, go: ["openProfile()", "openSubCommitDialog()"] },
+    { id: "myatt-subs-line", state: { mySubs: "unpaid" }, go: "switchTab('myatt')" },
     // Chorale year: Start in flight (button busy, Approve/Reject disabled, the running note) and pressed a second time.
     { id: "year-starting", state: { year: "pending", yearStart: "running" }, waiting: true,
       go: ["openYearPage()", "nyTyped(yearInfo.nextLabel); startNewYearNow()"] },
@@ -116,6 +146,10 @@ const SCREENS = {
     { id: "apology-on-file", state: { myApology: "pending" },
       go: ["switchTab('myatt'); openApology('session')", "document.getElementById('apolSessionSelect').value = '0'; onApolSessionSelect()"] },
     { id: "birthday-banner", state: { birthdays: "banner" }, go: "switchTab('myatt')" },
+    // Subscriptions: the line on My attendance, the card, and an ordinary member who is the Treasurer.
+    { id: "myatt-subs-line", state: { mySubs: "due" }, go: "switchTab('myatt')" },
+    { id: "profile-subs-paid", state: { mySubs: "paid" }, go: "openProfile()" },
+    { id: "subs-treasurer-member", state: { subs: "treasurerMember", mySubs: "paid" }, go: ["switchTab('subscriptions')", "subsSetView('queue')"] },
   ]),
   "member-failed": [ // a member whose probation failed: the crimson restart card
     { id: "myatt", go: "switchTab('myatt')" },
@@ -136,6 +170,8 @@ const SCREENS = {
     { id: "year", state: { year: "before" }, go: "openYearPage()" },
     { id: "past-year-dashboard", fresh: true, go: ["switchTab('dashboard')", "setActiveYear('2024/25')"] },
     { id: "profile", go: "openProfile()" },
+    { id: "subs", state: { subs: "superadmin" }, go: "switchTab('subscriptions')" },
+    { id: "subs-past-year", state: { subs: "superadmin" }, go: ["switchTab('subscriptions')", "setActiveYear('2024/25')"] },
   ],
 };
 
