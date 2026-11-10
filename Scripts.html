@@ -9596,7 +9596,7 @@ function subsCopy(btn) {
 function subsReadHtml(r) {
   return '<div class="subs-read"><div class="amt">' + subsKsh(r.amount) + '</div>'
     + '<div class="ln"><code>' + esc(r.code) + '</code> · ' + esc(subsDate(r.date + " " + r.time)) + '</div>'
-    + '<div class="ln">' + (r.kind === "received" ? "Received from " : "Sent to ") + esc(r.name) + ' · <span class="nw">' + esc(subsPhone(r.number)) + '</span></div></div>';
+    + '<div class="ln">' + (r.kind === "received" ? "Received from " : "Sent to ") + esc(r.name) + (r.number ? ' · <span class="nw">' + esc(subsPhone(r.number)) + '</span>' : '') + '</div></div>';
 }
 
 // ─── 14b. Member: the Subscription card (profile) ─────────────────────────
@@ -10107,7 +10107,7 @@ function subsQueueItemHtml(it) {
     +   '<div class="subs-q-amt">' + esc(subsKsh(it.amount)) + '</div></div>';
   if (isPay) {
     h += '<div class="subs-q-meta"><code>' + esc(it.code) + '</code><span>Paid ' + esc(subsDate(it.paidAt)) + '</span>' + (it.recipient ? '<span>to ' + esc(it.recipient) + '</span>' : "") + '</div>';
-    if (it.numberChanged) h += '<div class="subs-note t-bad">Sent to a number that’s no longer in Settings. Check the statement before confirming.</div>';
+    if (it.numberChanged) h += '<div class="subs-note t-bad">Sent to a number or name that isn’t in Settings now. Check the statement before confirming.</div>';
   } else {
     h += '<div class="subs-q-meta"><span>Pay by <b>' + esc(subsDate(it.payBy)) + '</b></span></div>';
   }
@@ -10317,11 +10317,11 @@ function subsSettingsHtml(d) {
     + '<div class="form-group"><span class="form-label">Number members send money to</span>';
   s.nums.forEach(function (n, i) {
     h += '<div class="subs-numrow"><input type="text" inputmode="tel" autocomplete="off" placeholder="07XX XXX XXX" aria-label="Phone number" value="' + subsAttr(n.number) + '" oninput="subsSet.nums[' + i + '].number = this.value">'
-      +  '<input type="text" autocomplete="off" placeholder="Name on M-Pesa (optional)" aria-label="Name" value="' + subsAttr(n.name) + '" oninput="subsSet.nums[' + i + '].name = this.value">'
+      +  '<input type="text" autocomplete="off" placeholder="Name M-Pesa shows, e.g. SIFA MWACHARO" aria-label="Name M-Pesa shows" value="' + subsAttr(n.name) + '" oninput="subsSet.nums[' + i + '].name = this.value">'
       +  (s.nums.length > 1 ? '<button type="button" class="x" aria-label="Remove number" onclick="subsSetRemoveNum(' + i + ')">×</button>' : '<span></span>') + '</div>';
   });
   if (s.nums.length < 2) h += '<button type="button" class="subs-link" onclick="subsSetAddNum()">+ Add a second number</button>';
-  h += '<div class="subs-hint">Members’ messages must show money sent to one of these, or the app won’t accept them. Use the name exactly as M-Pesa shows it.</div></div>'
+  h += '<div class="subs-hint">Members’ messages must show money sent to one of these, or the app won’t accept them. Many messages now show only the name, not the number, so enter the name as it appears in your own Send Money message to this number.</div></div>'
     +  '<div class="form-group"><label class="form-label" for="subsSetInstr">Payment instructions</label>'
     +    '<textarea id="subsSetInstr" rows="4" maxlength="500" style="min-height:96px" placeholder="e.g. Send Money from your own line if you can. Paying for a friend? Add their name in the note." oninput="subsSet.instructions = this.value">' + esc(s.instructions) + '</textarea>'
     +    '<div class="subs-hint">Members see this on their card and in reminder emails.</div></div>'
@@ -10338,6 +10338,8 @@ function subsSaveSettings(btn) {
   if (!(fee > 0)) { showToast("Enter the yearly fee in Ksh.", "error"); return; }
   var nums = s.nums.filter(function (n) { return String(n.number || "").trim(); }).map(function (n) { return { number: String(n.number).trim(), name: String(n.name || "").trim() }; });
   if (!nums.length) { showToast("Add the number members send money to.", "error"); return; }
+  var noName = nums.filter(function (n) { return !n.name; })[0];
+  if (noName) { showToast("Add the name M-Pesa shows for " + noName.number + ". Many messages show only the name.", "error"); return; }
   saveSubSettings({ fee: fee, deadline: s.deadline || "", receivingNumbers: nums, instructions: String(s.instructions || "").trim() }, btn);
 }
 

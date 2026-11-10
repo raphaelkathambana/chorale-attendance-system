@@ -11230,9 +11230,12 @@ var SUBS_GONE_STATUSES_ = ["Left", "Alumnus", "Memorial"];
 // Raph's Send Money pattern (9 Nov), adapted: whitespace collapsed before matching,
 // balance / transaction cost optional and never captured, recipient split into
 // name + number, 10-character code, day/month/year dates.
-var MPESA_SENT_RE_ = /\b([A-Z0-9]{10}) Confirmed\s*\.\s*Ksh\s?([\d,]+\.\d{2}) sent to (.+?) (0\d{9}|\+?254\d{9}) on (\d{1,2})\/(\d{1,2})\/(\d{2,4}) at (\d{1,2}):(\d{2}) ?(AM|PM)/i;
+// 10 Nov: the number after the name is optional and may be masked. Safaricom has been hiding
+// phone numbers in payment messages since 2026, so a real confirmation can read
+// "sent to SIFA MWACHARO on 10/11/26 at 4:16 PM" (no number) or show 0712***678 / 0722XXXXXX.
+var MPESA_SENT_RE_ = /\b([A-Z0-9]{10}) Confirmed\s*\.\s*Ksh\s?([\d,]+\.\d{2}) sent to (.+?)(?: (0[\d*X]{9}|\+?254[\d*X]{9}))? on (\d{1,2})\/(\d{1,2})\/(\d{2,4}) at (\d{1,2}):(\d{2}) ?(AM|PM)/i;
 // What the Treasurer's phone receives (used only when the Treasurer records a payment).
-var MPESA_RECEIVED_RE_ = /\b([A-Z0-9]{10}) Confirmed\s*\.\s*You have received Ksh\s?([\d,]+\.\d{2}) from (.+?) (0[\d*]{9}|\+?254[\d*]{9}) on (\d{1,2})\/(\d{1,2})\/(\d{2,4}) at (\d{1,2}):(\d{2}) ?(AM|PM)/i;
+var MPESA_RECEIVED_RE_ = /\b([A-Z0-9]{10}) Confirmed\s*\.\s*You have received Ksh\s?([\d,]+\.\d{2}) from (.+?)(?: (0[\d*X]{9}|\+?254[\d*X]{9}))? on (\d{1,2})\/(\d{1,2})\/(\d{2,4}) at (\d{1,2}):(\d{2}) ?(AM|PM)/i;
 
 // ---------- settings + small helpers ----------
 function readSubsSettings_() {
@@ -11256,7 +11259,7 @@ function subsYear_() {
 /** New members who pass probation on/after this date owe nothing for the year. */
 function subsCutoff_(label) { return (parseInt(String(label), 10) + 1) + "-09-01"; }
 function subsNormPhone_(s) {
-  var d = String(s || "").replace(/[^\d*]/g, "");
+  var d = String(s || "").replace(/[xX]/g, "*").replace(/[^\d*]/g, "");   // a masked digit is always "*"
   if (/^254/.test(d)) d = "0" + d.slice(3);
   return d;
 }
@@ -11318,10 +11321,10 @@ function parseMpesa_(text, kind) {
   var code = m[1].toUpperCase();
   return {
     kind: kind === "received" ? "received" : "sent", code: code, amount: amount,
-    name: name, number: subsNormPhone_(m[4]), date: date, time: pad2_(hr) + ":" + pad2_(mi),
+    name: name, number: subsNormPhone_(m[4] || ""), date: date, time: pad2_(hr) + ":" + pad2_(mi),
     paidAt: date + " " + pad2_(hr) + ":" + pad2_(mi),
-    message: code + " Confirmed. Ksh" + m[2] + (kind === "received" ? " received from " : " sent to ") + name + " " +
-             m[4] + " on " + m[5] + "/" + m[6] + "/" + m[7] + " at " + m[8] + ":" + m[9] + " " + ampm + "."
+    message: code + " Confirmed. Ksh" + m[2] + (kind === "received" ? " received from " : " sent to ") + name +
+             (m[4] ? " " + m[4] : "") + " on " + m[5] + "/" + m[6] + "/" + m[7] + " at " + m[8] + ":" + m[9] + " " + ampm + "."
   };
 }
 
@@ -11543,13 +11546,44 @@ function subsCheckCodeFree_(rows, code, memberName) {
   throw new Error("This payment (" + code + ") has already been submitted for another member. " +
                   "If it covered you too, ask the Treasurer to split it.");
 }
-function subsCheckNumber_(settings, number) {
-  if (!settings.receivingNumbers.length) throw new Error("The Treasurer hasn't set up payment details yet.");
-  var ok = settings.receivingNumbers.some(function (n) { return n.number === number; });
-  if (!ok) {
-    throw new Error("This payment went to " + number + ", which isn't the Chorale's number. " +
+// Did a message's money go to one of the Chorale's receiving numbers? With a number in the
+// message, it must agree digit for digit (a masked "*" digit matches any). With no number -
+// M-Pesa often shows only the name now - the name must match the name saved for a number.
+function subsNumberMatches_(shown, number) {
+  if (!shown || shown.length !== number.length) return false;
+  for (var i = 0; i < shown.length; i++) if (shown.charAt(i) !== "*" && shown.charAt(i) !== number.charAt(i)) return false;
+  return true;
+}
+function subsNameWords_(s) { return String(s || "").toUpperCase().replace(/[^A-Z]+/g, " ").trim().split(" ").filter(Boolean); }
+// Same person if every word of the shorter name is in the longer one (M-Pesa may show two of
+// three names), and the shorter has at least two words unless both are one word.
+function subsNamesMatch_(a, b) {
+  var wa = subsNameWords_(a), wb = subsNameWords_(b);
+  if (!wa.length || !wb.length) return false;
+  var short = wa.length <= wb.length ? wa : wb, long = short === wa ? wb : wa;
+  if (short.length < 2 && long.length > 1) return false;
+  return short.every(function (w) { return long.indexOf(w) !== -1; });
+}
+function subsRecipientOk_(settings, name, number) {
+  return settings.receivingNumbers.some(function (n) {
+    return number ? subsNumberMatches_(number, n.number) : !!(n.name && subsNamesMatch_(name, n.name));
+  });
+}
+function subsCheckRecipient_(settings, p) {
+  var list = settings.receivingNumbers;
+  if (!list.length) throw new Error("The Treasurer hasn't set up payment details yet.");
+  if (subsRecipientOk_(settings, p.name, p.number)) return;
+  if (p.number) {
+    throw new Error("This payment went to " + p.number + ", which isn't the Chorale's number. " +
                     "Only payments sent to the Chorale's number can be recorded - check the payment instructions.");
   }
+  if (!list.some(function (n) { return n.name; })) {
+    throw new Error("This message shows only the name the money went to (" + p.name + "), not the number, and the " +
+                    "Treasurer hasn't saved the name M-Pesa shows for the Chorale's number yet. Ask the Treasurer to " +
+                    "add it in Settings, then try again.");
+  }
+  throw new Error("This payment went to " + p.name + ", who isn't the Chorale's M-Pesa contact. " +
+                  "Only payments sent to the Chorale's number can be recorded - check the payment instructions.");
 }
 
 // ---------- email ----------
@@ -11623,7 +11657,7 @@ function previewMpesaMessage(text) {
     var p = parseMpesa_(text, "sent");
     var s = readSubsSettings_();
     if (!(Number((s.years[subsYear_().label] || {}).fee) > 0)) throw new Error("The Treasurer hasn't set this year's fee yet.");
-    subsCheckNumber_(s, p.number);
+    subsCheckRecipient_(s, p);
     if (p.date > todayStr_()) throw new Error("That message is dated in the future.");
     subsCheckCodeFree_(readSubsRows_(me.ss), p.code, me.m.name);
     return { ok: true, code: p.code, amount: p.amount, name: p.name, number: p.number, date: p.date, time: p.time };
@@ -11641,14 +11675,14 @@ function submitSubscriptionPaymentCore_(text, note) {
   var s = readSubsSettings_(), year = subsYear_();
   if (!(Number((s.years[year.label] || {}).fee) > 0)) throw new Error("The Treasurer hasn't set this year's fee yet.");
   var p = parseMpesa_(text, "sent");
-  subsCheckNumber_(s, p.number);
+  subsCheckRecipient_(s, p);
   if (p.date > todayStr_()) throw new Error("That message is dated in the future.");
   var id = subsNewId_();
   subsWithLock_(function () {
     var sh = ensureSubsSheet_(me.ss);
     subsCheckCodeFree_(readSubsRows_(me.ss), p.code, me.m.name);
     subsAppend_(sh, { "id": id, "year": year.label, "type": "Payment", "member": me.m.name, "amount": p.amount,
-      "status": "Pending", "m-pesa code": p.code, "paid at": p.paidAt, "recipient": subsCellText_(p.name + " " + p.number, 80),
+      "status": "Pending", "m-pesa code": p.code, "paid at": p.paidAt, "recipient": subsCellText_(p.name + (p.number ? " " + p.number : ""), 80),
       "message": subsCellText_(p.message, 400), "note": subsCellText_(note, 300), "submitted at": subsNow_(),
       "submitted by": me.email, "source": "Member" });
   });
@@ -11731,14 +11765,14 @@ function getSubscriptionsOverview(filters) {
   if (x.c.canAct) {
     out.settings = { fee: ctx.fee, deadline: ctx.deadline, receivingNumbers: ctx.settings.receivingNumbers,
                      instructions: ctx.settings.instructions };
-    var nums = ctx.settings.receivingNumbers.map(function (n) { return n.number; });
     out.queue = ctx.rows.filter(function (r) { return r.status === "Pending"; })
       .sort(function (a, b) { return (a.submittedAt || "").localeCompare(b.submittedAt || ""); })
       .map(function (r) {
-        var num = subsNormPhone_((r.recipient.match(/(0\d{9})\s*$/) || [])[1] || "");
+        // Recipient is "NAME" or "NAME 0712345678" (the number may be masked).
+        var rm = r.recipient.match(/^(.*?)\s*(0[\d*]{9})?\s*$/) || ["", r.recipient, ""];
         return { id: r.id, type: r.type, member: r.member, amount: r.amount, code: r.code, paidAt: r.paidAt,
                  recipient: r.recipient, message: r.message, note: r.note, payBy: r.payBy, submittedAt: r.submittedAt,
-                 numberChanged: r.type === "Payment" && !!num && nums.indexOf(num) === -1 };
+                 numberChanged: r.type === "Payment" && !!r.recipient && !subsRecipientOk_(ctx.settings, rm[1], rm[2] || "") };
       });
     out.recent = ctx.rows.filter(function (r) { return r.status !== "Pending"; })
       .sort(function (a, b) { return (b.decidedAt || b.submittedAt || "").localeCompare(a.decidedAt || a.submittedAt || ""); })
@@ -11927,7 +11961,7 @@ function recordSubscriptionPaymentCore_(p) {
   if (method === "mpesa" && String(p.message || "").trim()) {
     var parsed = subsParseAny_(p.message);
     amount = parsed.amount; code = parsed.code; paidAt = parsed.paidAt; message = parsed.message;
-    recipient = parsed.kind === "sent" ? parsed.name + " " + parsed.number : "";
+    recipient = parsed.kind === "sent" ? parsed.name + (parsed.number ? " " + parsed.number : "") : "";
   } else {
     amount = Math.round(Number(p.amount) * 100) / 100;
     var d = String(p.date || "").trim();
@@ -11981,7 +12015,10 @@ function updateSubscriptionSettings(p) {
     if (!/^0\d{9}$/.test(num)) throw new Error(String(n.number) + " isn't a valid phone number.");
     if (seen[num]) return;
     seen[num] = true;
-    nums.push({ number: num, name: String((n && n.name) || "").trim().slice(0, 60) });
+    var nm = String((n && n.name) || "").replace(/\s+/g, " ").trim().slice(0, 60);
+    // Needed: many confirmations now show only the name the money went to, not the number.
+    if (!nm) throw new Error("Add the name M-Pesa shows for " + num + " (e.g. as it appears in your own Send Money message).");
+    nums.push({ number: num, name: nm });
   });
   if (!nums.length) throw new Error("Add the number members send money to.");
   var instructions = String(p.instructions || "").trim().slice(0, 500);
