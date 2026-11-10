@@ -3347,7 +3347,7 @@ function renderProfile() {
           : 'Tap ✎ on your photo to change it. Phone updates instantly; faculty, course and year of study go to an admin for approval.')
       + '</div>'
       // Subscription card (§14b): painted from the cached copy, refreshed by loadMySubscription().
-      + (noRecord ? '' : '<div id="mySubsCard">' + (mySubs ? mySubsCardHtml(mySubs) : '') + '</div>')
+      + (noRecord ? '' : '<div id="mySubsCard">' + (mySubs ? mySubsCardHtml(mySubs) : (isMemberAccount() && !mySubsMissing ? mySubsSkeletonHtml() : '')) + '</div>')
       + appearanceRowHtml()
       + '<div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--paper-200)">'
       +   '<button class="btn btn-secondary btn-block" onclick="signOut()" style="color:var(--crimson-600)">Sign out</button>'
@@ -9576,14 +9576,34 @@ function subsOpenDialog(id, html) {
   var o = document.createElement("div");
   o.className = "overlay"; o.id = id;
   o.innerHTML = '<div class="dialog subs-dialog" role="dialog" aria-modal="true" aria-labelledby="' + id + 'Title">' + html + '</div>';
-  o.addEventListener("mousedown", function (ev) { if (ev.target === o) subsCloseDialog(id); });
-  o.addEventListener("keydown", function (ev) { if (ev.key === "Escape") subsCloseDialog(id); });
+  o.addEventListener("mousedown", function (ev) { if (ev.target === o && !o.classList.contains("is-busy")) subsCloseDialog(id); });
+  o.addEventListener("keydown", function (ev) { if (ev.key === "Escape" && !o.classList.contains("is-busy")) subsCloseDialog(id); });
   document.body.appendChild(o);
   var first = o.querySelector("textarea, input, select");
   if (first) setTimeout(function () { try { first.focus(); } catch (e) {} }, 30);
   return o;
 }
 function subsCloseDialog(id) { var o = document.getElementById(id); if (o) o.remove(); }
+// In-between states (10 Nov). Every action shows three steps: busy while the server works,
+// the result where the action happened, then the refreshed data without a jump.
+function subsReduceMotion() { try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { return false; } }
+function subsSyncHtml(on, id) {
+  return '<span class="subs-sync' + (on ? " is-on" : "") + '"' + (id ? ' id="' + id + '"' : "") + ' role="status" aria-live="polite">'
+    + (on ? '<span class="subs-spin" aria-hidden="true"></span>Updating…' : "") + '</span>';
+}
+// A dialog's content turns into its outcome, so the member sees the result where they acted.
+function subsDialogDone(id, title, html) {
+  var o = document.getElementById(id), dlg = o && o.querySelector(".dialog"); if (!dlg) return;
+  dlg.innerHTML = '<div class="subs-done-mark" aria-hidden="true">✓</div>'
+    + '<h3 id="' + id + 'Title">' + esc(title) + '</h3><p>' + html + '</p>'
+    + '<div class="dialog-actions"><button type="button" class="btn btn-primary" onclick="subsCloseDialog(\'' + id + '\')">Done</button></div>';
+  var b = dlg.querySelector(".btn-primary"); if (b) try { b.focus(); } catch (e) {}
+}
+function subsDialogBusy(id, on) {
+  var o = document.getElementById(id); if (!o) return;
+  o.classList.toggle("is-busy", !!on);
+  [].forEach.call(o.querySelectorAll("textarea, input, .btn-secondary"), function (x) { x.disabled = !!on; });
+}
 function subsCopy(btn) {
   var text = btn.getAttribute("data-copy") || "";
   copyTextToClipboard(text, function (ok) {
@@ -9604,22 +9624,43 @@ function subsReadHtml(r) {
 // for the My attendance line shouldn't complain).
 var mySubs = null;
 var mySubsScrollTo = false;
-function loadMySubscription(cb, quiet) {
+var mySubsSyncing = false;   // the card shows "Updating…" until the fresh copy arrives
+var mySubsMissing = false;   // getMySubscription failed (no Members row...): no placeholder
+// sync: true after the member changed something, so the card says it's updating.
+function loadMySubscription(cb, quiet, sync) {
+  if (sync && mySubs) { mySubsSyncing = true; renderMySubscription(mySubs); }
   google.script.run.withSuccessHandler(function (d) {
-    mySubs = d;
+    mySubs = d; mySubsSyncing = false; mySubsMissing = false;
     renderMySubscription(d);
     if (cb) cb(d);
   }).withFailureHandler(function (e) {
     if (!quiet) showToast(serverError(e), "error");
+    mySubsSyncing = false;
+    if (!mySubs) mySubsMissing = true;
     var box = document.getElementById("mySubsCard");
-    if (box && !mySubs) box.innerHTML = "";
+    if (box && !mySubs) box.innerHTML = ""; else if (mySubs) renderMySubscription(mySubs);
   }).getMySubscription();
 }
 function withdrawMySubscriptionItem(id, btn) {
   if (roBlock()) return;
   var done = beginAction("subWithdraw", [btn], "Withdrawing…"); if (!done) return;
-  google.script.run.withSuccessHandler(function () { done(); showToast("Withdrawn.", "success"); loadMySubscription(); })
-    .withFailureHandler(function (e) { done(); showToast(serverError(e), "error"); }).withdrawSubscriptionItem(id);
+  google.script.run.withSuccessHandler(function () {
+    done(); showToast("Withdrawn.", "success");
+    // Show it straight away; the refresh confirms it.
+    (mySubs && mySubs.items || []).forEach(function (it) {
+      if (it.id !== id || it.status !== "Pending") return;
+      it.status = "Withdrawn";
+      if (it.type === "Commitment") mySubs.commitmentPending = false;
+      else mySubs.pendingAmount = Math.max(0, (mySubs.pendingAmount || 0) - it.amount);
+    });
+    loadMySubscription(null, false, true);
+  }).withFailureHandler(function (e) { done(); showToast(serverError(e), "error"); loadMySubscription(null, true, true); }).withdrawSubscriptionItem(id);
+}
+// Placeholder while the profile waits for the first copy (removed if there's nothing to show).
+function mySubsSkeletonHtml() {
+  return '<div class="card subs-card" aria-busy="true"><div class="subs-card-head"><div class="eyebrow">Subscription</div>' + subsSyncHtml(true) + '</div>'
+    + '<div class="subs-skel" style="width:46%;height:26px;margin-top:16px"></div><div class="subs-skel" style="width:100%;height:6px;margin-top:14px"></div>'
+    + '<div class="subs-skel" style="width:62%;height:12px;margin-top:12px"></div></div>';
 }
 function renderMySubscription(d) {
   var box = document.getElementById("mySubsCard");
@@ -9635,8 +9676,9 @@ function openMySubscription() { mySubsScrollTo = true; openProfile(); }
 
 function mySubsCardHtml(d) {
   if (!d) return "";
-  var h = '<div class="card subs-card">'
-    + '<div class="subs-card-head"><div class="eyebrow">Subscription · ' + esc(d.year) + '</div>' + (d.ready ? subsChip(d.status) : "") + '</div>';
+  var h = '<div class="card subs-card' + (mySubsSyncing ? " is-syncing" : "") + '"' + (mySubsSyncing ? ' aria-busy="true"' : "") + '>'
+    + '<div class="subs-card-head"><div class="eyebrow">Subscription · ' + esc(d.year) + '</div>'
+    + '<div class="subs-card-end">' + subsSyncHtml(mySubsSyncing) + (d.ready ? subsChip(d.status) : "") + '</div></div>';
   if (!d.ready) {
     return h + '<div class="subs-quiet">Subscription details will appear here once the Treasurer has set them up.</div>' + mySubsHistoryHtml(d) + '</div>';
   }
@@ -9740,12 +9782,12 @@ function submitSubPayment(text, note, btn, onDone) {
   var done = beginAction("subSubmit", [btn], "Sending…"); if (!done) return;
   google.script.run.withSuccessHandler(function (r) {
     done();
-    showToast("Sent to the Treasurer · " + r.code, "success");
-    loadMySubscription();
-    if (onDone) onDone(true);
+    if (!onDone) showToast("Sent to the Treasurer · " + r.code, "success");
+    loadMySubscription(null, false, true);
+    if (onDone) onDone(true, r);
   }).withFailureHandler(function (e) {
     done();
-    if (isDuplicateNotice(e)) { showToast(e.message, "info"); return; }
+    if (isDuplicateNotice(e)) { showToast(e.message, "info"); if (onDone) onDone(false); return; }
     showToast(serverError(e), "error");
     if (onDone) onDone(false);
   }).submitSubscriptionPayment(text, note || "");
@@ -9760,7 +9802,7 @@ function openSubPayDialog() {
     + '<p>Paste the whole M-Pesa message you got after sending the money' + (nums.length ? ' to <b>' + esc(nums.join(" or ")) + '</b>' : "") + '. The Treasurer checks it and confirms.</p>'
     + '<div class="form-group"><label class="form-label" for="subsPayText">M-Pesa message</label>'
     +   '<textarea id="subsPayText" rows="5" spellcheck="false" autocomplete="off" placeholder="e.g. UK9RK1H8LC Confirmed. Ksh1,070.00 sent to … on 9/11/26 at 5:20 AM…" oninput="subsPayChanged()"></textarea>'
-    +   '<div class="subs-hint">With or without the balance line. Only the code, amount, number, date and time are kept.</div>'
+    +   '<div class="subs-hint">With or without the balance line. Only the code, amount, who it went to, date and time are kept.</div>'
     +   '<div id="subsPayRead"></div></div>'
     + '<div class="form-group"><label class="form-label" for="subsPayNote">Note for the Treasurer <span style="text-transform:none;letter-spacing:.02em;color:var(--ink-400)">· optional</span></label>'
     +   '<input type="text" id="subsPayNote" maxlength="300" placeholder="e.g. paid from my mum’s line"></div>'
@@ -9791,7 +9833,12 @@ function subsPayCheck() {
 function subsPaySend(btn) {
   var ta = document.getElementById("subsPayText"), note = document.getElementById("subsPayNote");
   if (!ta || !subsPayRead) return;
-  submitSubPayment(ta.value, note ? note.value.trim() : "", btn, function (ok) { if (ok) subsCloseDialog("subsPayDlg"); });
+  subsDialogBusy("subsPayDlg", true);
+  submitSubPayment(ta.value, note ? note.value.trim() : "", btn, function (ok, r) {
+    if (!ok) { subsDialogBusy("subsPayDlg", false); return; }
+    subsDialogDone("subsPayDlg", "Sent to the Treasurer.",
+      '<b>' + esc(subsKsh(r.amount)) + '</b> · ' + esc(r.code) + '. The Treasurer confirms it once they’ve checked the Chorale’s statement, and you’ll get an email when they do.');
+  });
 }
 
 // ─── 14d. Member: commitment to pay ───────────────────────────────────────
@@ -9799,10 +9846,11 @@ function requestSubCommitment(amount, payBy, note, btn, onDone) {
   if (roBlock()) return;
   var done = beginAction("subCommit", [btn], "Sending…"); if (!done) return;
   google.script.run.withSuccessHandler(function () {
-    done(); showToast("Sent to the Treasurer for approval.", "success"); loadMySubscription(); if (onDone) onDone(true);
+    done(); if (!onDone) showToast("Sent to the Treasurer for approval.", "success");
+    loadMySubscription(null, false, true); if (onDone) onDone(true);
   }).withFailureHandler(function (e) {
     done();
-    if (isDuplicateNotice(e)) { showToast(e.message, "info"); return; }
+    if (isDuplicateNotice(e)) { showToast(e.message, "info"); if (onDone) onDone(false); return; }
     showToast(serverError(e), "error"); if (onDone) onDone(false);
   }).requestSubscriptionCommitment(Number(amount), payBy, note || "");
 }
@@ -9834,7 +9882,12 @@ function subsComSend(btn) {
     : by < todayStr() ? "The pay-by date can’t be in the past." : "";
   if (err) err.textContent = msg;
   if (msg) return;
-  requestSubCommitment(amt, by, note, btn, function (ok) { if (ok) subsCloseDialog("subsComDlg"); });
+  subsDialogBusy("subsComDlg", true);
+  requestSubCommitment(amt, by, note, btn, function (ok) {
+    if (!ok) { subsDialogBusy("subsComDlg", false); return; }
+    subsDialogDone("subsComDlg", "Sent for approval.",
+      'You’ve committed to pay <b>' + esc(subsKsh(amt)) + '</b> by <b>' + esc(subsDate(by)) + '</b>. You’ll get an email when the Treasurer decides.');
+  });
 }
 
 // ─── 14e. Subscriptions tab (canView) ─────────────────────────────────────
@@ -9844,20 +9897,30 @@ var subsOverview = null;
 var subsFilters = { section: "All", status: "All", search: "" };
 var subsView = "members";        // members | queue | record | remind | settings | recent (the last five: Treasurer only)
 var subsLoading = false;
-function loadSubscriptions(cb) {
+var subsHold = {};          // queue ids playing their exit; fresh data waits until they finish
+var subsDeferred = null;    // fresh overview that arrived during an exit
+var subsGone = {};          // ids decided in this session, kept out of any older copy
+var subsBusy = {};          // queue id -> "Confirming…" while its call runs
+// refresh: true after an action (no repaint from the cache first, and the header says "Updating…").
+function loadSubscriptions(cb, refresh) {
   var box = document.getElementById("subsContent");
-  if (subsOverview) renderSubscriptions(subsOverview);
-  subsLoading = true;
+  if (subsOverview && !refresh) renderSubscriptions(subsOverview);
+  subsLoading = true; subsPaintSync();
   google.script.run.withSuccessHandler(function (d) {
     subsLoading = false;
     subsOverview = d;
-    renderSubscriptions(d);
+    renderSubscriptions(d, true);
     if (cb) cb(d);
   }).withFailureHandler(function (e) {
-    subsLoading = false;
+    subsLoading = false; subsPaintSync();
     showToast(serverError(e), "error");
     if (box && !subsOverview) box.innerHTML = '<p class="loading">' + esc(serverError(e)) + '</p>';
   }).getSubscriptionsOverview({});
+}
+function subsRefresh() { loadSubscriptions(null, true); }
+function subsPaintSync() {
+  var el = document.getElementById("subsSync"); if (!el) return;
+  el.outerHTML = subsSyncHtml(subsLoading || !!subsDeferred, "subsSync");
 }
 function exportSubscriptions(kind, btn) {
   var done = beginAction("subExport", [btn], kind === "pdf" ? "Preparing…" : "Exporting…"); if (!done) return;
@@ -9868,6 +9931,7 @@ function exportSubscriptions(kind, btn) {
   if (kind === "pdf") r.exportSubscriptionsPDF(subsFilters); else r.exportSubscriptionsCSV(subsFilters);
 }
 function subsSetView(v) {
+  if (v !== subsView) { subsRecDone = null; subsRemind.sent = null; }
   subsView = v;
   if (subsOverview) renderSubscriptions(subsOverview);
   try { var t = document.getElementById("tab-subscriptions"); if (t && t.getBoundingClientRect().top < 0) window.scrollTo(0, 0); } catch (e) {}
@@ -9889,8 +9953,18 @@ function subsClearFilters() {
 }
 function subsIsSetUp(d) { var s = d.settings || {}; return !!(s.fee && (s.receivingNumbers || []).length); }
 
-function renderSubscriptions(d) {
+// bg: a refresh landing by itself. It waits while a queue card plays its exit, and keeps
+// whatever is being typed. Every other call is the user's own and repaints at once.
+function renderSubscriptions(d, bg) {
   var box = document.getElementById("subsContent"); if (!box || !d) return;
+  if (bg && Object.keys(subsHold).length) { subsDeferred = d; subsPaintSync(); return; }
+  subsHold = {}; subsDeferred = null;
+  var typed = bg ? subsTypedValues() : null;
+  if (d.queue) {   // cards decided here never come back from an older copy; the Waiting count follows
+    var before = d.queue.length;
+    d.queue = d.queue.filter(function (x) { return !subsGone[x.id]; });
+    if (d.summary && d.queue.length < before) d.summary.waiting = Math.max(0, (d.summary.waiting || 0) - (before - d.queue.length));
+  }
   var c = d.caps || {};
   if (!c.canAct && subsView !== "members") subsView = "members";
   var q = d.queue || [];
@@ -9913,12 +9987,24 @@ function renderSubscriptions(d) {
   if (c.canAct) h += subsTabsHtml(d);
   h += '<div class="subs-layout"><div class="subs-main">' + subsMainHtml(d, c) + '</div><div class="subs-side">' + subsSideHtml(d, c) + '</div></div>';
   h += '<datalist id="subsNameList">' + (d.members || []).map(function (m) { return '<option value="' + subsAttr(m.name) + '">'; }).join("") + '</datalist>';
-  // Keep the caret in the search box across a repaint.
+  // Keep the caret where it was across a repaint.
   var a = document.activeElement, keep = a && a.id ? { id: a.id, pos: a.selectionStart } : null;
   box.innerHTML = h;
-  if (keep) { var el = document.getElementById(keep.id); if (el && el.tagName === "INPUT" && el.type === "text") { el.focus(); try { el.setSelectionRange(keep.pos, keep.pos); } catch (e) {} } }
+  if (typed) Object.keys(typed).forEach(function (id) { var x = document.getElementById(id); if (x && x.value !== typed[id]) x.value = typed[id]; });
+  if (keep) {
+    var el = document.getElementById(keep.id);
+    if (el && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && el.type === "text"))) { el.focus(); try { el.setSelectionRange(keep.pos, keep.pos); } catch (e) {} }
+  }
   var f = document.getElementById("subsMailFrame");
   if (f && subsRemind.preview) f.srcdoc = subsRemind.preview.sampleHtml || "";
+}
+// Text in the tab's own fields (with ids) that a background repaint shouldn't wipe.
+function subsTypedValues() {
+  var out = {};
+  [].forEach.call(document.querySelectorAll("#subsContent input[id], #subsContent textarea[id]"), function (x) {
+    if (x.type !== "checkbox" && x.value) out[x.id] = x.value;
+  });
+  return out;
 }
 function subsHeadHtml(d, c) {
   var eb = "Subscriptions · " + d.year + (c.scope === "section" ? " · " + c.section : "") + (c.canAct ? " · Treasurer" : "");
@@ -9928,7 +10014,8 @@ function subsHeadHtml(d, c) {
   return '<div class="subs-head"><div class="section-head" style="margin-top:0"><div class="eyebrow">' + esc(eb) + '</div><span class="gold-rule"></span>'
     + '<h2>' + (d.fee ? esc(subsKsh(d.fee)) + ' a member.' : 'Subscriptions.') + '</h2>'
     + '<p class="subtitle">' + esc(sub) + '</p></div>'
-    + '<div class="subs-exports"><button type="button" class="btn-export" onclick="exportSubscriptions(\'csv\', this)">CSV</button>'
+    + '<div class="subs-exports">' + subsSyncHtml(subsLoading || !!subsDeferred, "subsSync")
+    + '<button type="button" class="btn-export" onclick="exportSubscriptions(\'csv\', this)">CSV</button>'
     + '<button type="button" class="btn-export" onclick="exportSubscriptions(\'pdf\', this)">PDF</button></div></div>';
 }
 function subsKpisHtml(d, c) {
@@ -10043,13 +10130,13 @@ function subsSideHtml(d, c) {
 }
 
 // ─── 14f. Treasurer tools (caps.canAct) ───────────────────────────────────
-// after(res): optional, runs on success before the reload (close a dialog, reset a form).
+// after(res): optional, runs on success before the refresh (show the outcome, close a dialog).
 function subsCall(key, btn, busy, okMsg, call, after) {
   var done = beginAction(key, [btn], busy); if (!done) return;
   var r = google.script.run.withSuccessHandler(function (res) {
     done(); if (okMsg) showToast(typeof okMsg === "function" ? okMsg(res) : okMsg, "success");
     if (after) after(res);
-    loadSubscriptions();
+    subsRefresh();
   }).withFailureHandler(function (e) {
     done();
     if (isDuplicateNotice(e)) { showToast(e.message, "info"); return; }
@@ -10057,28 +10144,89 @@ function subsCall(key, btn, busy, okMsg, call, after) {
   });
   call(r);
 }
+// A queue card: busy while its call runs (other cards stay usable), then a line saying what
+// happened, then it folds away and the counts catch up. A refused call puts the card back and
+// refreshes, in case someone else decided it first.
+function subsQueueAct(id, btn, busy, tone, okLine, okToast, call) {
+  if (roBlock()) return;
+  var done = beginAction("subQ_" + id, [btn], busy); if (!done) return;
+  subsBusy[id] = busy; subsRepaintQueueItem(id);
+  var r = google.script.run.withSuccessHandler(function (res) {
+    done(); delete subsBusy[id];
+    showToast(okToast(res), "success");
+    subsGone[id] = true;
+    if (subsSplit.id === id) subsSplit = { id: null, rows: [] };
+    if (subsRejectId === id) subsRejectId = null;
+    subsLeave(id, tone, okLine);
+    subsRefresh();
+  }).withFailureHandler(function (e) {
+    done(); delete subsBusy[id]; subsRepaintQueueItem(id);
+    showToast(isDuplicateNotice(e) ? e.message : serverError(e), isDuplicateNotice(e) ? "info" : "error");
+    subsRefresh();
+  });
+  call(r);
+}
+function subsLeave(id, tone, line) {
+  var el = document.getElementById("subsQ_" + id), reduce = subsReduceMotion();
+  subsHold[id] = true;
+  var finish = function () {
+    if (!subsHold[id]) return;                 // a repaint the user asked for already took over
+    delete subsHold[id];
+    if (!Object.keys(subsHold).length) renderSubscriptions(subsDeferred || subsOverview);
+  };
+  if (!el) { finish(); return; }
+  el.classList.remove("is-busy"); el.removeAttribute("aria-busy");
+  [].forEach.call(el.querySelectorAll(".subs-q-acts, .subs-q-busy, .subs-inline"), function (x) { x.remove(); });
+  el.insertAdjacentHTML("beforeend", '<div class="subs-q-done ' + tone + '" role="status">' + (tone === "t-ok" ? '<span aria-hidden="true">✓</span>' : "") + esc(line) + '</div>');
+  setTimeout(function () {
+    if (!subsHold[id]) return;
+    el.style.maxHeight = el.offsetHeight + "px";
+    el.classList.add("is-leaving");
+    void el.offsetHeight;
+    el.classList.add("is-gone");
+    setTimeout(finish, reduce ? 0 : 420);
+  }, reduce ? 700 : 1100);
+}
 function confirmSubPayment(id, allocations, btn) {
-  subsCall("subConfirm", btn, "Confirming…", function (r) { return "Confirmed · " + r.emailed + " receipt(s) sent"; },
-    function (r) { r.confirmSubscriptionPayment(id, allocations || []); }, function () { subsSplit = { id: null, rows: [] }; });
+  var n = 1 + (allocations || []).length;
+  subsQueueAct(id, btn, "Confirming…", "t-ok", n > 1 ? "Confirmed and split · " + n + " receipts sent" : "Confirmed · receipt sent",
+    function (r) { return "Confirmed · " + r.emailed + " receipt" + (r.emailed === 1 ? "" : "s") + " sent"; },
+    function (r) { r.confirmSubscriptionPayment(id, allocations || []); });
 }
 function rejectSubItem(id, reason, btn) {
-  subsCall("subReject", btn, "Rejecting…", "Rejected · member told why", function (r) { r.rejectSubscriptionItem(id, reason); },
-    function () { subsRejectId = null; });
+  subsQueueAct(id, btn, "Rejecting…", "t-bad", "Rejected · member told why", function () { return "Rejected · member told why"; },
+    function (r) { r.rejectSubscriptionItem(id, reason); });
 }
 function approveSubCommitment(id, btn) {
-  subsCall("subApprove", btn, "Approving…", "Commitment approved", function (r) { r.approveSubscriptionCommitment(id); });
+  subsQueueAct(id, btn, "Approving…", "t-ok", "Commitment approved · member told", function () { return "Commitment approved"; },
+    function (r) { r.approveSubscriptionCommitment(id); });
 }
+var subsRecDone = null;   // { member, amount, method } after a payment is recorded
 function recordSubPayment(p, btn) {
   subsCall("subRecord", btn, "Recording…", "Payment recorded · receipt sent", function (r) { r.recordSubscriptionPayment(p); },
-    function () { subsRec = { member: "", method: subsRec.method, manual: false, message: "", read: null }; });
+    function (res) {
+      var amt = p.amount || (subsRec.read && subsRec.read.amount) || 0;
+      subsRecDone = { member: p.member, amount: amt, method: p.method, emailed: !!(res && res.emailed) };
+      subsRec = { member: "", method: subsRec.method, manual: false, message: "", read: null };
+      renderSubscriptions(subsOverview);
+    });
 }
+function subsRecAnother() { subsRecDone = null; renderSubscriptions(subsOverview); var m = document.getElementById("subsRecMember"); if (m) m.focus(); }
 function previewTreasurerMessage(text, cb) {
   google.script.run.withSuccessHandler(cb).withFailureHandler(function (e) { cb({ ok: false, error: serverError(e) }); })
     .previewTreasurerMpesaMessage(text);
 }
 function saveSubSettings(p, btn) {
   subsCall("subSettings", btn, "Saving…", "Settings saved", function (r) { r.updateSubscriptionSettings(p); },
-    function () { subsSet = null; subsView = "members"; });
+    function () {
+      // Show the new fee and deadline straight away; the refresh fills in the statuses.
+      if (subsOverview) {
+        subsOverview.fee = p.fee; subsOverview.deadline = p.deadline;
+        subsOverview.settings = { fee: p.fee, deadline: p.deadline, receivingNumbers: p.receivingNumbers, instructions: p.instructions };
+      }
+      subsSet = null; subsView = "members"; subsLoading = true;
+      renderSubscriptions(subsOverview);
+    });
 }
 function previewSubReminders(statuses, cb) {
   google.script.run.withSuccessHandler(cb).withFailureHandler(function (e) { showToast(serverError(e), "error"); cb(null); })
@@ -10088,7 +10236,8 @@ function sendSubReminders(statuses, count, btn) {
   if (!confirm("Email a reminder to " + count + " member(s)?")) return;
   subsCall("subRemind", btn, "Sending…",
     function (r) { return r.sent + " reminder(s) sent" + (r.failed.length ? " · " + r.failed.length + " failed" : ""); },
-    function (r) { r.sendSubscriptionReminders({ statuses: statuses }); }, function () { subsRemind.preview = null; });
+    function (r) { r.sendSubscriptionReminders({ statuses: statuses }); },
+    function (res) { subsRemind.preview = null; subsRemind.sent = res || { sent: 0, failed: [] }; renderSubscriptions(subsOverview); });
 }
 
 // Waiting queue
@@ -10113,6 +10262,10 @@ function subsQueueItemHtml(it) {
   }
   if (it.note) h += '<div class="subs-q-quote">“' + esc(it.note) + '”</div>';
   if (isPay && it.message) h += '<details><summary>M-Pesa message</summary><div class="msg">' + esc(it.message) + '</div></details>';
+  if (subsBusy[it.id]) {
+    return h.replace('class="subs-q', 'aria-busy="true" class="subs-q is-busy')
+      + '<div class="subs-q-busy" role="status"><span class="subs-spin" aria-hidden="true"></span>' + esc(subsBusy[it.id]) + '</div></div>';
+  }
   var open = subsSplit.id === it.id || subsRejectId === it.id;
   if (!open) {
     h += '<div class="subs-q-acts">'
@@ -10228,6 +10381,14 @@ function subsRejectGo(btn) {
 var subsRec = { member: "", method: "mpesa", manual: false, message: "", read: null };
 var subsRecTimer = null, subsRecSeq = 0;
 function subsRecordHtml(d) {
+  if (subsRecDone) {
+    var x = subsRecDone;
+    return '<div class="subs-form"><div class="card subs-outcome" role="status"><div class="subs-done-mark" aria-hidden="true">✓</div>'
+      + '<h3>Recorded ' + esc(subsKsh(x.amount)) + ' for ' + esc(x.member) + '.</h3>'
+      + '<p>' + (x.method === "cash" ? "Cash payment, " : "M-Pesa payment, ") + 'confirmed straight away.' + (x.emailed ? " A receipt is on its way to them." : " They have no email on file, so no receipt was sent.") + '</p>'
+      + '<div class="subs-acts" style="margin-top:14px"><button type="button" class="btn btn-primary" onclick="subsRecAnother()">Record another</button>'
+      + '<button type="button" class="btn btn-secondary" onclick="subsRecDone = null; subsSetView(\'members\')">See members</button></div></div></div>';
+  }
   var r = subsRec, mp = r.method === "mpesa";
   var seg = function (v, label) { return '<button type="button" class="' + (r.method === v ? "active" : "") + '" aria-pressed="' + (r.method === v) + '" onclick="subsRecMethod(\'' + v + '\')">' + label + '</button>'; };
   var h = '<div class="subs-form"><div class="card">'
@@ -10347,6 +10508,13 @@ function subsSaveSettings(btn) {
 var subsRemind = { statuses: ["Due", "Part paid", "Unpaid"], preview: null, loading: false };
 function subsRemindHtml(d) {
   var r = subsRemind;
+  if (r.sent) {
+    var f = r.sent.failed || [];
+    return '<div class="subs-form"><div class="card subs-outcome" role="status"><div class="subs-done-mark" aria-hidden="true">✓</div>'
+      + '<h3>' + r.sent.sent + ' reminder' + (r.sent.sent === 1 ? "" : "s") + ' sent.</h3>'
+      + (f.length ? '<p class="subs-err" style="display:block">Couldn’t email ' + esc(f.join(", ")) + '.</p>' : '<p>Each member got their own balance, due date and how to pay.</p>')
+      + '<div class="subs-acts" style="margin-top:14px"><button type="button" class="btn btn-secondary" onclick="subsRemind.sent = null; renderSubscriptions(subsOverview)">Send more</button></div></div></div>';
+  }
   var box = function (st) {
     return '<label class="checkbox-label"><input type="checkbox"' + (r.statuses.indexOf(st) !== -1 ? " checked" : "") + ' data-st="' + subsAttr(st) + '" onchange="subsRemindToggle(this)"> ' + esc(st) + '</label>';
   };
@@ -10409,11 +10577,18 @@ function subsRecentHtml(d) {
 // ─── 14g. Treasurer post (full admins appoint; everyone with canView sees who) ──
 function appointSubTreasurer(name, btn) {
   subsCall("subAppoint", btn, "Appointing…", function () { return name + " is now Treasurer"; }, function (r) { r.appointTreasurer(name); },
-    function () { subsCloseDialog("subsAppointDlg"); });
+    function (res) { subsCloseDialog("subsAppointDlg"); subsShowTreasurers(res); });
 }
 function removeSubTreasurer(email, name, btn) {
   if (!confirm("Remove " + name + " as Treasurer?")) return;
-  subsCall("subRemoveT", btn, "Removing…", "Treasurer removed", function (r) { r.removeTreasurer(email); });
+  subsCall("subRemoveT", btn, "Removing…", "Treasurer removed", function (r) { r.removeTreasurer(email); }, subsShowTreasurers);
+}
+// appointTreasurer / removeTreasurer return the new list: show it before the refresh lands.
+function subsShowTreasurers(res) {
+  if (!subsOverview || !res || !res.treasurers) return;
+  subsOverview.treasurers = res.treasurers.map(function (t) { return { name: t.name, appointedOn: t.appointedAt, appointedBy: t.appointedBy, email: t.email }; });
+  subsLoading = true;
+  renderSubscriptions(subsOverview);
 }
 function subsTreasurerCardHtml(d, c) {
   var t = d.treasurers || [];

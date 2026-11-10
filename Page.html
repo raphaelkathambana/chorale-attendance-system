@@ -2398,6 +2398,38 @@ body.year-archived #dashRangeSeg [data-range="month"] { display: none !important
 .subs-recent-row .what b { font-weight: 600; }
 .subs-recent-row .sub { grid-column: 1 / -1; font-family: var(--f-mono); font-size: 10.5px; color: var(--ink-500); letter-spacing: .03em; }
 .subs-recent-row .why { grid-column: 1 / -1; font-size: 11.5px; font-style: italic; color: var(--ink-600); }
+/* In-between states (10 Nov): busy, outcome, exit, updating */
+.subs-spin { display: inline-block; width: 12px; height: 12px; flex-shrink: 0; border: 2px solid var(--paper-300); border-top-color: var(--gold); border-radius: 50%; animation: spin .8s linear infinite; }
+.subs-sync { display: inline-flex; align-items: center; gap: 6px; font-family: var(--f-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-500); }
+.subs-sync:not(.is-on) { display: none; }
+.subs-sync.is-on { animation: subs-in .2s ease both; }
+.subs-exports { align-items: center; }
+.subs-exports .subs-sync { margin-right: 4px; }
+.subs-card-end { display: flex; align-items: center; gap: 10px; }
+.subs-card.is-syncing > :not(.subs-card-head) { opacity: .6; transition: opacity .2s ease; }
+.subs-skel { border-radius: 6px; background: var(--paper-200); animation: subs-pulse 1.2s ease-in-out infinite; }
+.subs-done-mark { width: 40px; height: 40px; border-radius: 999px; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; font-size: 20px; font-weight: 700; background: var(--present-bg); color: var(--present); animation: subs-pop .3s ease both; }
+.subs-outcome h3 { font-family: var(--f-display); font-style: italic; font-weight: 400; font-size: 24px; line-height: 1.15; color: var(--ink); margin: 0 0 6px; }
+.subs-outcome p { font-size: 13px; line-height: 1.55; color: var(--ink-600); margin: 0; }
+.subs-q.is-busy { pointer-events: none; }
+.subs-q.is-busy > :not(.subs-q-busy) { opacity: .55; transition: opacity .2s ease; }
+.subs-q-busy { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 9px 12px; border-radius: 10px; background: var(--paper-100); font-size: 12.5px; font-weight: 600; color: var(--ink-600); }
+.subs-q-done { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 9px 12px; border-radius: 10px; font-size: 12.5px; font-weight: 600; animation: subs-in .2s ease both; }
+.subs-q-done.t-ok { background: var(--present-bg); color: var(--present); }
+.subs-q-done.t-bad { background: var(--crimson-100); color: var(--crimson-600); }
+.subs-q.is-leaving { overflow: hidden; transition: opacity .25s ease, max-height .3s ease .08s, margin-bottom .3s ease .08s, padding-top .3s ease .08s, padding-bottom .3s ease .08s, border-width .3s ease .08s; }
+.subs-q.is-gone { opacity: 0; max-height: 0 !important; margin-bottom: 0; padding-top: 0; padding-bottom: 0; border-width: 0; }
+.overlay.is-busy .dialog { cursor: progress; }
+.overlay.is-busy textarea:disabled, .overlay.is-busy input:disabled { opacity: .6; }
+.subs-nudge { animation: subs-in .25s ease both; }
+@keyframes subs-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes subs-pop { from { opacity: 0; transform: scale(.8); } to { opacity: 1; transform: none; } }
+@keyframes subs-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .subs-spin { animation-duration: 2s; }
+  .subs-sync.is-on, .subs-q-done, .subs-done-mark, .subs-nudge, .subs-skel { animation: none; }
+  .subs-q.is-leaving { transition: none; }
+}
 </style>
 </head>
 <body>
